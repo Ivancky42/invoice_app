@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DocumentType {
+  QUOTATION
+  INVOICE
+  DELIVERY_ORDER
+}
+
+enum DocumentStatus {
+  DRAFT
+  ISSUED
+  PAID
+  CANCELLED
+}
+
+model CompanyProfile {
+  id           String   @id @default(cuid())
+  name         String
+  address      String
+  email        String?
+  phone        String?
+  registration String?
+  taxId        String?
+  bankDetails  String?
+  logoPath     String?
+  currency     String   @default("USD")
+  taxRate      Float    @default(0)
+  notes        String?
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  documents    Document[]
+}
+
+model Document {
+  id            String         @id @default(cuid())
+  type          DocumentType
+  number        String         @unique
+  status        DocumentStatus @default(DRAFT)
+  issueDate     DateTime       @default(now())
+  dueDate       DateTime?
+  companyId     String?
+  company       CompanyProfile? @relation(fields: [companyId], references: [id])
+  clientName    String
+  clientAddress String?
+  clientEmail   String?
+  clientPhone   String?
+  items         Json
+  subtotal      Float          @default(0)
+  discountType  String         @default("PERCENT")
+  discountValue Float          @default(0)
+  discountAmount Float         @default(0)
+  taxRate       Float          @default(0)
+  taxAmount     Float          @default(0)
+  total         Float          @default(0)
+  paymentTerms  String?
+  notes         String?
+  terms         String?
+  parentId      String?
+  parent        Document?      @relation("DocumentLifecycle", fields: [parentId], references: [id])
+  children      Document[]     @relation("DocumentLifecycle")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
