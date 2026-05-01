@@ -1,6 +1,7 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { PrismaClient } from "@/generated/prisma/client";
+import { normalizePgConnectionString } from "@/lib/pg-connection-string";
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
@@ -14,7 +15,7 @@ function createClient(): PrismaClient {
   const pool =
     globalForPrisma.pgPool ??
     new Pool({
-      connectionString: url,
+      connectionString: normalizePgConnectionString(url),
       max: 10,
     });
   globalForPrisma.pgPool = pool;
