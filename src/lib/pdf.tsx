@@ -40,6 +40,10 @@ type DocLike = {
   clientAddress: string | null;
   clientEmail: string | null;
   clientPhone: string | null;
+  shipToAttn: string | null;
+  shipToAddress: string | null;
+  poNumber: string | null;
+  projectTitle: string | null;
   items: any;
   subtotal: number;
   discountType: string;
@@ -91,19 +95,43 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
             <Text style={styles.docMeta}>Date: {new Date(doc.issueDate).toLocaleDateString()}</Text>
             {doc.dueDate ? <Text style={styles.docMeta}>Due: {new Date(doc.dueDate).toLocaleDateString()}</Text> : null}
             {doc.paymentTerms ? <Text style={styles.docMeta}>Terms: {doc.paymentTerms}</Text> : null}
+            {doc.projectTitle ? <Text style={styles.docMeta}>Project: {doc.projectTitle}</Text> : null}
+            {doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER") ? (
+              <Text style={styles.docMeta}>PO: {doc.poNumber}</Text>
+            ) : null}
             <Text style={styles.docMeta}>Status: {doc.status}</Text>
           </View>
         </View>
 
-        <View style={styles.twoCol}>
-          <View style={styles.block}>
+        {doc.shipToAttn || doc.shipToAddress ? (
+          <View style={styles.twoCol}>
+            <View style={styles.block}>
+              <Text style={styles.label}>Bill To</Text>
+              <Text style={styles.bold}>{doc.clientName}</Text>
+              {doc.clientAddress ? <Text>{doc.clientAddress}</Text> : null}
+              {doc.clientEmail ? <Text>{doc.clientEmail}</Text> : null}
+              {doc.clientPhone ? <Text>{doc.clientPhone}</Text> : null}
+            </View>
+            <View style={styles.block}>
+              <Text style={styles.label}>Ship To</Text>
+              {doc.shipToAttn ? (
+                <Text>
+                  <Text style={styles.bold}>Attn: </Text>
+                  {doc.shipToAttn}
+                </Text>
+              ) : null}
+              {doc.shipToAddress ? <Text>{doc.shipToAddress}</Text> : null}
+            </View>
+          </View>
+        ) : (
+          <View style={{ marginBottom: 16 }}>
             <Text style={styles.label}>Bill To</Text>
             <Text style={styles.bold}>{doc.clientName}</Text>
             {doc.clientAddress ? <Text>{doc.clientAddress}</Text> : null}
             {doc.clientEmail ? <Text>{doc.clientEmail}</Text> : null}
             {doc.clientPhone ? <Text>{doc.clientPhone}</Text> : null}
           </View>
-        </View>
+        )}
 
         <View style={styles.table}>
           <View style={styles.th}>

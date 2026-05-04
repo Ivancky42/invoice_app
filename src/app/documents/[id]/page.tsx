@@ -111,7 +111,37 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
             {doc.clientPhone && <div>{doc.clientPhone}</div>}
           </div>
         </div>
+        {(doc.shipToAttn || doc.shipToAddress) && (
+          <div className="md:col-span-2">
+            <div className="text-xs uppercase text-gray-500 mb-1">Ship to</div>
+            <div className="text-sm whitespace-pre-line">
+              {doc.shipToAttn && (
+                <div>
+                  <span className="font-semibold">Attn:</span> {doc.shipToAttn}
+                </div>
+              )}
+              {doc.shipToAddress && <div>{doc.shipToAddress}</div>}
+            </div>
+          </div>
+        )}
       </div>
+
+      {(doc.projectTitle || (doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER"))) && (
+        <div className="card p-4 text-sm flex flex-wrap gap-x-6 gap-y-2">
+          {doc.projectTitle && (
+            <div>
+              <span className="text-gray-500">Project: </span>
+              <span className="font-medium">{doc.projectTitle}</span>
+            </div>
+          )}
+          {doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER") && (
+            <div>
+              <span className="text-gray-500">PO: </span>
+              <span className="font-medium">{doc.poNumber}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="card overflow-hidden">
         <table className="w-full text-sm">

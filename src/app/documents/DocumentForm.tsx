@@ -20,6 +20,10 @@ type Props = {
     clientAddress?: string;
     clientEmail?: string;
     clientPhone?: string;
+    shipToAttn?: string;
+    shipToAddress?: string;
+    poNumber?: string;
+    projectTitle?: string;
     items: LineItem[];
     taxRate: number;
     discountType?: DiscountType;
@@ -53,6 +57,10 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
     clientAddress: initial.clientAddress ?? "",
     clientEmail: initial.clientEmail ?? "",
     clientPhone: initial.clientPhone ?? "",
+    shipToAttn: initial.shipToAttn ?? "",
+    shipToAddress: initial.shipToAddress ?? "",
+    poNumber: initial.poNumber ?? "",
+    projectTitle: initial.projectTitle ?? "",
     paymentTerms: initial.paymentTerms ?? "",
     notes: initial.notes ?? "",
     terms: initial.terms ?? "",
@@ -157,6 +165,26 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
               {PAYMENT_TERMS_PRESETS.map((t) => <option key={t} value={t} />)}
             </datalist>
           </div>
+          <div className="md:col-span-2">
+            <label className="label">Project title <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input
+              className="input"
+              placeholder="e.g. Website redesign — phase 2"
+              value={form.projectTitle}
+              onChange={(e) => setForm({ ...form, projectTitle: e.target.value })}
+            />
+          </div>
+          {(type === "INVOICE" || type === "DELIVERY_ORDER") && (
+            <div className="md:col-span-2">
+              <label className="label">PO number <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input
+                className="input"
+                placeholder="Customer purchase order reference"
+                value={form.poNumber}
+                onChange={(e) => setForm({ ...form, poNumber: e.target.value })}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -178,6 +206,31 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
           <div className="md:col-span-2">
             <label className="label">Address</label>
             <textarea className="input" rows={3} value={form.clientAddress} onChange={(e) => setForm({ ...form, clientAddress: e.target.value })} />
+          </div>
+        </div>
+      </div>
+
+      <div className="card p-6 space-y-4">
+        <h2 className="font-medium">Ship to <span className="text-gray-400 font-normal text-sm">(optional)</span></h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Attn</label>
+            <input
+              className="input"
+              placeholder="Contact or department"
+              value={form.shipToAttn}
+              onChange={(e) => setForm({ ...form, shipToAttn: e.target.value })}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="label">Address</label>
+            <textarea
+              className="input"
+              rows={3}
+              placeholder="Delivery address"
+              value={form.shipToAddress}
+              onChange={(e) => setForm({ ...form, shipToAddress: e.target.value })}
+            />
           </div>
         </div>
       </div>
@@ -240,7 +293,7 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
 
       <div className="card p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="label">Notes</label>
+          <label className="label">Notes <span className="text-gray-400 font-normal">(optional)</span></label>
           <textarea className="input" rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
         </div>
         <div>

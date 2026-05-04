@@ -16,6 +16,10 @@ type SaveInput = {
   clientAddress?: string;
   clientEmail?: string;
   clientPhone?: string;
+  shipToAttn?: string;
+  shipToAddress?: string;
+  poNumber?: string;
+  projectTitle?: string;
   items: { description: string; quantity: number; unitPrice: number }[];
   taxRate: number;
   discountType?: DiscountType;
@@ -39,6 +43,10 @@ export async function saveDocument(input: SaveInput): Promise<{ id: string }> {
     clientAddress: input.clientAddress || null,
     clientEmail: input.clientEmail || null,
     clientPhone: input.clientPhone || null,
+    shipToAttn: input.shipToAttn || null,
+    shipToAddress: input.shipToAddress || null,
+    poNumber: input.poNumber || null,
+    projectTitle: input.projectTitle || null,
     items: input.items as any,
     subtotal: totals.subtotal,
     discountType,
@@ -92,6 +100,10 @@ export async function convertDocument(id: string): Promise<{ id: string } | null
       clientAddress: src.clientAddress,
       clientEmail: src.clientEmail,
       clientPhone: src.clientPhone,
+      shipToAttn: src.shipToAttn,
+      shipToAddress: src.shipToAddress,
+      poNumber: src.poNumber,
+      projectTitle: src.projectTitle,
       items: src.items as any,
       subtotal: src.subtotal,
       discountType: src.discountType,
