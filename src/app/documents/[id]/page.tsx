@@ -126,12 +126,15 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
         )}
       </div>
 
-      {(doc.projectTitle || (doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER"))) && (
-        <div className="card p-4 text-sm flex flex-wrap gap-x-6 gap-y-2">
-          {doc.projectTitle && (
+      {(doc.projectTitle || doc.projectDescription || (doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER"))) && (
+        <div className="card p-4 text-sm space-y-3">
+          {(doc.projectTitle || doc.projectDescription) && (
             <div>
-              <span className="text-gray-500">Project: </span>
-              <span className="font-medium">{doc.projectTitle}</span>
+              <div className="text-xs uppercase text-gray-500 mb-2">Project</div>
+              {doc.projectTitle ? <div className="font-semibold">{doc.projectTitle}</div> : null}
+              {doc.projectDescription ? (
+                <div className="text-gray-700 whitespace-pre-line mt-1">{doc.projectDescription}</div>
+              ) : null}
             </div>
           )}
           {doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER") && (

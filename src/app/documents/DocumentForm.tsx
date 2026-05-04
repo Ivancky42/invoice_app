@@ -24,6 +24,7 @@ type Props = {
     shipToAddress?: string;
     poNumber?: string;
     projectTitle?: string;
+    projectDescription?: string;
     items: LineItem[];
     taxRate: number;
     discountType?: DiscountType;
@@ -61,6 +62,7 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
     shipToAddress: initial.shipToAddress ?? "",
     poNumber: initial.poNumber ?? "",
     projectTitle: initial.projectTitle ?? "",
+    projectDescription: initial.projectDescription ?? "",
     paymentTerms: initial.paymentTerms ?? "",
     notes: initial.notes ?? "",
     terms: initial.terms ?? "",
@@ -172,6 +174,16 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
               placeholder="e.g. Website redesign — phase 2"
               value={form.projectTitle}
               onChange={(e) => setForm({ ...form, projectTitle: e.target.value })}
+            />
+          </div>
+          <div className="md:col-span-4">
+            <label className="label">Project description <span className="text-gray-400 font-normal">(optional)</span></label>
+            <textarea
+              className="input"
+              rows={4}
+              placeholder="Scope, deliverables, or other project context"
+              value={form.projectDescription}
+              onChange={(e) => setForm({ ...form, projectDescription: e.target.value })}
             />
           </div>
           {(type === "INVOICE" || type === "DELIVERY_ORDER") && (

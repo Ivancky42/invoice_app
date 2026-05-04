@@ -54,8 +54,9 @@ model Document {
   clientPhone   String?
   shipToAttn    String?
   shipToAddress String?
-  poNumber      String?
-  projectTitle  String?
+  poNumber             String?
+  projectTitle         String?
+  projectDescription   String?
   items         Json
   subtotal      Float          @default(0)
   discountType  String         @default("PERCENT")

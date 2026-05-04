@@ -34,6 +34,7 @@ export default async function EditDocPage({ params }: { params: Promise<{ id: st
         shipToAddress: doc.shipToAddress ?? "",
         poNumber: doc.poNumber ?? "",
         projectTitle: doc.projectTitle ?? "",
+        projectDescription: doc.projectDescription ?? "",
         items,
         taxRate: doc.taxRate,
         discountType: doc.discountType as DiscountType,

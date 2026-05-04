@@ -8,14 +8,17 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
   brand: { flexDirection: "row", alignItems: "flex-start" },
   logo: { width: 50, height: 50, objectFit: "contain", marginRight: 10 },
-  companyName: { fontSize: 14, fontFamily: "Helvetica-Bold" },
-  small: { fontSize: 9, color: "#4b5563" },
+  companyName: { fontSize: 14, fontFamily: "Helvetica-Bold", marginBottom: 4 },
+  companyLine: { fontSize: 9, color: "#4b5563", lineHeight: 13.5, marginBottom: 2 },
   docTitle: { fontSize: 22, fontFamily: "Helvetica-Bold", textAlign: "right" },
   docMeta: { fontSize: 9, color: "#4b5563", textAlign: "right", marginTop: 4 },
-  twoCol: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
+  twoCol: { flexDirection: "row", justifyContent: "space-between", marginBottom: 18 },
+  billShipSection: { marginBottom: 18 },
   block: { width: "48%" },
-  label: { fontSize: 8, color: "#6b7280", textTransform: "uppercase", marginBottom: 4 },
+  label: { fontSize: 8, color: "#6b7280", textTransform: "uppercase", marginBottom: 6 },
   bold: { fontFamily: "Helvetica-Bold" },
+  partyName: { fontFamily: "Helvetica-Bold", fontSize: 10, lineHeight: 15, marginBottom: 3 },
+  partyLine: { fontSize: 10, lineHeight: 14.5, marginBottom: 3 },
   table: { marginTop: 8, borderTopWidth: 1, borderTopColor: "#e5e7eb" },
   th: { flexDirection: "row", backgroundColor: "#f9fafb", paddingVertical: 6, paddingHorizontal: 4, fontSize: 9, fontFamily: "Helvetica-Bold" },
   tr: { flexDirection: "row", paddingVertical: 6, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: "#f3f4f6" },
@@ -27,7 +30,16 @@ const styles = StyleSheet.create({
   totalsRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 },
   totalLine: { borderTopWidth: 1, borderTopColor: "#111827", marginTop: 4, paddingTop: 6, fontFamily: "Helvetica-Bold" },
   footer: { marginTop: 24, fontSize: 9, color: "#374151" },
-  footerBlock: { marginBottom: 8 },
+  footerBlock: { marginBottom: 11 },
+  footerBody: { fontSize: 9, color: "#374151", lineHeight: 13.5 },
+  projectSection: {
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  projectTitleLine: { fontSize: 11, fontFamily: "Helvetica-Bold", lineHeight: 15, marginBottom: 6 },
+  projectDesc: { fontSize: 9, color: "#374151", lineHeight: 13.5 },
 });
 
 type DocLike = {
@@ -44,6 +56,7 @@ type DocLike = {
   shipToAddress: string | null;
   poNumber: string | null;
   projectTitle: string | null;
+  projectDescription: string | null;
   items: any;
   subtotal: number;
   discountType: string;
@@ -82,11 +95,11 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
             {logoFile ? <Image style={styles.logo} src={logoFile} /> : null}
             <View>
               <Text style={styles.companyName}>{company?.name || "Your Company"}</Text>
-              {company?.address ? <Text style={styles.small}>{company.address}</Text> : null}
-              {company?.email ? <Text style={styles.small}>{company.email}</Text> : null}
-              {company?.phone ? <Text style={styles.small}>{company.phone}</Text> : null}
-              {company?.registration ? <Text style={styles.small}>Reg: {company.registration}</Text> : null}
-              {company?.taxId ? <Text style={styles.small}>Tax ID: {company.taxId}</Text> : null}
+              {company?.address ? <Text style={styles.companyLine}>{company.address}</Text> : null}
+              {company?.email ? <Text style={styles.companyLine}>{company.email}</Text> : null}
+              {company?.phone ? <Text style={styles.companyLine}>{company.phone}</Text> : null}
+              {company?.registration ? <Text style={styles.companyLine}>Reg: {company.registration}</Text> : null}
+              {company?.taxId ? <Text style={styles.companyLine}>Tax ID: {company.taxId}</Text> : null}
             </View>
           </View>
           <View>
@@ -95,7 +108,6 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
             <Text style={styles.docMeta}>Date: {new Date(doc.issueDate).toLocaleDateString()}</Text>
             {doc.dueDate ? <Text style={styles.docMeta}>Due: {new Date(doc.dueDate).toLocaleDateString()}</Text> : null}
             {doc.paymentTerms ? <Text style={styles.docMeta}>Terms: {doc.paymentTerms}</Text> : null}
-            {doc.projectTitle ? <Text style={styles.docMeta}>Project: {doc.projectTitle}</Text> : null}
             {doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER") ? (
               <Text style={styles.docMeta}>PO: {doc.poNumber}</Text>
             ) : null}
@@ -103,33 +115,41 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
           </View>
         </View>
 
+        {doc.projectTitle || doc.projectDescription ? (
+          <View style={styles.projectSection}>
+            <Text style={styles.label}>Project</Text>
+            {doc.projectTitle ? <Text style={styles.projectTitleLine}>{doc.projectTitle}</Text> : null}
+            {doc.projectDescription ? <Text style={styles.projectDesc}>{doc.projectDescription}</Text> : null}
+          </View>
+        ) : null}
+
         {doc.shipToAttn || doc.shipToAddress ? (
           <View style={styles.twoCol}>
             <View style={styles.block}>
               <Text style={styles.label}>Bill To</Text>
-              <Text style={styles.bold}>{doc.clientName}</Text>
-              {doc.clientAddress ? <Text>{doc.clientAddress}</Text> : null}
-              {doc.clientEmail ? <Text>{doc.clientEmail}</Text> : null}
-              {doc.clientPhone ? <Text>{doc.clientPhone}</Text> : null}
+              <Text style={styles.partyName}>{doc.clientName}</Text>
+              {doc.clientAddress ? <Text style={styles.partyLine}>{doc.clientAddress}</Text> : null}
+              {doc.clientEmail ? <Text style={styles.partyLine}>{doc.clientEmail}</Text> : null}
+              {doc.clientPhone ? <Text style={styles.partyLine}>{doc.clientPhone}</Text> : null}
             </View>
             <View style={styles.block}>
               <Text style={styles.label}>Ship To</Text>
               {doc.shipToAttn ? (
-                <Text>
+                <Text style={styles.partyLine}>
                   <Text style={styles.bold}>Attn: </Text>
                   {doc.shipToAttn}
                 </Text>
               ) : null}
-              {doc.shipToAddress ? <Text>{doc.shipToAddress}</Text> : null}
+              {doc.shipToAddress ? <Text style={styles.partyLine}>{doc.shipToAddress}</Text> : null}
             </View>
           </View>
         ) : (
-          <View style={{ marginBottom: 16 }}>
+          <View style={styles.billShipSection}>
             <Text style={styles.label}>Bill To</Text>
-            <Text style={styles.bold}>{doc.clientName}</Text>
-            {doc.clientAddress ? <Text>{doc.clientAddress}</Text> : null}
-            {doc.clientEmail ? <Text>{doc.clientEmail}</Text> : null}
-            {doc.clientPhone ? <Text>{doc.clientPhone}</Text> : null}
+            <Text style={styles.partyName}>{doc.clientName}</Text>
+            {doc.clientAddress ? <Text style={styles.partyLine}>{doc.clientAddress}</Text> : null}
+            {doc.clientEmail ? <Text style={styles.partyLine}>{doc.clientEmail}</Text> : null}
+            {doc.clientPhone ? <Text style={styles.partyLine}>{doc.clientPhone}</Text> : null}
           </View>
         )}
 
@@ -175,25 +195,25 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
           {doc.paymentTerms ? (
             <View style={styles.footerBlock}>
               <Text style={styles.label}>Payment Terms</Text>
-              <Text>{doc.paymentTerms}</Text>
+              <Text style={styles.footerBody}>{doc.paymentTerms}</Text>
             </View>
           ) : null}
           {doc.notes ? (
             <View style={styles.footerBlock}>
               <Text style={styles.label}>Notes</Text>
-              <Text>{doc.notes}</Text>
+              <Text style={styles.footerBody}>{doc.notes}</Text>
             </View>
           ) : null}
           {doc.terms ? (
             <View style={styles.footerBlock}>
               <Text style={styles.label}>Terms</Text>
-              <Text>{doc.terms}</Text>
+              <Text style={styles.footerBody}>{doc.terms}</Text>
             </View>
           ) : null}
           {company?.bankDetails && doc.type === "INVOICE" ? (
             <View style={styles.footerBlock}>
               <Text style={styles.label}>Payment Details</Text>
-              <Text>{company.bankDetails}</Text>
+              <Text style={styles.footerBody}>{company.bankDetails}</Text>
             </View>
           ) : null}
         </View>
