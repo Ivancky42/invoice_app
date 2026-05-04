@@ -1,32 +1,9 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { removeStoredLogo, saveLogoFile } from "@/lib/logo-storage";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import path from "path";
-import fs from "fs/promises";
-
-const ALLOWED = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml"]);
-const MAX_BYTES = 2 * 1024 * 1024;
-
-async function saveLogo(file: File, profileId: string): Promise<string> {
-  if (!ALLOWED.has(file.type)) throw new Error(`Unsupported file type: ${file.type}`);
-  if (file.size > MAX_BYTES) throw new Error("Logo is larger than 2MB");
-  const ext = file.type === "image/svg+xml" ? "svg" : file.type === "image/webp" ? "webp" : file.type === "image/png" ? "png" : "jpg";
-  const dir = path.join(process.cwd(), "public", "logos");
-  await fs.mkdir(dir, { recursive: true });
-  const filename = `${profileId}-${Date.now()}.${ext}`;
-  const abs = path.join(dir, filename);
-  const bytes = Buffer.from(await file.arrayBuffer());
-  await fs.writeFile(abs, bytes);
-  return `/logos/${filename}`;
-}
-
-async function removeLogo(logoPath: string | null | undefined) {
-  if (!logoPath || !logoPath.startsWith("/logos/")) return;
-  const abs = path.join(process.cwd(), "public", logoPath.replace(/^\//, ""));
-  try { await fs.unlink(abs); } catch {}
-}
 
 export async function saveProfile(formData: FormData) {
   const id = String(formData.get("id") || "");
@@ -53,14 +30,14 @@ export async function saveProfile(formData: FormData) {
   const logoFile = formData.get("logo");
   if (logoFile instanceof File && logoFile.size > 0) {
     const existing = await prisma.companyProfile.findUnique({ where: { id: profile.id } });
-    await removeLogo(existing?.logoPath);
-    const newPath = await saveLogo(logoFile, profile.id);
+    await removeStoredLogo(existing?.logoPath);
+    const newPath = await saveLogoFile(logoFile, profile.id);
     await prisma.companyProfile.update({ where: { id: profile.id }, data: { logoPath: newPath } });
   }
 
   if (formData.get("removeLogo") === "1") {
     const existing = await prisma.companyProfile.findUnique({ where: { id: profile.id } });
-    await removeLogo(existing?.logoPath);
+    await removeStoredLogo(existing?.logoPath);
     await prisma.companyProfile.update({ where: { id: profile.id }, data: { logoPath: null } });
   }
 
@@ -84,7 +61,7 @@ export async function deleteProfile(formData: FormData) {
   const inUse = await prisma.document.count({ where: { companyId: id } });
   if (inUse > 0) throw new Error(`Cannot delete: ${inUse} document(s) use this profile.`);
   const existing = await prisma.companyProfile.findUnique({ where: { id } });
-  await removeLogo(existing?.logoPath);
+  await removeStoredLogo(existing?.logoPath);
   await prisma.companyProfile.delete({ where: { id } });
   if (existing?.isDefault) {
     const next = await prisma.companyProfile.findFirst({ orderBy: { createdAt: "asc" } });

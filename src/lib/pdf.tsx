@@ -1,6 +1,5 @@
 import { Document, Page, Text, View, StyleSheet, Image, renderToBuffer } from "@react-pdf/renderer";
-import path from "path";
-import fs from "fs";
+import { resolveLogoSourceForPdf } from "./logo-storage";
 import { DOC_LABELS, LineItem, formatMoney } from "./types";
 import React from "react";
 
@@ -66,18 +65,10 @@ type Profile = {
   currency: string;
 } | null;
 
-function resolveLogo(logoPath?: string | null): string | undefined {
-  if (!logoPath) return undefined;
-  const clean = logoPath.startsWith("/") ? logoPath.slice(1) : logoPath;
-  const abs = path.join(process.cwd(), "public", clean);
-  if (fs.existsSync(abs)) return abs;
-  return undefined;
-}
-
 export function buildDocPDF(doc: DocLike, company: Profile) {
   const items = (doc.items as LineItem[]) ?? [];
   const currency = company?.currency || "USD";
-  const logoFile = resolveLogo(company?.logoPath);
+  const logoFile = resolveLogoSourceForPdf(company?.logoPath);
 
   return (
     <Document>
