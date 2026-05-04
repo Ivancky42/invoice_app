@@ -118,13 +118,6 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
           </View>
         </View>
 
-        {doc.projectDescription ? (
-          <View style={{ marginBottom: 16 }}>
-            <Text style={styles.label}>Project description</Text>
-            <Text style={styles.small}>{doc.projectDescription}</Text>
-          </View>
-        ) : null}
-
         {doc.shipToAttn || doc.shipToAddress ? (
           <View style={styles.twoCol}>
             <View style={styles.block}>
@@ -154,6 +147,13 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
             {doc.clientPhone ? <Text>{doc.clientPhone}</Text> : null}
           </View>
         )}
+
+        {doc.projectDescription ? (
+          <View style={{ marginBottom: 16 }}>
+            <Text style={styles.label}>Project description</Text>
+            <Text style={styles.small}>{doc.projectDescription}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.table}>
           <View style={styles.th}>
