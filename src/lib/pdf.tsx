@@ -47,7 +47,6 @@ const styles = StyleSheet.create({
 type DocLike = {
   type: string;
   number: string;
-  status: string;
   issueDate: Date;
   dueDate: Date | null;
   clientName: string;
@@ -114,7 +113,6 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
             {doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER") ? (
               <Text style={styles.docMeta}>PO: {doc.poNumber}</Text>
             ) : null}
-            <Text style={styles.docMeta}>Status: {doc.status}</Text>
           </View>
         </View>
 

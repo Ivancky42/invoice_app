@@ -126,7 +126,7 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
         )}
       </div>
 
-      {(doc.projectTitle || doc.projectDescription || (doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER"))) && (
+      {(doc.projectTitle || doc.projectDescription || doc.poNumber) && (
         <div className="card p-4 text-sm space-y-2">
           {(doc.projectTitle || doc.projectDescription) && (
             <div>
@@ -137,7 +137,7 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
               ) : null}
             </div>
           )}
-          {doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER") && (
+          {doc.poNumber && (
             <div>
               <span className="text-gray-500">PO: </span>
               <span className="font-medium">{doc.poNumber}</span>

@@ -186,17 +186,15 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
               onChange={(e) => setForm({ ...form, projectDescription: e.target.value })}
             />
           </div>
-          {(type === "INVOICE" || type === "DELIVERY_ORDER") && (
-            <div className="md:col-span-2">
+          <div className="md:col-span-2">
               <label className="label">PO number <span className="text-gray-400 font-normal">(optional)</span></label>
               <input
                 className="input"
-                placeholder="Customer purchase order reference"
+                placeholder="Customer purchase order reference (shown on invoice / DO PDF only)"
                 value={form.poNumber}
                 onChange={(e) => setForm({ ...form, poNumber: e.target.value })}
               />
             </div>
-          )}
         </div>
       </div>
 
