@@ -98,7 +98,7 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">
           {mode === "create" ? "New" : "Edit"} {DOC_LABELS[type]}
@@ -109,7 +109,7 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
         </div>
       </div>
 
-      <div className="card p-6 space-y-4">
+      <div className="card p-5 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="md:col-span-2">
             <label className="label">From (company profile) *</label>
@@ -180,7 +180,7 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
             <label className="label">Project description <span className="text-gray-400 font-normal">(optional)</span></label>
             <textarea
               className="input"
-              rows={4}
+              rows={3}
               placeholder="Scope, deliverables, or other project context"
               value={form.projectDescription}
               onChange={(e) => setForm({ ...form, projectDescription: e.target.value })}
@@ -200,7 +200,7 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
         </div>
       </div>
 
-      <div className="card p-6 space-y-4">
+      <div className="card p-5 space-y-4">
         <h2 className="font-medium">Bill to</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -222,7 +222,7 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
         </div>
       </div>
 
-      <div className="card p-6 space-y-4">
+      <div className="card p-5 space-y-4">
         <h2 className="font-medium">Ship to <span className="text-gray-400 font-normal text-sm">(optional)</span></h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -247,7 +247,7 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
         </div>
       </div>
 
-      <div className="card p-6 space-y-4">
+      <div className="card p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="font-medium">Line items</h2>
           <button className="btn" onClick={addItem}>+ Add item</button>
@@ -303,7 +303,7 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
         </div>
       </div>
 
-      <div className="card p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="card p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="label">Notes <span className="text-gray-400 font-normal">(optional)</span></label>
           <textarea className="input" rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />

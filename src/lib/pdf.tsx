@@ -5,41 +5,68 @@ import React from "react";
 
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 10, fontFamily: "Helvetica", color: "#111827" },
-  header: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 14,
+  },
   brand: { flexDirection: "row", alignItems: "flex-start" },
   logo: { width: 50, height: 50, objectFit: "contain", marginRight: 10 },
-  companyName: { fontSize: 14, fontFamily: "Helvetica-Bold", marginBottom: 4 },
-  companyLine: { fontSize: 9, color: "#4b5563", lineHeight: 13.5, marginBottom: 2 },
+  companyName: { fontSize: 14, fontFamily: "Helvetica-Bold", marginBottom: 2 },
+  companyDetails: { fontSize: 9, color: "#4b5563", lineHeight: 11 },
   docTitle: { fontSize: 22, fontFamily: "Helvetica-Bold", textAlign: "right" },
-  docMeta: { fontSize: 9, color: "#4b5563", textAlign: "right", marginTop: 4 },
-  twoCol: { flexDirection: "row", justifyContent: "space-between", marginBottom: 18 },
-  billShipSection: { marginBottom: 18 },
+  docMeta: { fontSize: 9, color: "#4b5563", textAlign: "right", marginTop: 3 },
+  twoCol: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 10,
+  },
+  billShipSection: { marginBottom: 10 },
   block: { width: "48%" },
-  label: { fontSize: 8, color: "#6b7280", textTransform: "uppercase", marginBottom: 6 },
-  bold: { fontFamily: "Helvetica-Bold" },
-  partyName: { fontFamily: "Helvetica-Bold", fontSize: 10, lineHeight: 15, marginBottom: 3 },
-  partyLine: { fontSize: 10, lineHeight: 14.5, marginBottom: 3 },
-  table: { marginTop: 8, borderTopWidth: 1, borderTopColor: "#e5e7eb" },
-  th: { flexDirection: "row", backgroundColor: "#f9fafb", paddingVertical: 6, paddingHorizontal: 4, fontSize: 9, fontFamily: "Helvetica-Bold" },
-  tr: { flexDirection: "row", paddingVertical: 6, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: "#f3f4f6" },
-  cDesc: { flex: 1 },
-  cQty: { width: 50, textAlign: "right" },
-  cUnit: { width: 70, textAlign: "right" },
-  cAmt: { width: 80, textAlign: "right" },
-  totals: { marginTop: 12, alignSelf: "flex-end", width: 240 },
-  totalsRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 },
-  totalLine: { borderTopWidth: 1, borderTopColor: "#111827", marginTop: 4, paddingTop: 6, fontFamily: "Helvetica-Bold" },
-  footer: { marginTop: 24, fontSize: 9, color: "#374151" },
-  footerBlock: { marginBottom: 11 },
-  footerBody: { fontSize: 9, color: "#374151", lineHeight: 13.5 },
-  projectSection: {
-    marginBottom: 16,
-    paddingBottom: 12,
+  label: { fontSize: 8, color: "#6b7280", textTransform: "uppercase", marginBottom: 4 },
+  partyName: { fontFamily: "Helvetica-Bold", fontSize: 10, lineHeight: 12, marginBottom: 2 },
+  partyDetails: { fontSize: 10, lineHeight: 12 },
+  table: { marginTop: 6, borderTopWidth: 1, borderTopColor: "#e5e7eb" },
+  th: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#f9fafb",
+    paddingVertical: 5,
+    paddingHorizontal: 4,
     borderBottomWidth: 1,
     borderBottomColor: "#e5e7eb",
   },
-  projectTitleLine: { fontSize: 11, fontFamily: "Helvetica-Bold", lineHeight: 15, marginBottom: 6 },
-  projectDesc: { fontSize: 9, color: "#374151", lineHeight: 13.5 },
+  thCellText: { fontSize: 9, fontFamily: "Helvetica-Bold" },
+  tr: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+  },
+  cDescCell: { width: "50%", paddingRight: 6 },
+  cQtyCell: { width: "12%", paddingRight: 4 },
+  cUnitCell: { width: "19%", paddingRight: 4 },
+  cAmtCell: { width: "19%" },
+  trDescText: { fontSize: 10 },
+  trCellRight: { fontSize: 10, textAlign: "right" },
+  totals: { marginTop: 10, alignSelf: "flex-end", width: 240 },
+  totalsRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 },
+  totalLine: { borderTopWidth: 1, borderTopColor: "#111827", marginTop: 4, paddingTop: 6, fontFamily: "Helvetica-Bold" },
+  footer: { marginTop: 16, fontSize: 9, color: "#374151" },
+  footerBlock: { marginBottom: 7 },
+  footerBody: { fontSize: 9, color: "#374151", lineHeight: 12 },
+  projectSection: {
+    marginBottom: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  projectTitleLine: { fontSize: 11, fontFamily: "Helvetica-Bold", lineHeight: 13, marginBottom: 2 },
+  projectDesc: { fontSize: 9, color: "#374151", lineHeight: 11 },
 });
 
 type DocLike = {
@@ -82,24 +109,49 @@ type Profile = {
   currency: string;
 } | null;
 
+/** Collapse multi-line fields into one Text node — avoids react-pdf flex-row + many siblings blowing up pagination. */
+function pdfJoinLines(...parts: (string | null | undefined)[]): string {
+  const lines: string[] = [];
+  for (const p of parts) {
+    const s = typeof p === "string" ? p.trim() : "";
+    if (s) lines.push(s);
+  }
+  return lines.join("\n");
+}
+
 export function buildDocPDF(doc: DocLike, company: Profile) {
   const items = (doc.items as LineItem[]) ?? [];
   const currency = company?.currency || "USD";
   const logoFile = resolveLogoSourceForPdf(company?.logoPath);
 
+  const companyLines = pdfJoinLines(
+    company?.address,
+    company?.email ?? undefined,
+    company?.phone ?? undefined,
+    company?.registration ? `Reg: ${company.registration}` : undefined,
+    company?.taxId ? `Tax ID: ${company.taxId}` : undefined,
+  );
+
+  const billLines = pdfJoinLines(doc.clientAddress, doc.clientEmail, doc.clientPhone);
+
+  const shipLines = pdfJoinLines(
+    doc.shipToAttn ? `Attn: ${doc.shipToAttn}` : undefined,
+    doc.shipToAddress ?? undefined,
+  );
+
   return (
     <Document>
-      <Page size="A4" style={styles.page}>
-        <View style={styles.header}>
+      <Page size="A4" style={styles.page} wrap>
+        <View style={styles.header} wrap={false}>
           <View style={styles.brand}>
             {logoFile ? <Image style={styles.logo} src={logoFile} /> : null}
             <View>
               <Text style={styles.companyName}>{company?.name || "Your Company"}</Text>
-              {company?.address ? <Text style={styles.companyLine}>{company.address}</Text> : null}
-              {company?.email ? <Text style={styles.companyLine}>{company.email}</Text> : null}
-              {company?.phone ? <Text style={styles.companyLine}>{company.phone}</Text> : null}
-              {company?.registration ? <Text style={styles.companyLine}>Reg: {company.registration}</Text> : null}
-              {company?.taxId ? <Text style={styles.companyLine}>Tax ID: {company.taxId}</Text> : null}
+              {companyLines ? (
+                <Text style={styles.companyDetails} orphans={1} widows={1}>
+                  {companyLines}
+                </Text>
+              ) : null}
             </View>
           </View>
           <View>
@@ -118,8 +170,16 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
         {doc.projectTitle || doc.projectDescription ? (
           <View style={styles.projectSection}>
             <Text style={styles.label}>Project</Text>
-            {doc.projectTitle ? <Text style={styles.projectTitleLine}>{doc.projectTitle}</Text> : null}
-            {doc.projectDescription ? <Text style={styles.projectDesc}>{doc.projectDescription}</Text> : null}
+            {doc.projectTitle ? (
+              <Text style={styles.projectTitleLine} orphans={1} widows={1}>
+                {doc.projectTitle}
+              </Text>
+            ) : null}
+            {doc.projectDescription ? (
+              <Text style={styles.projectDesc} orphans={1} widows={1}>
+                {doc.projectDescription}
+              </Text>
+            ) : null}
           </View>
         ) : null}
 
@@ -128,44 +188,64 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
             <View style={styles.block}>
               <Text style={styles.label}>Bill To</Text>
               <Text style={styles.partyName}>{doc.clientName}</Text>
-              {doc.clientAddress ? <Text style={styles.partyLine}>{doc.clientAddress}</Text> : null}
-              {doc.clientEmail ? <Text style={styles.partyLine}>{doc.clientEmail}</Text> : null}
-              {doc.clientPhone ? <Text style={styles.partyLine}>{doc.clientPhone}</Text> : null}
+              {billLines ? (
+                <Text style={styles.partyDetails} orphans={1} widows={1}>
+                  {billLines}
+                </Text>
+              ) : null}
             </View>
             <View style={styles.block}>
               <Text style={styles.label}>Ship To</Text>
-              {doc.shipToAttn ? (
-                <Text style={styles.partyLine}>
-                  <Text style={styles.bold}>Attn: </Text>
-                  {doc.shipToAttn}
+              {shipLines ? (
+                <Text style={styles.partyDetails} orphans={1} widows={1}>
+                  {shipLines}
                 </Text>
               ) : null}
-              {doc.shipToAddress ? <Text style={styles.partyLine}>{doc.shipToAddress}</Text> : null}
             </View>
           </View>
         ) : (
           <View style={styles.billShipSection}>
             <Text style={styles.label}>Bill To</Text>
             <Text style={styles.partyName}>{doc.clientName}</Text>
-            {doc.clientAddress ? <Text style={styles.partyLine}>{doc.clientAddress}</Text> : null}
-            {doc.clientEmail ? <Text style={styles.partyLine}>{doc.clientEmail}</Text> : null}
-            {doc.clientPhone ? <Text style={styles.partyLine}>{doc.clientPhone}</Text> : null}
+            {billLines ? (
+              <Text style={styles.partyDetails} orphans={1} widows={1}>
+                {billLines}
+              </Text>
+            ) : null}
           </View>
         )}
 
         <View style={styles.table}>
           <View style={styles.th}>
-            <Text style={styles.cDesc}>Description</Text>
-            <Text style={styles.cQty}>Qty</Text>
-            <Text style={styles.cUnit}>Unit</Text>
-            <Text style={styles.cAmt}>Amount</Text>
+            <View style={styles.cDescCell}>
+              <Text style={styles.thCellText}>Description</Text>
+            </View>
+            <View style={styles.cQtyCell}>
+              <Text style={[styles.thCellText, { textAlign: "right" }]}>Qty</Text>
+            </View>
+            <View style={styles.cUnitCell}>
+              <Text style={[styles.thCellText, { textAlign: "right" }]}>Unit</Text>
+            </View>
+            <View style={styles.cAmtCell}>
+              <Text style={[styles.thCellText, { textAlign: "right" }]}>Amount</Text>
+            </View>
           </View>
           {items.map((it, i) => (
             <View style={styles.tr} key={i}>
-              <Text style={styles.cDesc}>{it.description}</Text>
-              <Text style={styles.cQty}>{it.quantity}</Text>
-              <Text style={styles.cUnit}>{formatMoney(it.unitPrice, currency)}</Text>
-              <Text style={styles.cAmt}>{formatMoney((it.quantity || 0) * (it.unitPrice || 0), currency)}</Text>
+              <View style={styles.cDescCell}>
+                <Text style={styles.trDescText} orphans={1} widows={1}>
+                  {it.description}
+                </Text>
+              </View>
+              <View style={styles.cQtyCell}>
+                <Text style={styles.trCellRight}>{it.quantity}</Text>
+              </View>
+              <View style={styles.cUnitCell}>
+                <Text style={styles.trCellRight}>{formatMoney(it.unitPrice, currency)}</Text>
+              </View>
+              <View style={styles.cAmtCell}>
+                <Text style={styles.trCellRight}>{formatMoney((it.quantity || 0) * (it.unitPrice || 0), currency)}</Text>
+              </View>
             </View>
           ))}
         </View>
@@ -195,25 +275,33 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
           {doc.paymentTerms ? (
             <View style={styles.footerBlock}>
               <Text style={styles.label}>Payment Terms</Text>
-              <Text style={styles.footerBody}>{doc.paymentTerms}</Text>
+              <Text style={styles.footerBody} orphans={1} widows={1}>
+                {doc.paymentTerms}
+              </Text>
             </View>
           ) : null}
           {doc.notes ? (
             <View style={styles.footerBlock}>
               <Text style={styles.label}>Notes</Text>
-              <Text style={styles.footerBody}>{doc.notes}</Text>
+              <Text style={styles.footerBody} orphans={1} widows={1}>
+                {doc.notes}
+              </Text>
             </View>
           ) : null}
           {doc.terms ? (
             <View style={styles.footerBlock}>
               <Text style={styles.label}>Terms</Text>
-              <Text style={styles.footerBody}>{doc.terms}</Text>
+              <Text style={styles.footerBody} orphans={1} widows={1}>
+                {doc.terms}
+              </Text>
             </View>
           ) : null}
           {company?.bankDetails && doc.type === "INVOICE" ? (
             <View style={styles.footerBlock}>
               <Text style={styles.label}>Payment Details</Text>
-              <Text style={styles.footerBody}>{company.bankDetails}</Text>
+              <Text style={styles.footerBody} orphans={1} widows={1}>
+                {company.bankDetails}
+              </Text>
             </View>
           ) : null}
         </View>

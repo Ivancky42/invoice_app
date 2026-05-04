@@ -41,7 +41,7 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="text-sm text-gray-500">{DOC_LABELS[doc.type]}</div>
@@ -90,7 +90,7 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
         </div>
       )}
 
-      <div className="card p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="card p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <div className="text-xs uppercase text-gray-500 mb-1">From</div>
           {company ? (
@@ -127,13 +127,13 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
       </div>
 
       {(doc.projectTitle || doc.projectDescription || (doc.poNumber && (doc.type === "INVOICE" || doc.type === "DELIVERY_ORDER"))) && (
-        <div className="card p-4 text-sm space-y-3">
+        <div className="card p-4 text-sm space-y-2">
           {(doc.projectTitle || doc.projectDescription) && (
             <div>
-              <div className="text-xs uppercase text-gray-500 mb-2">Project</div>
+              <div className="text-xs uppercase text-gray-500 mb-1">Project</div>
               {doc.projectTitle ? <div className="font-semibold">{doc.projectTitle}</div> : null}
               {doc.projectDescription ? (
-                <div className="text-gray-700 whitespace-pre-line mt-1">{doc.projectDescription}</div>
+                <div className="text-gray-700 whitespace-pre-line mt-0.5">{doc.projectDescription}</div>
               ) : null}
             </div>
           )}
