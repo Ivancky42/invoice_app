@@ -7,6 +7,8 @@ import {
   fmtNum,
   fmtPct,
   holdingsByTicker,
+  isCashTicker,
+  notionCashBalanceUsd,
   pnl,
   positionPnl,
   riskBadgeClass,
@@ -60,24 +62,46 @@ export default async function PortfolioPage() {
               const cur = decToNum(p.currentPrice);
               const cost = decToNum(p.myAvgCost);
               const shares = holdings.get(p.ticker) ?? null;
-              const per = pnl(cur, cost);
-              const pos = positionPnl(cur, cost, shares);
+              const cashRow = isCashTicker(p.ticker);
+              const cashBal = cashRow ? notionCashBalanceUsd(p.currentPrice, p.myAvgCost) : 0;
+              const per = cashRow ? { pct: null } : pnl(cur, cost);
+              const pos = cashRow
+                ? { dollar: null }
+                : positionPnl(cur, cost, shares);
               return (
                 <tr key={p.notionId} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <div className="font-medium">{p.ticker}</div>
-                    <div className="text-xs text-gray-500">{p.company ?? "—"}</div>
+                    <div className="text-xs text-gray-500">
+                      {cashRow ? "Cash balance" : (p.company ?? "—")}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
-                    {shares !== null ? fmtNum(shares, 0) : <span className="text-gray-400">—</span>}
+                    {cashRow ? (
+                      <span className="text-gray-400">—</span>
+                    ) : shares !== null ? (
+                      fmtNum(shares, 0)
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-right">{fmtMoney(cur)}</td>
-                  <td className="px-4 py-3 text-right">{fmtMoney(cost)}</td>
                   <td className="px-4 py-3 text-right">
-                    <div className={(pos.dollar ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}>
-                      {pos.dollar !== null ? fmtMoney(pos.dollar) : <span className="text-gray-400">—</span>}
-                    </div>
-                    <div className="text-xs text-gray-500">{fmtPct(per.pct)}</div>
+                    {cashRow ? fmtMoney(cashBal > 0 ? cashBal : null) : fmtMoney(cur)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {cashRow ? <span className="text-gray-400">—</span> : fmtMoney(cost)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {cashRow ? (
+                      <span className="text-gray-400">—</span>
+                    ) : (
+                      <>
+                        <div className={(pos.dollar ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}>
+                          {pos.dollar !== null ? fmtMoney(pos.dollar) : <span className="text-gray-400">—</span>}
+                        </div>
+                        <div className="text-xs text-gray-500">{fmtPct(per.pct)}</div>
+                      </>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right">{fmtMoney(decToNum(p.analystTarget))}</td>
                   <td className="px-4 py-3 text-right">{fmtPct(p.upsidePct)}</td>

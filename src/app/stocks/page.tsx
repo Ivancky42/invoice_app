@@ -7,6 +7,8 @@ import {
   fmtMoney,
   fmtPct,
   holdingsByTicker,
+  isCashTicker,
+  notionCashBalanceUsd,
   pnl,
   positionPnl,
 } from "@/lib/stocks/format";
@@ -36,6 +38,8 @@ const RISK_COLORS: Record<string, string> = {
   Unknown: "#9ca3af",
 };
 
+const CASH_DONUT_COLOR = "#64748b";
+
 export default async function StocksOverview() {
   const [portfolio, watchlist, trades, status] = await Promise.all([
     getPortfolio(),
@@ -47,9 +51,9 @@ export default async function StocksOverview() {
   const holdings = holdingsByTicker(trades);
 
   let totalPnlDollar = 0;
-  let totalMarketValue = 0;
+  let totalEquitiesMarketValue = 0;
   let hasPnl = false;
-  let hasMarketValue = false;
+  let hasEquitiesValue = false;
 
   type Row = {
     ticker: string;
@@ -62,6 +66,18 @@ export default async function StocksOverview() {
   };
 
   const rows: Row[] = portfolio.map((p) => {
+    if (isCashTicker(p.ticker)) {
+      const bal = notionCashBalanceUsd(p.currentPrice, p.myAvgCost);
+      return {
+        ticker: p.ticker,
+        action: p.action,
+        riskLevel: p.riskLevel,
+        shares: null,
+        pnlDollar: null,
+        pnlPct: null,
+        marketValue: bal > 0 ? bal : null,
+      };
+    }
     const cur = decToNum(p.currentPrice);
     const cost = decToNum(p.myAvgCost);
     const shares = holdings.get(p.ticker) ?? null;
@@ -72,8 +88,8 @@ export default async function StocksOverview() {
       hasPnl = true;
     }
     if (r.marketValue !== null && r.marketValue > 0) {
-      totalMarketValue += r.marketValue;
-      hasMarketValue = true;
+      totalEquitiesMarketValue += r.marketValue;
+      hasEquitiesValue = true;
     }
     return {
       ticker: p.ticker,
@@ -86,6 +102,10 @@ export default async function StocksOverview() {
     };
   });
 
+  const cashPosition = rows
+    .filter((r) => isCashTicker(r.ticker) && r.marketValue !== null && r.marketValue > 0)
+    .reduce((s, r) => s + (r.marketValue as number), 0);
+
   const movers = rows
     .filter((m) => m.pnlPct !== null)
     .sort((a, b) => Math.abs(b.pnlPct ?? 0) - Math.abs(a.pnlPct ?? 0))
@@ -93,29 +113,58 @@ export default async function StocksOverview() {
 
   const openTrades = trades.filter((t) => t.status?.includes("Open")).length;
 
-  const valueSegments: DonutSegment[] = rows
+  const totalPortfolioValue = totalEquitiesMarketValue + cashPosition;
+
+  type ValueSlice = {
+    label: string;
+    value: number;
+    sublabel?: string;
+    isCash: boolean;
+  };
+  const valueSlices: ValueSlice[] = rows
     .filter((r) => r.marketValue !== null && r.marketValue > 0)
-    .sort((a, b) => (b.marketValue ?? 0) - (a.marketValue ?? 0))
-    .map((r, i) => ({
-      label: r.ticker,
+    .map((r) => ({
+      label: isCashTicker(r.ticker) ? "Cash" : r.ticker,
       value: r.marketValue as number,
-      color: TICKER_PALETTE[i % TICKER_PALETTE.length],
-      sublabel: r.shares !== null ? `${r.shares.toLocaleString()} sh` : undefined,
-    }));
+      sublabel: isCashTicker(r.ticker)
+        ? undefined
+        : r.shares !== null
+          ? `${r.shares.toLocaleString()} sh`
+          : undefined,
+      isCash: isCashTicker(r.ticker),
+    }))
+    .sort((a, b) => b.value - a.value);
+
+  let paletteIdx = 0;
+  const valueSegments: DonutSegment[] = valueSlices.map((s) => ({
+    label: s.label,
+    value: s.value,
+    sublabel: s.sublabel,
+    color: s.isCash ? CASH_DONUT_COLOR : TICKER_PALETTE[paletteIdx++ % TICKER_PALETTE.length],
+  }));
 
   const riskTotals = new Map<string, number>();
   for (const r of rows) {
     if (r.marketValue === null || r.marketValue <= 0) continue;
-    const key = r.riskLevel ?? "Unknown";
-    riskTotals.set(key, (riskTotals.get(key) ?? 0) + r.marketValue);
+    if (isCashTicker(r.ticker)) {
+      riskTotals.set("Cash", (riskTotals.get("Cash") ?? 0) + r.marketValue);
+    } else {
+      const key = r.riskLevel ?? "Unknown";
+      riskTotals.set(key, (riskTotals.get(key) ?? 0) + r.marketValue);
+    }
   }
   const RISK_ORDER = ["Low", "Low-Medium", "Medium", "Medium-High", "High", "Very High", "Unknown"];
+  function riskSliceOrder(label: string): number {
+    if (label === "Cash") return RISK_ORDER.length + 1;
+    const i = RISK_ORDER.indexOf(label);
+    return i === -1 ? RISK_ORDER.length : i;
+  }
   const riskSegments: DonutSegment[] = Array.from(riskTotals.entries())
-    .sort((a, b) => RISK_ORDER.indexOf(a[0]) - RISK_ORDER.indexOf(b[0]))
+    .sort((a, b) => riskSliceOrder(a[0]) - riskSliceOrder(b[0]))
     .map(([label, value]) => ({
       label,
       value,
-      color: RISK_COLORS[label] ?? "#9ca3af",
+      color: label === "Cash" ? CASH_DONUT_COLOR : (RISK_COLORS[label] ?? "#9ca3af"),
     }));
 
   return (
@@ -147,9 +196,16 @@ export default async function StocksOverview() {
           <div className={`text-2xl font-semibold mt-1 ${totalPnlDollar >= 0 ? "text-emerald-700" : "text-red-700"}`}>
             {hasPnl ? fmtMoney(totalPnlDollar) : "—"}
           </div>
-          {hasMarketValue && (
+          {(hasEquitiesValue || cashPosition > 0) && (
             <div className="text-xs text-gray-500 mt-1">
-              Market value {fmtMoney(totalMarketValue)}
+              {cashPosition > 0 && hasEquitiesValue && (
+                <>
+                  Equities {fmtMoney(totalEquitiesMarketValue)} · Cash {fmtMoney(cashPosition)} · Total{" "}
+                  {fmtMoney(totalPortfolioValue)}
+                </>
+              )}
+              {cashPosition > 0 && !hasEquitiesValue && <>Cash {fmtMoney(cashPosition)}</>}
+              {cashPosition === 0 && hasEquitiesValue && <>Market value {fmtMoney(totalEquitiesMarketValue)}</>}
             </div>
           )}
         </div>
@@ -165,19 +221,19 @@ export default async function StocksOverview() {
           </div>
           <DonutChart
             segments={valueSegments}
-            centerValue={totalMarketValue}
-            centerLabel="Market value"
+            centerValue={totalPortfolioValue > 0 ? totalPortfolioValue : undefined}
+            centerLabel="Total value"
           />
         </div>
         <div className="card p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-medium">Allocation by risk level</h2>
-            <span className="text-xs text-gray-500">% of portfolio value</span>
+            <span className="text-xs text-gray-500">% of equities + cash</span>
           </div>
           <DonutChart
             segments={riskSegments}
-            centerValue={totalMarketValue}
-            centerLabel="Market value"
+            centerValue={totalPortfolioValue > 0 ? totalPortfolioValue : undefined}
+            centerLabel="Total value"
           />
         </div>
       </section>

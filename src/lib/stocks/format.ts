@@ -7,6 +7,25 @@ export function decToNum(d: Decimal | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Notion Portfolio DB uses ticker `CASH_USD` for the cash / money-market balance row. */
+export function isCashTicker(ticker: string | null | undefined): boolean {
+  return (ticker ?? "").trim().toUpperCase() === "CASH_USD";
+}
+
+/**
+ * USD balance on that row: **Current Price**, else **My Avg Cost** (Notion often duplicates both).
+ */
+export function notionCashBalanceUsd(
+  currentPrice: Parameters<typeof decToNum>[0],
+  avgCost: Parameters<typeof decToNum>[0],
+): number {
+  const cur = decToNum(currentPrice);
+  const cost = decToNum(avgCost);
+  if (cur !== null && cur > 0) return cur;
+  if (cost !== null && cost > 0) return cost;
+  return 0;
+}
+
 export function fmtMoney(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return "—";
   return n.toLocaleString("en-US", {
