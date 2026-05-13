@@ -74,7 +74,7 @@ export default async function PortfolioPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{p.ticker}</span>
                       {!cashRow && p.inDcaZone && (
-                        <span className="badge bg-emerald-100 text-emerald-800 whitespace-nowrap" title="Current price is inside the Entry zone range (Notion Current Price vs Entry Zone)">
+                        <span className="badge bg-emerald-100 text-emerald-800 whitespace-nowrap" title="Badge only when Current price is between two numbers parsed from Entry zone. A single price in that field does not turn this on.">
                           📉 Add zone
                         </span>
                       )}
@@ -157,7 +157,7 @@ export default async function PortfolioPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{p.ticker}</span>
                       {!isCashTicker(p.ticker) && p.inDcaZone && (
-                        <span className="badge bg-emerald-100 text-emerald-800 whitespace-nowrap" title="Current price is inside the Entry zone range synced from Notion">
+                        <span className="badge bg-emerald-100 text-emerald-800 whitespace-nowrap" title="Badge only when Current price is between two numbers parsed from Entry zone. A single price in that field does not turn this on.">
                           📉 Add zone
                         </span>
                       )}

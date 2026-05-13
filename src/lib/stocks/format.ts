@@ -27,48 +27,53 @@ export function notionCashBalanceUsd(
 }
 
 /**
- * Low / high parsed from Notion **Entry Zone** text, e.g. `$160.00–$175.00` (en dash or hyphen).
- * If only one number is present (e.g. `Below $175`), returns `{ low: null, high }`.
+ * Pull every money-like number out of free-form Entry zone text (supports `$`, commas, `160–175`, `160 to 175`).
+ * Avoids naive `-` splitting, which can glue digits (`160 to 175` → `160175`) or over-split decimals.
+ */
+function extractEntryZoneNumbers(entryZone: string): number[] {
+  const normalized = entryZone
+    .replace(/\u2013/g, " ")
+    .replace(/\u2014/g, " ")
+    .replace(/,/g, "");
+  const re = /\$?\s*([\d]+(?:\.\d+)?)/g;
+  const out: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(normalized)) !== null) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * Low / high of the DCA band from Notion **Entry Zone** text.
+ * Uses the **min and max** of all parsed prices when **two or more** numbers exist; one number yields only `high` (for display / sort, not for the in-zone badge).
  */
 export function parseDcaZoneBounds(entryZone: string | null | undefined): {
   low: number | null;
   high: number | null;
 } {
   if (!entryZone?.trim()) return { low: null, high: null };
-  const s = entryZone.replace(/\u2013/g, "-").replace(/\u2014/g, "-").trim();
-
-  function parsePart(raw: string): number | null {
-    const digits = raw.replace(/[^0-9.]/g, "");
-    if (!digits) return null;
-    const n = Number(digits);
-    return Number.isFinite(n) ? n : null;
+  const nums = extractEntryZoneNumbers(entryZone.trim());
+  if (nums.length >= 2) {
+    return { low: Math.min(...nums), high: Math.max(...nums) };
   }
-
-  const parts = s
-    .split("-")
-    .map((x) => x.trim())
-    .filter(Boolean);
-
-  if (parts.length >= 2) {
-    const low = parsePart(parts[0]!);
-    const high = parsePart(parts[parts.length - 1]!);
-    return { low, high };
-  }
-  if (parts.length === 1) {
-    const v = parsePart(parts[0]!);
-    return { low: null, high: v };
+  if (nums.length === 1) {
+    return { low: null, high: nums[0]! };
   }
   return { low: null, high: null };
 }
 
 export function parseDcaZoneUpper(entryZone: string | null | undefined): number | null {
-  const { high } = parseDcaZoneBounds(entryZone);
+  const { low, high } = parseDcaZoneBounds(entryZone);
+  if (high === null) return null;
+  if (low !== null) return high;
   return high;
 }
 
 /**
- * True when **current price** is inside the entry band: between parsed low and high (inclusive).
- * If the zone is a single ceiling (one number), true when price <= that value.
+ * True when **current price** is **inside** a **two-ended** entry band (inclusive).
+ * A single price in the field is ignored for the badge so we don’t treat “/ under $175” as “always in zone” for cheap stocks.
  */
 export function priceInDcaZone(
   currentPrice: Parameters<typeof decToNum>[0],
@@ -76,15 +81,11 @@ export function priceInDcaZone(
 ): boolean {
   const cur = decToNum(currentPrice);
   if (cur === null) return false;
-  const { low, high } = parseDcaZoneBounds(entryZone);
-  if (low !== null && high !== null) {
-    const lo = Math.min(low, high);
-    const hi = Math.max(low, high);
-    return cur >= lo && cur <= hi;
-  }
-  if (low === null && high !== null) return cur <= high;
-  if (low !== null && high === null) return cur >= low;
-  return false;
+  const nums = extractEntryZoneNumbers((entryZone ?? "").trim());
+  if (nums.length < 2) return false;
+  const lo = Math.min(...nums);
+  const hi = Math.max(...nums);
+  return cur >= lo && cur <= hi;
 }
 
 export function fmtMoney(n: number | null | undefined): string {
