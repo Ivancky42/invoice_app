@@ -1,18 +1,26 @@
-import { getPortfolio, getSyncStatus } from "@/lib/stocks/db";
+import { getPortfolio, getSyncStatus, getTrades } from "@/lib/stocks/db";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import {
   actionBadgeClass,
   decToNum,
   fmtMoney,
+  fmtNum,
   fmtPct,
+  holdingsByTicker,
   pnl,
+  positionPnl,
   riskBadgeClass,
 } from "@/lib/stocks/format";
 
 export const revalidate = 900;
 
 export default async function PortfolioPage() {
-  const [rows, status] = await Promise.all([getPortfolio(), getSyncStatus()]);
+  const [rows, trades, status] = await Promise.all([
+    getPortfolio(),
+    getTrades(),
+    getSyncStatus(),
+  ]);
+  const holdings = holdingsByTicker(trades);
 
   return (
     <div className="space-y-6">
@@ -28,6 +36,7 @@ export default async function PortfolioPage() {
           <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide">
             <tr>
               <th className="text-left px-4 py-2">Ticker</th>
+              <th className="text-right px-4 py-2">Shares</th>
               <th className="text-right px-4 py-2">Price</th>
               <th className="text-right px-4 py-2">Avg Cost</th>
               <th className="text-right px-4 py-2">P&L</th>
@@ -42,7 +51,7 @@ export default async function PortfolioPage() {
           <tbody className="divide-y">
             {rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={11} className="px-4 py-8 text-center text-gray-500">
                   No holdings yet — run the Notion sync.
                 </td>
               </tr>
@@ -50,20 +59,25 @@ export default async function PortfolioPage() {
             {rows.map((p) => {
               const cur = decToNum(p.currentPrice);
               const cost = decToNum(p.myAvgCost);
-              const r = pnl(cur, cost);
+              const shares = holdings.get(p.ticker) ?? null;
+              const per = pnl(cur, cost);
+              const pos = positionPnl(cur, cost, shares);
               return (
                 <tr key={p.notionId} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <div className="font-medium">{p.ticker}</div>
                     <div className="text-xs text-gray-500">{p.company ?? "—"}</div>
                   </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {shares !== null ? fmtNum(shares, 0) : <span className="text-gray-400">—</span>}
+                  </td>
                   <td className="px-4 py-3 text-right">{fmtMoney(cur)}</td>
                   <td className="px-4 py-3 text-right">{fmtMoney(cost)}</td>
                   <td className="px-4 py-3 text-right">
-                    <div className={(r.pct ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}>
-                      {fmtPct(r.pct)}
+                    <div className={(pos.dollar ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}>
+                      {pos.dollar !== null ? fmtMoney(pos.dollar) : <span className="text-gray-400">—</span>}
                     </div>
-                    <div className="text-xs text-gray-500">{fmtMoney(r.dollar)}</div>
+                    <div className="text-xs text-gray-500">{fmtPct(per.pct)}</div>
                   </td>
                   <td className="px-4 py-3 text-right">{fmtMoney(decToNum(p.analystTarget))}</td>
                   <td className="px-4 py-3 text-right">{fmtPct(p.upsidePct)}</td>

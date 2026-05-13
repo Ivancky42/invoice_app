@@ -1,4 +1,5 @@
 import type { Decimal } from "@/generated/prisma/internal/prismaNamespace";
+import type { TradeRow } from "@/lib/stocks/db";
 
 export function decToNum(d: Decimal | null | undefined): number | null {
   if (d === null || d === undefined) return null;
@@ -73,11 +74,63 @@ export function priorityBadgeClass(priority: string | null | undefined): string 
   return "bg-gray-100 text-gray-700";
 }
 
-/** Compute P&L vs avg cost (in dollars and percent). */
+/** Compute per-share P&L vs avg cost (in dollars and percent). */
 export function pnl(currentPrice: number | null, avgCost: number | null): { dollar: number | null; pct: number | null } {
   if (currentPrice === null || avgCost === null || avgCost === 0) return { dollar: null, pct: null };
   return {
     dollar: currentPrice - avgCost,
     pct: (currentPrice - avgCost) / avgCost,
+  };
+}
+
+/**
+ * Compute net shares currently held per ticker by walking the trade log.
+ * Adds (BUY/ADD) increase the position; reductions (SELL/TRIM/EXIT/STOP/CLOSE)
+ * decrease it. Tickers with zero or near-zero net shares are dropped.
+ */
+export function holdingsByTicker(trades: TradeRow[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const t of trades) {
+    if (!t.ticker) continue;
+    const shares = decToNum(t.shares);
+    if (shares === null || shares === 0) continue;
+    const type = (t.type ?? "").toUpperCase();
+    let signed = 0;
+    if (type.includes("BUY") || type.includes("ADD")) {
+      signed = Math.abs(shares);
+    } else if (
+      type.includes("SELL") ||
+      type.includes("TRIM") ||
+      type.includes("EXIT") ||
+      type.includes("STOP") ||
+      type.includes("CLOSE")
+    ) {
+      signed = -Math.abs(shares);
+    } else {
+      continue;
+    }
+    map.set(t.ticker, (map.get(t.ticker) ?? 0) + signed);
+  }
+  for (const [k, v] of map) {
+    if (Math.abs(v) < 1e-6) map.delete(k);
+  }
+  return map;
+}
+
+/** Position-level P&L in actual dollars: shares * (currentPrice - avgCost). */
+export function positionPnl(
+  currentPrice: number | null,
+  avgCost: number | null,
+  shares: number | null,
+): { dollar: number | null; pct: number | null; marketValue: number | null; costBasis: number | null } {
+  const per = pnl(currentPrice, avgCost);
+  if (shares === null || shares === 0 || per.dollar === null) {
+    return { dollar: null, pct: per.pct, marketValue: null, costBasis: null };
+  }
+  return {
+    dollar: per.dollar * shares,
+    pct: per.pct,
+    marketValue: (currentPrice ?? 0) * shares,
+    costBasis: (avgCost ?? 0) * shares,
   };
 }
