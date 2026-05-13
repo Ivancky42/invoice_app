@@ -115,18 +115,28 @@ export default async function PortfolioPage() {
         </table>
       </section>
 
-      {rows.length > 0 && (
+      {rows.length > 0 && rows.some((p) => p.thesis || p.notes || p.keyRisk) && (
         <section className="space-y-3">
-          <h2 className="text-sm font-medium text-gray-700">Theses</h2>
+          <h2 className="text-sm font-medium text-gray-700">Theses &amp; notes</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {rows.map((p) =>
-              p.thesis ? (
+              p.thesis || p.notes || p.keyRisk ? (
                 <div key={`th-${p.notionId}`} className="card p-4">
                   <div className="flex items-center justify-between mb-1">
                     <div className="font-medium">{p.ticker}</div>
                     {p.sectorTag && <span className="text-xs text-gray-500">{p.sectorTag}</span>}
                   </div>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{p.thesis}</p>
+                  {p.thesis && (
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{p.thesis}</p>
+                  )}
+                  {p.notes && (
+                    <p
+                      className={`text-sm text-gray-600 whitespace-pre-wrap ${p.thesis ? "mt-3 pt-3 border-t border-gray-100" : ""}`}
+                    >
+                      <span className="font-medium text-gray-700">Notes: </span>
+                      {p.notes}
+                    </p>
+                  )}
                   {p.keyRisk && (
                     <p className="text-xs text-amber-700 mt-2">
                       <strong>Key risk:</strong> {p.keyRisk}
