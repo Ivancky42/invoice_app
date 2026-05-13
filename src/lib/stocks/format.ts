@@ -27,31 +27,64 @@ export function notionCashBalanceUsd(
 }
 
 /**
- * Upper bound parsed from Notion **Entry Zone** text, e.g. `$160.00–$175.00` (en dash or hyphen).
+ * Low / high parsed from Notion **Entry Zone** text, e.g. `$160.00–$175.00` (en dash or hyphen).
+ * If only one number is present (e.g. `Below $175`), returns `{ low: null, high }`.
  */
-export function parseDcaZoneUpper(entryZone: string | null | undefined): number | null {
-  if (!entryZone?.trim()) return null;
+export function parseDcaZoneBounds(entryZone: string | null | undefined): {
+  low: number | null;
+  high: number | null;
+} {
+  if (!entryZone?.trim()) return { low: null, high: null };
   const s = entryZone.replace(/\u2013/g, "-").replace(/\u2014/g, "-").trim();
+
+  function parsePart(raw: string): number | null {
+    const digits = raw.replace(/[^0-9.]/g, "");
+    if (!digits) return null;
+    const n = Number(digits);
+    return Number.isFinite(n) ? n : null;
+  }
+
   const parts = s
     .split("-")
     .map((x) => x.trim())
     .filter(Boolean);
-  if (parts.length < 2) return null;
-  const digits = parts[parts.length - 1]!.replace(/[^0-9.]/g, "");
-  if (!digits) return null;
-  const n = Number(digits);
-  return Number.isFinite(n) ? n : null;
+
+  if (parts.length >= 2) {
+    const low = parsePart(parts[0]!);
+    const high = parsePart(parts[parts.length - 1]!);
+    return { low, high };
+  }
+  if (parts.length === 1) {
+    const v = parsePart(parts[0]!);
+    return { low: null, high: v };
+  }
+  return { low: null, high: null };
 }
 
-/** True when current price is at or below the zone upper bound (DCA / add band). */
+export function parseDcaZoneUpper(entryZone: string | null | undefined): number | null {
+  const { high } = parseDcaZoneBounds(entryZone);
+  return high;
+}
+
+/**
+ * True when **current price** is inside the entry band: between parsed low and high (inclusive).
+ * If the zone is a single ceiling (one number), true when price <= that value.
+ */
 export function priceInDcaZone(
   currentPrice: Parameters<typeof decToNum>[0],
   entryZone: string | null | undefined,
 ): boolean {
   const cur = decToNum(currentPrice);
-  const hi = parseDcaZoneUpper(entryZone);
-  if (cur === null || hi === null) return false;
-  return cur <= hi;
+  if (cur === null) return false;
+  const { low, high } = parseDcaZoneBounds(entryZone);
+  if (low !== null && high !== null) {
+    const lo = Math.min(low, high);
+    const hi = Math.max(low, high);
+    return cur >= lo && cur <= hi;
+  }
+  if (low === null && high !== null) return cur <= high;
+  if (low !== null && high === null) return cur >= low;
+  return false;
 }
 
 export function fmtMoney(n: number | null | undefined): string {

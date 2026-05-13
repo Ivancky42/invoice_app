@@ -74,7 +74,7 @@ export default async function PortfolioPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{p.ticker}</span>
                       {!cashRow && p.inDcaZone && (
-                        <span className="badge bg-emerald-100 text-emerald-800 whitespace-nowrap" title="Price within DCA / entry zone (≤ upper bound)">
+                        <span className="badge bg-emerald-100 text-emerald-800 whitespace-nowrap" title="Current price is inside the Entry zone range (Notion Current Price vs Entry Zone)">
                           📉 Add zone
                         </span>
                       )}
@@ -146,17 +146,30 @@ export default async function PortfolioPage() {
         </table>
       </section>
 
-      {rows.length > 0 && rows.some((p) => p.thesis || p.notes || p.keyRisk) && (
+      {rows.length > 0 && rows.some((p) => p.thesis || p.notes || p.keyRisk || p.entryZone) && (
         <section className="space-y-3">
           <h2 className="text-sm font-medium text-gray-700">Theses &amp; notes</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {rows.map((p) =>
-              p.thesis || p.notes || p.keyRisk ? (
+              p.thesis || p.notes || p.keyRisk || p.entryZone ? (
                 <div key={`th-${p.notionId}`} className="card p-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="font-medium">{p.ticker}</div>
+                  <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{p.ticker}</span>
+                      {!isCashTicker(p.ticker) && p.inDcaZone && (
+                        <span className="badge bg-emerald-100 text-emerald-800 whitespace-nowrap" title="Current price is inside the Entry zone range synced from Notion">
+                          📉 Add zone
+                        </span>
+                      )}
+                    </div>
                     {p.sectorTag && <span className="text-xs text-gray-500">{p.sectorTag}</span>}
                   </div>
+                  {p.entryZone && (
+                    <p className={`text-sm text-gray-700 ${p.thesis || p.notes || p.keyRisk ? "mb-3" : ""}`}>
+                      <span className="font-medium text-gray-700">Entry zone: </span>
+                      <span className="whitespace-pre-wrap">{p.entryZone}</span>
+                    </p>
+                  )}
                   {p.thesis && (
                     <p className="text-sm text-gray-700 whitespace-pre-wrap">{p.thesis}</p>
                   )}
