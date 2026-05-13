@@ -44,10 +44,19 @@ export async function syncWatchlist(): Promise<{ count: number }> {
   const dbId = notionDbId("NOTION_WATCHLIST_DB");
   const pages = await queryAllPages(dbId);
   const rows = pages.map(mapPage).filter((r): r is Prisma.WatchlistUncheckedCreateInput => r !== null);
+  const ids = rows.map((r) => r.notionId);
   await prisma.$transaction(
-    rows.map((r) =>
-      prisma.watchlist.upsert({ where: { notionId: r.notionId }, create: r, update: r }),
-    ),
+    rows.map((r) => {
+      const { notionId, ...update } = r;
+      return prisma.watchlist.upsert({
+        where: { notionId },
+        create: r,
+        update,
+      });
+    }),
   );
+  if (ids.length > 0) {
+    await prisma.watchlist.deleteMany({ where: { notionId: { notIn: ids } } });
+  }
   return { count: rows.length };
 }

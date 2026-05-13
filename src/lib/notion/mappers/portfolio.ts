@@ -41,10 +41,19 @@ export async function syncPortfolio(): Promise<{ count: number }> {
   const dbId = notionDbId("NOTION_PORTFOLIO_DB");
   const pages = await queryAllPages(dbId);
   const rows = pages.map(mapPage).filter((r): r is Prisma.PortfolioUncheckedCreateInput => r !== null);
+  const ids = rows.map((r) => r.notionId);
   await prisma.$transaction(
-    rows.map((r) =>
-      prisma.portfolio.upsert({ where: { notionId: r.notionId }, create: r, update: r }),
-    ),
+    rows.map((r) => {
+      const { notionId, ...update } = r;
+      return prisma.portfolio.upsert({
+        where: { notionId },
+        create: r,
+        update,
+      });
+    }),
   );
+  if (ids.length > 0) {
+    await prisma.portfolio.deleteMany({ where: { notionId: { notIn: ids } } });
+  }
   return { count: rows.length };
 }

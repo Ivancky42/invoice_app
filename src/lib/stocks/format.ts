@@ -26,6 +26,34 @@ export function notionCashBalanceUsd(
   return 0;
 }
 
+/**
+ * Upper bound parsed from Notion **Entry Zone** text, e.g. `$160.00–$175.00` (en dash or hyphen).
+ */
+export function parseDcaZoneUpper(entryZone: string | null | undefined): number | null {
+  if (!entryZone?.trim()) return null;
+  const s = entryZone.replace(/\u2013/g, "-").replace(/\u2014/g, "-").trim();
+  const parts = s
+    .split("-")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return null;
+  const digits = parts[parts.length - 1]!.replace(/[^0-9.]/g, "");
+  if (!digits) return null;
+  const n = Number(digits);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** True when current price is at or below the zone upper bound (DCA / add band). */
+export function priceInDcaZone(
+  currentPrice: Parameters<typeof decToNum>[0],
+  entryZone: string | null | undefined,
+): boolean {
+  const cur = decToNum(currentPrice);
+  const hi = parseDcaZoneUpper(entryZone);
+  if (cur === null || hi === null) return false;
+  return cur <= hi;
+}
+
 export function fmtMoney(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return "—";
   return n.toLocaleString("en-US", {

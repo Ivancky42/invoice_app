@@ -71,7 +71,14 @@ export default async function PortfolioPage() {
               return (
                 <tr key={p.notionId} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
-                    <div className="font-medium">{p.ticker}</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{p.ticker}</span>
+                      {!cashRow && p.inDcaZone && (
+                        <span className="badge bg-emerald-100 text-emerald-800 whitespace-nowrap" title="Price within DCA / entry zone (≤ upper bound)">
+                          📉 Add zone
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-500">
                       {cashRow ? "Cash balance" : (p.company ?? "—")}
                     </div>
