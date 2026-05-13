@@ -15,8 +15,21 @@ export type TrendRow = Trend;
 export type IdeaRow = Idea;
 export type SyncStatusRow = SyncStatus;
 
+/** Active positions only: hide archived rows whose action contains `exit` (case-insensitive). */
 export async function getPortfolio(): Promise<PortfolioRow[]> {
-  return prisma.portfolio.findMany({ orderBy: { ticker: "asc" } });
+  return prisma.portfolio.findMany({
+    where: {
+      OR: [
+        { action: null },
+        {
+          NOT: {
+            action: { contains: "EXIT", mode: "insensitive" },
+          },
+        },
+      ],
+    },
+    orderBy: [{ upsidePct: { sort: "desc", nulls: "last" } }, { ticker: "asc" }],
+  });
 }
 
 export async function getWatchlist(): Promise<WatchlistRow[]> {
