@@ -9,6 +9,7 @@ export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   if (pathname === "/login") return NextResponse.next();
+  if (pathname.startsWith("/api/sync/")) return NextResponse.next();
   if (pathname.startsWith("/_next/") || pathname === "/favicon.ico") return NextResponse.next();
 
   const raw = req.cookies.get(SITE_GATE_COOKIE)?.value;

@@ -1,6 +1,9 @@
-# Invoice App
+# Command Center
 
-Simple Next.js invoice app with Quotation → Invoice → Delivery Order lifecycle, PDF export, and a Postgres database in Docker.
+Personal Next.js dashboard hosting two apps behind a single PIN gate:
+
+- **Invoices** — Quotation → Invoice → Delivery Order lifecycle with PDF export.
+- **Stocks** — read-only mirror of a Notion-managed stock monitor. Source of truth lives in Notion; a Vercel cron syncs Notion → Neon every 15 minutes and the UI reads from the Neon cache.
 
 ## Stack
 - Next.js 15 (App Router) + TypeScript + Tailwind CSS
@@ -61,3 +64,21 @@ pnpm db:studio   # browse data with Prisma Studio
 ```
 
 Connection string (default): `postgresql://invoice:invoice@localhost:5433/invoice_app`
+
+## Stocks app — Notion sync
+
+The stocks UI never talks to Notion directly. A Vercel cron pulls 5 Notion databases into Neon every 15 minutes and the pages read from Neon (`revalidate = 900`).
+
+### One-time Notion setup
+
+1. Create an internal integration at <https://www.notion.so/my-integrations> (type **Internal**, pick the right workspace). Copy the token (starts with `secret_` or `ntn_`).
+2. Set `NOTION_TOKEN` and the five `NOTION_*_DB` IDs in your environment (see `.env.example`). Set `SYNC_SECRET` (any long random string) for manual triggers; on Vercel also set `CRON_SECRET` so the auto-injected cron `Authorization` header is accepted.
+3. For each of the 5 databases (Portfolio, Watchlist, Trades, Trends, Ideas) open it in Notion ▸ ••• ▸ **Connections** ▸ add the integration. Without this the API will return empty results.
+
+### Endpoints and schedule
+
+- **Daily cron**: `30 1 * * *` UTC = **09:30 Asia/Kuala_Lumpur (GMT+8)** via [vercel.json](vercel.json) → `/api/sync/notion` (uses `Authorization: Bearer $CRON_SECRET`).
+- **Manual button**: every stocks page (and the home hub) shows a "Sync now" button that calls a server action. The action is reachable only to PIN-authenticated browsers and reuses the same orchestrator as the cron, then revalidates the stocks routes.
+- **Manual HTTP**: `GET /api/sync/notion?secret=$SYNC_SECRET` — same orchestrator, returns per-DB row counts and any per-DB errors.
+- Sync direction is **one-way** (Notion → Neon). Nothing in this codebase writes to Notion.
+- If a sync run fails or is missed, the UI keeps serving the last good rows from Neon. A stale-data banner appears once the last success is older than 26 hours.

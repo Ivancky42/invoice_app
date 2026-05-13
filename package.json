@@ -14,6 +14,7 @@
     "start:all": "pnpm db:up && pnpm db:push && pnpm dev"
   },
   "dependencies": {
+    "@notionhq/client": "^5.21.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@react-pdf/renderer": "^4.1.5",

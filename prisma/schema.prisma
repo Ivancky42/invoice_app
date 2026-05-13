@@ -74,3 +74,148 @@ model Document {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 }
+
+// === Stock dashboard (Notion-cached) ===
+// All tables use notionId as primary key for idempotent upserts from the Notion sync.
+// Source of truth: Notion. This database is a read cache only — never write back to Notion.
+
+model Portfolio {
+  notionId         String    @id
+  ticker           String
+  company          String?
+  currentPrice     Decimal?  @db.Decimal(14, 4)
+  myAvgCost        Decimal?  @db.Decimal(14, 4)
+  analystTarget    Decimal?  @db.Decimal(14, 4)
+  upsidePct        Decimal?  @db.Decimal(8, 4)
+  action           String?
+  riskLevel        String?
+  analystRating    String?
+  socialScore      Int?
+  socialSentiment  String?
+  earningsDate     DateTime?
+  daysToEarnings   Int?
+  stopLoss         Decimal?  @db.Decimal(14, 4)
+  entryZone        String?
+  thesis           String?
+  sectorTag        String?
+  marketCapBucket  String?
+  notes            String?
+  keyRisk          String?
+  beatRate         String?
+  impliedMove      String?
+  lastPriceUpdate  DateTime?
+  syncedAt         DateTime  @updatedAt
+
+  @@index([ticker])
+}
+
+model Watchlist {
+  notionId         String    @id
+  ticker           String
+  company          String?
+  theme            String?
+  sector           String?
+  priority         String?
+  currentPrice     Decimal?  @db.Decimal(14, 4)
+  analystTarget    Decimal?  @db.Decimal(14, 4)
+  bullTarget       Decimal?  @db.Decimal(14, 4)
+  upsidePct        Decimal?  @db.Decimal(8, 4)
+  riskLevel        String?
+  analystRating    String?
+  socialScore      Int?
+  socialPlatformBuzz String?
+  earningsDate     DateTime?
+  daysToEarnings   Int?
+  earningsRisk     String?
+  entryZone        String?
+  stopLoss         Decimal?  @db.Decimal(14, 4)
+  keyCatalyst      String?
+  keyRisk          String?
+  thesis           String?
+  actionNotes      String?
+  beatRate         String?
+  impliedMove      String?
+  analystCount     Int?
+  marketCapBucket  String?
+  syncedAt         DateTime  @updatedAt
+
+  @@index([ticker])
+  @@index([priority])
+}
+
+model Trade {
+  notionId         String    @id
+  title            String
+  ticker           String?
+  type             String?
+  date             DateTime?
+  pricePerShare    Decimal?  @db.Decimal(14, 4)
+  shares           Decimal?  @db.Decimal(18, 4)
+  totalValue       Decimal?  @db.Decimal(18, 4)
+  pnlDollar        Decimal?  @db.Decimal(18, 4)
+  pnlPct           Decimal?  @db.Decimal(8, 4)
+  status           String?
+  avgCostBasis     Decimal?  @db.Decimal(14, 4)
+  exitReason       String?
+  thesisAtEntry    String?
+  notes            String?
+  syncedAt         DateTime  @updatedAt
+
+  @@index([ticker])
+  @@index([date])
+  @@index([status])
+}
+
+model Trend {
+  notionId               String   @id
+  trendName              String
+  dateDiscovered         DateTime?
+  representativeTickers  String?
+  themeSector            String?
+  lifecycleStage         String?
+  signalScore            Int?
+  socialVelocity         Int?
+  analystMomentum        Int?
+  priceClustering        Int?
+  fundamentalBacking     Int?
+  discoveredVia          String?
+  weekMomentum           String?
+  perf1m                 Decimal? @db.Decimal(8, 4)
+  perf3m                 Decimal? @db.Decimal(8, 4)
+  verdict                String?
+  similarToPastTrend     String?
+  keyCatalyst            String?
+  avoidReason            String?
+  notes                  String?
+  retrospective          String?
+  syncedAt               DateTime @updatedAt
+
+  @@index([lifecycleStage])
+  @@index([signalScore])
+}
+
+model Idea {
+  notionId         String    @id
+  stockSector      String
+  theme            String?
+  currentPrice     Decimal?  @db.Decimal(14, 4)
+  analystTarget    Decimal?  @db.Decimal(14, 4)
+  upsidePct        Decimal?  @db.Decimal(8, 4)
+  riskLevel        String?
+  status           String?
+  socialBuzz       String?
+  foundVia         String?
+  whyInteresting   String?
+  syncedAt         DateTime  @updatedAt
+
+  @@index([status])
+}
+
+model SyncStatus {
+  id            Int       @id @default(autoincrement())
+  source        String    @unique
+  lastRunAt     DateTime
+  lastSuccessAt DateTime?
+  lastError     String?
+  rowCounts     Json?
+}
