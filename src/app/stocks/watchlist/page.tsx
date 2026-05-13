@@ -133,19 +133,52 @@ export default async function WatchlistPage() {
                   </div>
                 )}
                 {w.thesis && (
-                  <ExpandableText
-                    text={w.thesis}
-                    lines={3}
-                    textClassName="text-sm text-gray-700 whitespace-pre-wrap"
-                  />
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-gray-500">Thesis</div>
+                    <ExpandableText
+                      text={w.thesis}
+                      lines={3}
+                      textClassName="text-sm text-gray-700 whitespace-pre-wrap"
+                    />
+                  </div>
+                )}
+                {w.actionNotes && (
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-gray-500">Action notes</div>
+                    <ExpandableText
+                      text={w.actionNotes}
+                      lines={3}
+                      textClassName="text-sm text-gray-700 whitespace-pre-wrap"
+                    />
+                  </div>
+                )}
+                {w.impliedMove && (
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-gray-500">Implied move</div>
+                    <ExpandableText
+                      text={w.impliedMove}
+                      lines={2}
+                      textClassName="text-sm text-gray-700 whitespace-pre-wrap"
+                    />
+                  </div>
                 )}
                 {w.keyCatalyst && (
-                  <div className="text-xs text-emerald-700">
-                    <strong>Catalyst:</strong>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-emerald-700">Key catalyst</div>
                     <ExpandableText
                       text={w.keyCatalyst}
                       lines={2}
-                      textClassName="whitespace-pre-wrap"
+                      textClassName="text-sm text-emerald-800 whitespace-pre-wrap"
+                    />
+                  </div>
+                )}
+                {w.socialPlatformBuzz && (
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-gray-500">Social platform</div>
+                    <ExpandableText
+                      text={w.socialPlatformBuzz}
+                      lines={3}
+                      textClassName="text-sm text-gray-700 whitespace-pre-wrap"
                     />
                   </div>
                 )}
