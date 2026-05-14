@@ -12,6 +12,12 @@ export function isCashTicker(ticker: string | null | undefined): boolean {
   return (ticker ?? "").trim().toUpperCase() === "CASH_USD";
 }
 
+/** Rows/symbols we never send to Finnhub (Notion price sync manual + cron). */
+export function isPriceSyncExcludedTicker(ticker: string | null | undefined): boolean {
+  if (isCashTicker(ticker)) return true;
+  return (ticker ?? "").trim().toUpperCase() === "CSPX";
+}
+
 /**
  * USD balance on that row: **Current Price**, else **My Avg Cost** (Notion often duplicates both).
  */

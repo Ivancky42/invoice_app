@@ -1,6 +1,6 @@
 import type { SyncStatusRow } from "@/lib/stocks/db";
 import { isStale } from "@/lib/stocks/db";
-import { SyncNowButton } from "@/app/_components/SyncNowButton";
+import { NotionSyncButtons } from "@/app/_components/NotionSyncButtons";
 
 function timeAgo(d: Date): string {
   const ms = Date.now() - d.getTime();
@@ -22,9 +22,11 @@ export function SyncStatusBanner({
 }) {
   if (!status) {
     return (
-      <div className="rounded-md bg-amber-50 border border-amber-100 text-amber-900 text-sm px-3 py-2 flex items-center justify-between gap-3">
-        <span>No Notion sync has run yet. Trigger one now or wait for the daily cron (09:30 GMT+8).</span>
-        {showButton && <SyncNowButton />}
+      <div className="rounded-md bg-amber-50 border border-amber-100 text-amber-900 text-sm px-3 py-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <span className="min-w-0 flex-1">
+          No Notion sync has run yet. Trigger one now or wait for the hourly cron (Notion→Neon :05 each hour GMT+8).
+        </span>
+        {showButton ? <NotionSyncButtons /> : null}
       </div>
     );
   }
@@ -35,22 +37,24 @@ export function SyncStatusBanner({
 
   if (stale) {
     return (
-      <div className="rounded-md bg-amber-50 border border-amber-100 text-amber-900 text-sm px-3 py-2 flex items-center justify-between gap-3">
-        <span>
+      <div className="rounded-md bg-amber-50 border border-amber-100 text-amber-900 text-sm px-3 py-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <span className="min-w-0 flex-1">
           Showing cached data. Last successful sync: <strong>{lastLabel}</strong>
           {status.lastError ? (
             <span className="text-amber-700"> · last error: {status.lastError}</span>
           ) : null}
         </span>
-        {showButton && <SyncNowButton />}
+        {showButton ? <NotionSyncButtons /> : null}
       </div>
     );
   }
 
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-xs text-gray-500">Synced {lastLabel} from Notion. Daily at 09:30 GMT+8.</span>
-      {showButton && <SyncNowButton />}
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <span className="text-xs text-gray-500 min-w-0 flex-1">
+        Synced {lastLabel} from Notion. Each hour: Finnhub→Notion :00 GMT+8, then Notion→Neon :05 GMT+8 (UTC :00 / :05).
+      </span>
+      {showButton ? <NotionSyncButtons /> : null}
     </div>
   );
 }

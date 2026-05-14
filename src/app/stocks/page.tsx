@@ -193,7 +193,9 @@ export default async function StocksOverview() {
       <section className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Stocks</h1>
-          <p className="text-sm text-gray-500">Read-only mirror of Notion. Refreshed every 15 minutes.</p>
+          <p className="text-sm text-gray-500">
+            Read-only Neon cache. Hourly: Finnhub→Notion :00 GMT+8, then sync :05 (page revalidate 15m).
+          </p>
         </div>
       </section>
 

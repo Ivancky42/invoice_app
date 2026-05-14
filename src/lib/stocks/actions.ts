@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { runNotionSync, type SyncResult } from "@/lib/notion/sync";
+import { runPricePushToNotion, type PricePushResult } from "@/lib/notion/pricePushToNotion";
 
 /**
  * Trigger a Notion → Neon sync from the UI. Protected only by the site PIN
@@ -19,4 +20,9 @@ export async function manualSyncNotion(): Promise<SyncResult> {
   revalidatePath("/stocks/ideas");
   revalidatePath("/stocks/daily-log");
   return result;
+}
+
+/** Finnhub → Notion (**Current Price**; portfolio also **Last Price Update**). Does not touch Neon. */
+export async function manualPushPricesToNotion(): Promise<PricePushResult> {
+  return runPricePushToNotion();
 }
