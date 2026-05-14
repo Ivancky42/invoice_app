@@ -41,6 +41,45 @@ function PipeSeparatedMoveBody({ text }: { text: string | null }) {
 	);
 }
 
+/**
+ * Prefer real newlines from Notion; otherwise split inline numbered items "1. … 2. …".
+ * List index 1–99 as `\d{N}. ` (digit(s), dot, space) so years like `2026. …` do not split.
+ */
+const INLINE_NEWS_ENUM_SPLIT =
+	/\s+(?=(?:[1-9]|[12]\d|30|3[1-9]|[4-9]\d)\.\s+)/;
+
+function splitTopNewsParagraphs(raw: string | null): string[] {
+	if (!raw?.trim()) return [];
+	const t = raw.trim();
+
+	const nlBlocks = t.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+	if (nlBlocks.length > 1) return nlBlocks;
+
+	const chunks = t.split(INLINE_NEWS_ENUM_SPLIT).map((s) => s.trim()).filter(Boolean);
+	if (chunks.length > 1) return chunks;
+
+	return [t];
+}
+
+function TopNewsBlock({ body }: { body: string | null }) {
+	return (
+		<div>
+			<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Top news</h3>
+			{body?.trim() ? (
+				<div className="flex flex-col gap-y-5 text-sm leading-relaxed text-gray-800">
+					{splitTopNewsParagraphs(body).map((paragraph, idx) => (
+						<p key={idx} className="whitespace-pre-wrap font-sans m-0">
+							{paragraph}
+						</p>
+					))}
+				</div>
+			) : (
+				<p className="text-sm text-gray-400 italic">Empty</p>
+			)}
+		</div>
+	);
+}
+
 function Block({ title, body }: { title: string; body: string | null }) {
 	return (
 		<div>
@@ -96,7 +135,7 @@ export function DailyLogReader({ entry }: { entry: DailyLogDTO }) {
 			) : null}
 
 			<Block title="Market context" body={entry.marketContext} />
-			<Block title="Top news" body={entry.topNews} />
+			<TopNewsBlock body={entry.topNews} />
 			<section className="grid grid-cols-1 md:grid-cols-2 gap-4">
 				<MoveCard title="Portfolio move" body={entry.portfolioMove} />
 				<MoveCard title="Watchlist move" body={entry.watchlistMove} />
