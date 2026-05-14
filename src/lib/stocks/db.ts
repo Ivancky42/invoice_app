@@ -149,9 +149,9 @@ export async function getSyncStatus(
 	return prisma.syncStatus.findUnique({ where: { source } });
 }
 
-// Sync: Finnhub→Notion at UTC minute 0, Notion→Neon at minute 5 each hour (= :00 / :05 GMT+8).
-// Flag stale if last success is older than ~3h so a missed hourly run is visible.
-const STALE_THRESHOLD_MS = 3 * 60 * 60 * 1000;
+// Sync: daily Finnhub→Notion 22:00 UTC (= 06:00 GMT+8); Notion→Neon 01:30 UTC (= 09:30 GMT+8).
+// Flag stale if last success is older than ~26h so a missed daily run is visible.
+const STALE_THRESHOLD_MS = 26 * 60 * 60 * 1000;
 
 export function isStale(status: SyncStatusRow | null): boolean {
 	if (!status?.lastSuccessAt) return true;

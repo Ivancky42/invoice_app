@@ -194,7 +194,7 @@ export default async function StocksOverview() {
         <div>
           <h1 className="text-2xl font-semibold">Stocks</h1>
           <p className="text-sm text-gray-500">
-            Read-only Neon cache. Hourly: Finnhub→Notion :00 GMT+8, then sync :05 (page revalidate 15m).
+            Read-only Neon cache. Daily ~06:00 GMT+8 Finnhub→Notion; ~09:30 GMT+8 Notion→Neon (page revalidate 15m).
           </p>
         </div>
       </section>

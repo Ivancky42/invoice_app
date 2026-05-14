@@ -3,7 +3,7 @@
 Personal Next.js dashboard hosting two apps behind a single PIN gate:
 
 - **Invoices** — Quotation → Invoice → Delivery Order lifecycle with PDF export.
-- **Stocks** — read-only mirror of Notion-backed portfolios; Vercel crons refresh Finnhub prices on Notion hourly, then pull Notion into Neon 5 minutes later; the UI reads from Neon (`revalidate = 900`).
+- **Stocks** — read-only mirror of Notion-backed portfolios; Vercel crons refresh Finnhub prices on Notion once daily and pull Notion into Neon once daily (later the same morning, GMT+8); the UI reads from Neon (`revalidate = 900`).
 
 ## Stack
 - Next.js 15 (App Router) + TypeScript + Tailwind CSS
@@ -67,7 +67,7 @@ Connection string (default): `postgresql://invoice:invoice@localhost:5433/invoic
 
 ## Stocks app — Notion sync
 
-The stocks UI never talks to Notion directly for reads: it uses Neon. Vercel crons every hour at **`:00` UTC** push Finnhub quotes to Notion (`/api/sync/notion-prices`), then at **`:05` UTC** sync Notion → Neon (`/api/sync/notion`) — wall-clock **`:00` / `:05` in GMT+8** year-round. Pages use `revalidate = 900`.
+The stocks UI never talks to Notion directly for reads: it uses Neon. Vercel crons **once per day** at **22:00 UTC** push Finnhub quotes to Notion (`/api/sync/notion-prices`, **06:00 GMT+8**), and at **01:30 UTC** sync Notion → Neon (`/api/sync/notion`, **09:30 GMT+8**). Pages use `revalidate = 900`.
 
 ### One-time Notion setup
 
@@ -77,8 +77,8 @@ The stocks UI never talks to Notion directly for reads: it uses Neon. Vercel cro
 
 ### Endpoints and schedule
 
-- **Hourly crons** (UTC, aligns to **GMT+8** wall-clock minutes): `0 * * * *` → `/api/sync/notion-prices` (Finnhub → Notion); `5 * * * *` → `/api/sync/notion` (Notion → Neon, 5 minutes later). See [vercel.json](vercel.json). Both use `Authorization: Bearer $CRON_SECRET` from Vercel.
+- **Daily crons**: `0 22 * * *` → `/api/sync/notion-prices` (Finnhub → Notion, **22:00 UTC** / **06:00 GMT+8**); `30 1 * * *` → `/api/sync/notion` (Notion → Neon, **01:30 UTC** / **09:30 GMT+8**). See [vercel.json](vercel.json). Both use `Authorization: Bearer $CRON_SECRET` from Vercel.
 - **Manual button**: every stocks page (and the home hub) shows a "Sync now" button that calls a server action. The action is reachable only to PIN-authenticated browsers and reuses the same orchestrator as the cron, then revalidates the stocks routes.
 - **Manual HTTP**: `GET /api/sync/notion?secret=$SYNC_SECRET` — same orchestrator, returns per-DB row counts and any per-DB errors.
 - Sync: **Finnhub → Notion** (prices on board databases) via cron and manual button; **Notion → Neon** via cron and “Sync now” (cache only).
-- If sync fails or is missed, the UI keeps serving the last good Neon rows. A stale banner appears when the last successful **Notion→Neon** sync is older than **~3 hours**.
+- If sync fails or is missed, the UI keeps serving the last good Neon rows. A stale banner appears when the last successful **Notion→Neon** sync is older than **~26 hours**.
