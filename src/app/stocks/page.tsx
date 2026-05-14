@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getPortfolio, getSyncStatus, getTrades, getWatchlist } from "@/lib/stocks/db";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import { DonutChart, type DonutSegment } from "@/app/_components/DonutChart";
+import { StocksDailyBriefCard } from "@/app/stocks/_components/StocksDailyBriefCard";
 import {
   decToNum,
   fmtMoney,
@@ -177,6 +178,8 @@ export default async function StocksOverview() {
       </section>
 
       <SyncStatusBanner status={status} />
+
+      <StocksDailyBriefCard />
 
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Link href="/stocks/portfolio" className="card p-4 hover:shadow-sm transition">

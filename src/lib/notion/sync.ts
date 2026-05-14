@@ -4,6 +4,7 @@ import { syncWatchlist } from "@/lib/notion/mappers/watchlist";
 import { syncTrades } from "@/lib/notion/mappers/trades";
 import { syncTrends } from "@/lib/notion/mappers/trends";
 import { syncIdeas } from "@/lib/notion/mappers/ideas";
+import { syncDailyLogs } from "@/lib/notion/mappers/dailyLogs";
 
 const SYNC_SOURCE = "notion";
 
@@ -33,7 +34,7 @@ async function runStep(
 }
 
 /**
- * Run all 5 Notion → Neon syncs sequentially (rate limit: 3 req/s) and
+ * Run all Notion → Neon syncs sequentially (rate limit: 3 req/s) and
  * record the outcome on the shared `SyncStatus` row. Always resolves —
  * partial failures are reflected in `errors` and `lastError`, never thrown.
  */
@@ -51,6 +52,7 @@ export async function runNotionSync(): Promise<SyncResult> {
   steps.push(await runStep("trades", syncTrades));
   steps.push(await runStep("trends", syncTrends));
   steps.push(await runStep("ideas", syncIdeas));
+  steps.push(await runStep("dailyLogs", syncDailyLogs));
 
   const allOk = steps.every((s) => s.ok);
   const rowCounts: Record<string, number | null> = {};

@@ -3,6 +3,21 @@ import type { PageObjectResponse } from "@notionhq/client";
 type AnyProp = { type: string } & Record<string, unknown>;
 
 /**
+ * Reads the plain-text value of whichever property is this database row’s primary
+ * `title` column — whatever its UI label (“Name”, “Title”, etc.).
+ */
+export function readPrimaryTitle(page: PageObjectResponse): string | null {
+	const props = page.properties as Record<string, AnyProp | undefined>;
+	for (const p of Object.values(props)) {
+		if (p?.type !== "title") continue;
+		const arr = (p as unknown as { title: { plain_text: string }[] }).title;
+		const s = arr.map((t) => t.plain_text).join("").trim();
+		if (s.length > 0) return s;
+	}
+	return null;
+}
+
+/**
  * Universal Notion property reader. Switches on `p.type` and returns the
  * scalar value the value lives under (`p[p.type]`). Returns `null` for
  * unknown / missing properties so callers can rely on a uniform shape.
@@ -65,4 +80,8 @@ export function asInt(v: unknown): number | null {
 
 export function asDate(v: unknown): Date | null {
   return v instanceof Date && !Number.isNaN(v.getTime()) ? v : null;
+}
+
+export function asBoolean(v: unknown): boolean | null {
+  return typeof v === "boolean" ? v : null;
 }

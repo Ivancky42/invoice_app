@@ -17,5 +17,6 @@ export async function manualSyncNotion(): Promise<SyncResult> {
   revalidatePath("/stocks/trades");
   revalidatePath("/stocks/trends");
   revalidatePath("/stocks/ideas");
+  revalidatePath("/stocks/daily-log");
   return result;
 }

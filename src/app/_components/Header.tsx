@@ -22,6 +22,7 @@ const stockLinks = [
   { href: "/stocks/trades", label: "Trades" },
   { href: "/stocks/trends", label: "Trends" },
   { href: "/stocks/ideas", label: "Ideas" },
+  { href: "/stocks/daily-log", label: "Daily log" },
 ];
 
 const invoiceLinks = [

@@ -211,6 +211,26 @@ model Idea {
   @@index([status])
 }
 
+/// Cached rows from Notion Daily Logs DB (journal / briefing).
+model DailyLog {
+  notionId         String    @id
+  /// Typically the ISO date (`Name` column), e.g. 2026-05-14
+  title            String
+  logDate          DateTime?
+  actionTaken      String?   @db.Text
+  alertEmailSent   Boolean?
+  flaggedTickers   String?   @db.Text
+  flagsCount       Int?
+  marketContext    String?   @db.Text
+  notes            String?   @db.Text
+  portfolioMove    String?   @db.Text
+  topNews          String?   @db.Text
+  watchlistMove    String?   @db.Text
+  syncedAt         DateTime  @updatedAt
+
+  @@index([logDate])
+}
+
 model SyncStatus {
   id            Int       @id @default(autoincrement())
   source        String    @unique
