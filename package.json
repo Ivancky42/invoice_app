@@ -11,7 +11,10 @@
     "db:push": "prisma db push && prisma generate",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
-    "start:all": "pnpm db:up && pnpm db:push && pnpm dev"
+    "start:all": "pnpm db:up && pnpm db:push && pnpm dev",
+    "db:resolve-baseline-prod": "prisma migrate resolve --applied 20250514190000_baseline --config prisma.config.ts",
+    "db:resolve-daily-log-prod": "prisma migrate resolve --applied 20250514190100_daily_log --config prisma.config.ts",
+    "db:migrate-prod": "prisma migrate deploy --config prisma.config.ts"
   },
   "dependencies": {
     "@notionhq/client": "^5.21.0",

@@ -2,7 +2,6 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { getSyncStatus } from "@/lib/stocks/db";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
-import { StocksDailyBriefCard } from "@/app/stocks/_components/StocksDailyBriefCard";
 
 export const dynamic = "force-dynamic";
 
@@ -54,10 +53,6 @@ export default async function Home() {
             </div>
           </div>
         </Link>
-      </section>
-
-      <section>
-        <StocksDailyBriefCard />
       </section>
 
       <section>

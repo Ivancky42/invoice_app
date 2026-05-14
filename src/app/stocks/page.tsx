@@ -60,6 +60,7 @@ export default async function StocksOverview() {
     ticker: string;
     action: string | null;
     riskLevel: string | null;
+    sectorTag: string | null;
     shares: number | null;
     pnlDollar: number | null;
     pnlPct: number | null;
@@ -73,6 +74,7 @@ export default async function StocksOverview() {
         ticker: p.ticker,
         action: p.action,
         riskLevel: p.riskLevel,
+        sectorTag: p.sectorTag,
         shares: null,
         pnlDollar: null,
         pnlPct: null,
@@ -96,6 +98,7 @@ export default async function StocksOverview() {
       ticker: p.ticker,
       action: p.action,
       riskLevel: p.riskLevel,
+      sectorTag: p.sectorTag,
       shares,
       pnlDollar: r.dollar,
       pnlPct: per.pct,
@@ -168,6 +171,23 @@ export default async function StocksOverview() {
       color: label === "Cash" ? CASH_DONUT_COLOR : (RISK_COLORS[label] ?? "#9ca3af"),
     }));
 
+  const sectorTotals = new Map<string, number>();
+  for (const r of rows) {
+    if (r.marketValue === null || r.marketValue <= 0) continue;
+    const label = isCashTicker(r.ticker)
+      ? "Cash"
+      : (r.sectorTag?.trim() || "Unspecified");
+    sectorTotals.set(label, (sectorTotals.get(label) ?? 0) + r.marketValue);
+  }
+  let sectorPaletteIdx = 0;
+  const sectorSegments: DonutSegment[] = Array.from(sectorTotals.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, value]) => ({
+      label,
+      value,
+      color: label === "Cash" ? CASH_DONUT_COLOR : TICKER_PALETTE[sectorPaletteIdx++ % TICKER_PALETTE.length],
+    }));
+
   return (
     <div className="space-y-6">
       <section className="flex items-center justify-between">
@@ -214,7 +234,7 @@ export default async function StocksOverview() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="card p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-medium">Portfolio breakdown by value</h2>
@@ -239,6 +259,18 @@ export default async function StocksOverview() {
             centerLabel="Total value"
           />
         </div>
+      </section>
+
+      <section className="card p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-medium">Allocation by sector</h2>
+          <span className="text-xs text-gray-500">Sector tag · % of total</span>
+        </div>
+        <DonutChart
+          segments={sectorSegments}
+          centerValue={totalPortfolioValue > 0 ? totalPortfolioValue : undefined}
+          centerLabel="Total value"
+        />
       </section>
 
       <section className="card">
