@@ -56,19 +56,9 @@ export function dailyLogToDTO(row: DailyLogRow): DailyLogDTO {
 	};
 }
 
-/** Active positions only: hide archived rows whose action contains `exit` (case-insensitive). */
+/** All synced portfolio rows. Action (e.g. EXIT) is a signal only — not used to hide holdings. */
 export async function getPortfolio(): Promise<PortfolioWithDca[]> {
 	const rows = await prisma.portfolio.findMany({
-		where: {
-			OR: [
-				{ action: null },
-				{
-					NOT: {
-						action: { contains: "EXIT", mode: "insensitive" },
-					},
-				},
-			],
-		},
 		orderBy: [{ ticker: "asc" }],
 	});
 

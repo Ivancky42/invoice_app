@@ -8,6 +8,53 @@ function splitPipeSegments(body: string | null): string[] {
 	return parts.length > 0 ? parts : [body.trim()];
 }
 
+/**
+ * Pipe-separated moves often look like:
+ * `GEV $1,090.53 | bullet one | bullet two | ISRG $428.06 | …`
+ * A new ticker row starts when a segment begins with TICKER + `$` (optional `.` class, e.g. BRK.B).
+ */
+const TICKER_PRICE_HEADLINE =
+	/^[A-Z]{1,6}(?:\.[A-Z]{1,2})?\s+\$/;
+
+function parseMoveBodyIntoTickerBlocks(body: string): { headline: string; bullets: string[] }[] | null {
+	const segments = splitPipeSegments(body);
+	if (segments.length === 0) return null;
+
+	const blocks: { headline: string; bullets: string[] }[] = [];
+	let current: { headline: string; bullets: string[] } | null = null;
+
+	for (const segment of segments) {
+		if (TICKER_PRICE_HEADLINE.test(segment)) {
+			if (current) blocks.push(current);
+			current = { headline: segment, bullets: [] };
+		} else if (current) {
+			current.bullets.push(segment);
+		} else {
+			return null;
+		}
+	}
+
+	if (current) blocks.push(current);
+	return blocks.length > 0 ? blocks : null;
+}
+
+/** Split `SYM $123.45` into symbol + price for the headline row (fallback: whole string). */
+const TICKER_PRICE_SPLIT = /^([A-Z]{1,6}(?:\.[A-Z]{1,2})?)\s+(\$\s*.+)$/;
+
+function MoveTickerHeadline({ headline }: { headline: string }) {
+	const m = headline.match(TICKER_PRICE_SPLIT);
+	if (!m) {
+		return <span className="font-semibold tracking-wide text-gray-900">{headline}</span>;
+	}
+	const [, symbol, price] = m;
+	return (
+		<div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+			<span className="font-semibold tracking-wide text-gray-900">{symbol}</span>
+			<span className="tabular-nums font-medium text-emerald-900/90">{price.replace(/\s+/g, " ").trim()}</span>
+		</div>
+	);
+}
+
 /** First `:` divides label/ticker from the rest (`TICKER … : details`) — text before ":" is bold. */
 function MoveLine({ segment }: { segment: string }) {
 	const colon = segment.indexOf(":");
@@ -36,6 +83,41 @@ function PipeSeparatedMoveBody({ text }: { text: string | null }) {
 				<p key={idx} className="whitespace-pre-wrap m-0">
 					<MoveLine segment={segment} />
 				</p>
+			))}
+		</div>
+	);
+}
+
+/** When body matches `TICKER $price | … | TICKER $price | …`, render one card per ticker with bullet points. */
+function TickerGroupedMoveBody({ text }: { text: string }) {
+	const blocks = parseMoveBodyIntoTickerBlocks(text);
+	if (!blocks) {
+		return <PipeSeparatedMoveBody text={text} />;
+	}
+
+	return (
+		<div className="flex flex-col gap-4">
+			{blocks.map((block, idx) => (
+				<div
+					key={`${block.headline}-${idx}`}
+					className="rounded-lg border border-emerald-200/70 bg-white/55 px-3 py-3 shadow-sm"
+				>
+					<div className="text-sm leading-snug">
+						<MoveTickerHeadline headline={block.headline} />
+					</div>
+					{block.bullets.length > 0 ? (
+						<ul className="m-0 mt-2.5 space-y-1.5 border-t border-emerald-100/80 pt-2.5 p-0 text-sm leading-snug text-gray-800 list-none">
+							{block.bullets.map((bullet, j) => (
+								<li key={j} className="flex gap-2">
+									<span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-600/55" aria-hidden />
+									<span className="min-w-0 whitespace-pre-wrap">
+										<MoveLine segment={bullet} />
+									</span>
+								</li>
+							))}
+						</ul>
+					) : null}
+				</div>
 			))}
 		</div>
 	);
@@ -98,7 +180,7 @@ function MoveCard({ title, body }: { title: string; body: string | null }) {
 		<div className="rounded-xl border border-emerald-100/50 bg-emerald-50/40 px-5 pt-5 pb-6 shadow-sm">
 			<h3 className="text-xs font-semibold uppercase tracking-wide text-emerald-800/70 mb-4">{title}</h3>
 			{body ? (
-				<PipeSeparatedMoveBody text={body} />
+				<TickerGroupedMoveBody text={body} />
 			) : (
 				<p className="text-sm text-emerald-600/45 italic py-1">Empty</p>
 			)}

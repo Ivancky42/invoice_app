@@ -33,7 +33,7 @@ export function DailyLogPastTable({ rows }: { rows: DailyLogDTO[] }) {
 	}, []);
 
 	if (rows.length === 0) {
-		return <p className="text-sm text-gray-500 py-8 text-center">No earlier daily logs synced yet.</p>;
+		return <p className="text-sm text-gray-500 py-8 text-center">No daily logs synced yet.</p>;
 	}
 
 	return (
@@ -52,10 +52,17 @@ export function DailyLogPastTable({ rows }: { rows: DailyLogDTO[] }) {
 						</tr>
 					</thead>
 					<tbody className="divide-y">
-						{rows.map((r) => (
+						{rows.map((r, index) => (
 							<tr key={r.notionId} className="hover:bg-gray-50 cursor-pointer align-top">
 								<td className="px-5 py-3 tabular-nums text-gray-600 whitespace-nowrap" onClick={() => setOpen(r)}>
-									{fmtShortDate(r)}
+									<div className="flex flex-col gap-1">
+										<span>{fmtShortDate(r)}</span>
+										{index === 0 ? (
+											<span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded w-fit">
+												Latest
+											</span>
+										) : null}
+									</div>
 								</td>
 								<td className="px-5 py-3 font-medium text-gray-900" onClick={() => setOpen(r)}>
 									{r.title}
