@@ -8,7 +8,11 @@ import type {
 	DailyLog,
 	SyncStatus,
 } from "@/generated/prisma/client";
-import { decToNum, parseDcaZoneUpper, priceInDcaZone } from "@/lib/stocks/format";
+import {
+	decToNum,
+	parseDcaZoneUpper,
+	priceInDcaZone,
+} from "@/lib/stocks/format";
 
 export type PortfolioRow = Portfolio;
 /** Portfolio row with DCA / entry-zone flags for the UI. */

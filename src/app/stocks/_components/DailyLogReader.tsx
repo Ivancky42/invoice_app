@@ -4,7 +4,10 @@ import type { DailyLogDTO } from "@/lib/stocks/db";
 
 function splitPipeSegments(body: string | null): string[] {
 	if (!body?.trim()) return [];
-	const parts = body.split("|").map((s) => s.trim()).filter((s) => s.length > 0);
+	const parts = body
+		.split("|")
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
 	return parts.length > 0 ? parts : [body.trim()];
 }
 
@@ -13,10 +16,11 @@ function splitPipeSegments(body: string | null): string[] {
  * `GEV $1,090.53 | bullet one | bullet two | ISRG $428.06 | …`
  * A new ticker row starts when a segment begins with TICKER + `$` (optional `.` class, e.g. BRK.B).
  */
-const TICKER_PRICE_HEADLINE =
-	/^[A-Z]{1,6}(?:\.[A-Z]{1,2})?\s+\$/;
+const TICKER_PRICE_HEADLINE = /^[A-Z]{1,6}(?:\.[A-Z]{1,2})?\s+\$/;
 
-function parseMoveBodyIntoTickerBlocks(body: string): { headline: string; bullets: string[] }[] | null {
+function parseMoveBodyIntoTickerBlocks(
+	body: string,
+): { headline: string; bullets: string[] }[] | null {
 	const segments = splitPipeSegments(body);
 	if (segments.length === 0) return null;
 
@@ -44,13 +48,21 @@ const TICKER_PRICE_SPLIT = /^([A-Z]{1,6}(?:\.[A-Z]{1,2})?)\s+(\$\s*.+)$/;
 function MoveTickerHeadline({ headline }: { headline: string }) {
 	const m = headline.match(TICKER_PRICE_SPLIT);
 	if (!m) {
-		return <span className="font-semibold tracking-wide text-gray-900">{headline}</span>;
+		return (
+			<span className="font-semibold tracking-wide text-gray-900">
+				{headline}
+			</span>
+		);
 	}
 	const [, symbol, price] = m;
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-			<span className="font-semibold tracking-wide text-gray-900">{symbol}</span>
-			<span className="tabular-nums font-medium text-emerald-900/90">{price.replace(/\s+/g, " ").trim()}</span>
+			<span className="font-semibold tracking-wide text-gray-900">
+				{symbol}
+			</span>
+			<span className="tabular-nums font-medium text-emerald-900/90">
+				{price.replace(/\s+/g, " ").trim()}
+			</span>
 		</div>
 	);
 }
@@ -73,7 +85,9 @@ function MoveLine({ segment }: { segment: string }) {
 
 function PipeSeparatedMoveBody({ text }: { text: string | null }) {
 	if (!text?.trim()) {
-		return <p className="text-sm text-emerald-600/45 italic py-1 m-0">Empty</p>;
+		return (
+			<p className="text-sm text-emerald-600/45 italic py-1 m-0">Empty</p>
+		);
 	}
 
 	const segments = splitPipeSegments(text);
@@ -109,7 +123,10 @@ function TickerGroupedMoveBody({ text }: { text: string }) {
 						<ul className="m-0 mt-2.5 space-y-1.5 border-t border-emerald-100/80 pt-2.5 p-0 text-sm leading-snug text-gray-800 list-none">
 							{block.bullets.map((bullet, j) => (
 								<li key={j} className="flex gap-2">
-									<span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-600/55" aria-hidden />
+									<span
+										className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-600/55"
+										aria-hidden
+									/>
 									<span className="min-w-0 whitespace-pre-wrap">
 										<MoveLine segment={bullet} />
 									</span>
@@ -127,17 +144,22 @@ function TickerGroupedMoveBody({ text }: { text: string }) {
  * Prefer real newlines from Notion; otherwise split inline numbered items "1. … 2. …".
  * List index 1–99 as `\d{N}. ` (digit(s), dot, space) so years like `2026. …` do not split.
  */
-const INLINE_NEWS_ENUM_SPLIT =
-	/\s+(?=(?:[1-9]|[12]\d|30|3[1-9]|[4-9]\d)\.\s+)/;
+const INLINE_NEWS_ENUM_SPLIT = /\s+(?=(?:[1-9]|[12]\d|30|3[1-9]|[4-9]\d)\.\s+)/;
 
 function splitTopNewsParagraphs(raw: string | null): string[] {
 	if (!raw?.trim()) return [];
 	const t = raw.trim();
 
-	const nlBlocks = t.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+	const nlBlocks = t
+		.split(/\n+/)
+		.map((s) => s.trim())
+		.filter(Boolean);
 	if (nlBlocks.length > 1) return nlBlocks;
 
-	const chunks = t.split(INLINE_NEWS_ENUM_SPLIT).map((s) => s.trim()).filter(Boolean);
+	const chunks = t
+		.split(INLINE_NEWS_ENUM_SPLIT)
+		.map((s) => s.trim())
+		.filter(Boolean);
 	if (chunks.length > 1) return chunks;
 
 	return [t];
@@ -146,11 +168,16 @@ function splitTopNewsParagraphs(raw: string | null): string[] {
 function TopNewsBlock({ body }: { body: string | null }) {
 	return (
 		<div>
-			<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Top news</h3>
+			<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+				Top news
+			</h3>
 			{body?.trim() ? (
 				<div className="flex flex-col gap-y-5 text-sm leading-relaxed text-gray-800">
 					{splitTopNewsParagraphs(body).map((paragraph, idx) => (
-						<p key={idx} className="whitespace-pre-wrap font-sans m-0">
+						<p
+							key={idx}
+							className="whitespace-pre-wrap font-sans m-0"
+						>
 							{paragraph}
 						</p>
 					))}
@@ -165,9 +192,13 @@ function TopNewsBlock({ body }: { body: string | null }) {
 function Block({ title, body }: { title: string; body: string | null }) {
 	return (
 		<div>
-			<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">{title}</h3>
+			<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+				{title}
+			</h3>
 			{body ? (
-				<pre className="whitespace-pre-wrap font-sans text-sm text-gray-800 leading-relaxed">{body}</pre>
+				<pre className="whitespace-pre-wrap font-sans text-sm text-gray-800 leading-relaxed">
+					{body}
+				</pre>
 			) : (
 				<p className="text-sm text-gray-400 italic">Empty</p>
 			)}
@@ -178,7 +209,9 @@ function Block({ title, body }: { title: string; body: string | null }) {
 function MoveCard({ title, body }: { title: string; body: string | null }) {
 	return (
 		<div className="rounded-xl border border-emerald-100/50 bg-emerald-50/40 px-5 pt-5 pb-6 shadow-sm">
-			<h3 className="text-xs font-semibold uppercase tracking-wide text-emerald-800/70 mb-4">{title}</h3>
+			<h3 className="text-xs font-semibold uppercase tracking-wide text-emerald-800/70 mb-4">
+				{title}
+			</h3>
 			{body ? (
 				<TickerGroupedMoveBody text={body} />
 			) : (
@@ -193,17 +226,25 @@ export function DailyLogReader({ entry }: { entry: DailyLogDTO }) {
 		<article className="space-y-6">
 			<header className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-gray-100">
 				<div>
-					<h2 className="text-xl font-semibold text-gray-900">{entry.title}</h2>
+					<h2 className="text-xl font-semibold text-gray-900">
+						{entry.title}
+					</h2>
 				</div>
 				<dl className="flex flex-wrap gap-3 text-sm">
 					<div className="rounded-lg bg-gray-50 px-3 py-2">
 						<dt className="text-xs text-gray-500">Flags</dt>
-						<dd className="font-medium tabular-nums">{entry.flagsCount ?? "—"}</dd>
+						<dd className="font-medium tabular-nums">
+							{entry.flagsCount ?? "—"}
+						</dd>
 					</div>
 					<div className="rounded-lg bg-gray-50 px-3 py-2">
 						<dt className="text-xs text-gray-500">Alert email</dt>
 						<dd className="font-medium">
-							{entry.alertEmailSent === null ? "—" : entry.alertEmailSent ? "Sent" : "Not sent"}
+							{entry.alertEmailSent === null
+								? "—"
+								: entry.alertEmailSent
+									? "Sent"
+									: "Not sent"}
 						</dd>
 					</div>
 				</dl>
@@ -211,8 +252,12 @@ export function DailyLogReader({ entry }: { entry: DailyLogDTO }) {
 
 			{entry.flaggedTickers ? (
 				<section>
-					<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Flagged tickers</h3>
-					<p className="text-sm text-gray-800 tracking-wide">{entry.flaggedTickers}</p>
+					<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+						Flagged tickers
+					</h3>
+					<p className="text-sm text-gray-800 tracking-wide">
+						{entry.flaggedTickers}
+					</p>
 				</section>
 			) : null}
 
