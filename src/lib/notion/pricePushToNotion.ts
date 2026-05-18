@@ -1,6 +1,7 @@
 import type { PageObjectResponse } from "@notionhq/client";
+import { CSPX_EODHD_SYMBOL, eodhdRealTimeClose } from "@/lib/eodhd/quote";
 import { finnhubLastPrice } from "@/lib/finnhub/quote";
-import { isPriceSyncExcludedTicker } from "@/lib/stocks/format";
+import { isCashTicker, isPriceSyncExcludedTicker } from "@/lib/stocks/format";
 import { notionClient, notionDbId } from "@/lib/notion/client";
 import { asString, readProp } from "@/lib/notion/extract";
 import { queryAllPages } from "@/lib/notion/queryAll";
@@ -126,7 +127,7 @@ const PRICE_DATABASES: DbDef[] = [
 ];
 
 /**
- * Fetch last prices from Finnhub and PATCH matching Notion pages (Current Price number; Last Price Update date on portfolio only).
+ * Fetch last prices (Finnhub; **CSPX** via EODHD `CSPX.LSE`) and PATCH Notion (**Current Price**; portfolio **Last Price Update**).
  * Does not write to Neon — run Notion → Neon sync after if you want the app DB updated.
  */
 export async function runPricePushToNotion(): Promise<PricePushResult> {
@@ -201,7 +202,7 @@ export async function runPricePushToNotion(): Promise<PricePushResult> {
         continue;
       }
 
-      if (db.tickerMode === "stock" && isPriceSyncExcludedTicker(rawTicker)) {
+      if (db.tickerMode === "stock" && isCashTicker(rawTicker)) {
         skipped += 1;
         details.push({
           database: db.name,
@@ -209,37 +210,74 @@ export async function runPricePushToNotion(): Promise<PricePushResult> {
           tickerHint: rawTicker,
           symbolUsed: null,
           ok: true,
-          error: "Excluded from price sync (CASH_USD / CSPX)",
+          error: "Cash row — not quoted (CASH_USD)",
         });
         continue;
       }
 
-      const candidates = symbolCandidates(rawTicker, db.tickerMode);
-      if (candidates.length === 0) {
-        skipped += 1;
-        details.push({
-          database: db.name,
-          pageId: page.id,
-          tickerHint: rawTicker,
-          symbolUsed: null,
-          ok: true,
-          error: "No quotable symbol after exclusions (skipped)",
-        });
-        continue;
-      }
+      let price: number;
+      let symbolUsed: string | null;
 
-      const { price, symbolUsed } = await resolvePriceFromCandidates(candidates, apiKey, quoteCache);
-      if (price === null) {
-        failed += 1;
-        details.push({
-          database: db.name,
-          pageId: page.id,
-          tickerHint: rawTicker,
-          symbolUsed,
-          ok: false,
-          error: "No Finnhub quote",
-        });
-        continue;
+      if (db.tickerMode === "stock" && rawTicker.trim().toUpperCase() === "CSPX") {
+        const eodhdKey = process.env.EODHD_API_KEY?.trim();
+        if (!eodhdKey) {
+          skipped += 1;
+          details.push({
+            database: db.name,
+            pageId: page.id,
+            tickerHint: rawTicker,
+            symbolUsed: null,
+            ok: true,
+            error: "CSPX requires EODHD_API_KEY (not set)",
+          });
+          continue;
+        }
+        await sleep(MS_BETWEEN_FINNHUB);
+        const p = await eodhdRealTimeClose(CSPX_EODHD_SYMBOL, eodhdKey);
+        if (p === null) {
+          failed += 1;
+          details.push({
+            database: db.name,
+            pageId: page.id,
+            tickerHint: rawTicker,
+            symbolUsed: CSPX_EODHD_SYMBOL,
+            ok: false,
+            error: "No EODHD quote for CSPX.LSE",
+          });
+          continue;
+        }
+        price = p;
+        symbolUsed = CSPX_EODHD_SYMBOL;
+      } else {
+        const candidates = symbolCandidates(rawTicker, db.tickerMode);
+        if (candidates.length === 0) {
+          skipped += 1;
+          details.push({
+            database: db.name,
+            pageId: page.id,
+            tickerHint: rawTicker,
+            symbolUsed: null,
+            ok: true,
+            error: "No quotable symbol after exclusions (skipped)",
+          });
+          continue;
+        }
+
+        const resolved = await resolvePriceFromCandidates(candidates, apiKey, quoteCache);
+        if (resolved.price === null) {
+          failed += 1;
+          details.push({
+            database: db.name,
+            pageId: page.id,
+            tickerHint: rawTicker,
+            symbolUsed: resolved.symbolUsed,
+            ok: false,
+            error: "No Finnhub quote",
+          });
+          continue;
+        }
+        price = resolved.price;
+        symbolUsed = resolved.symbolUsed;
       }
 
       const props: Record<string, { number: number } | { date: { start: string } }> = {

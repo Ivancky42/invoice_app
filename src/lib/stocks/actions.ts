@@ -22,7 +22,7 @@ export async function manualSyncNotion(): Promise<SyncResult> {
   return result;
 }
 
-/** Finnhub → Notion (**Current Price**; portfolio also **Last Price Update**). Does not touch Neon. */
+/** Finnhub + EODHD (CSPX) → Notion (**Current Price**; portfolio also **Last Price Update**). Does not touch Neon. */
 export async function manualPushPricesToNotion(): Promise<PricePushResult> {
   return runPricePushToNotion();
 }
