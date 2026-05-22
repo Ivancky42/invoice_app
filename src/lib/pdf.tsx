@@ -6,11 +6,21 @@ import React from "react";
 /** Original tight layout (pre spacing/pagination experiments). New fields: project, ship-to, PO. */
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 10, fontFamily: "Helvetica", color: "#111827" },
-  header: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
-  brand: { flexDirection: "row", alignItems: "flex-start" },
-  logo: { width: 50, height: 50, objectFit: "contain", marginRight: 10 },
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 },
+  brand: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    flexGrow: 1,
+    flexShrink: 1,
+    maxWidth: "58%",
+    paddingRight: 16,
+  },
+  brandInfo: { flex: 1, minWidth: 0 },
+  brandDelivery: { maxWidth: "52%" },
+  logo: { width: 50, height: 50, objectFit: "contain", marginRight: 10, flexShrink: 0 },
   companyName: { fontSize: 14, fontFamily: "Helvetica-Bold" },
   small: { fontSize: 9, color: "#4b5563" },
+  headerRight: { flexShrink: 0, width: 190 },
   docTitle: { fontSize: 22, fontFamily: "Helvetica-Bold", textAlign: "right" },
   docMeta: { fontSize: 9, color: "#4b5563", textAlign: "right", marginTop: 4 },
   twoCol: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
@@ -87,14 +97,15 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
   const items = (doc.items as LineItem[]) ?? [];
   const currency = company?.currency || "USD";
   const logoFile = resolveLogoSourceForPdf(company?.logoPath);
+  const isDeliveryOrder = doc.type === "DELIVERY_ORDER";
 
   return (
     <Document>
       <Page size="A4" style={styles.page}>
         <View style={styles.header}>
-          <View style={styles.brand}>
+          <View style={isDeliveryOrder ? [styles.brand, styles.brandDelivery] : styles.brand}>
             {logoFile ? <Image style={styles.logo} src={logoFile} /> : null}
-            <View>
+            <View style={styles.brandInfo}>
               <Text style={styles.companyName}>{company?.name || "Your Company"}</Text>
               {company?.address ? <Text style={styles.small}>{company.address}</Text> : null}
               {company?.email ? <Text style={styles.small}>{company.email}</Text> : null}
@@ -103,7 +114,7 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
               {company?.taxId ? <Text style={styles.small}>Tax ID: {company.taxId}</Text> : null}
             </View>
           </View>
-          <View>
+          <View style={styles.headerRight}>
             <Text style={styles.docTitle}>{DOC_LABELS[doc.type]?.toUpperCase()}</Text>
             <Text style={styles.docMeta}>No. {doc.number}</Text>
             <Text style={styles.docMeta}>Date: {new Date(doc.issueDate).toLocaleDateString()}</Text>
@@ -157,39 +168,49 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
           <View style={styles.th}>
             <Text style={styles.cDesc}>Description</Text>
             <Text style={styles.cQty}>Qty</Text>
-            <Text style={styles.cUnit}>Unit</Text>
-            <Text style={styles.cAmt}>Amount</Text>
+            {!isDeliveryOrder ? (
+              <>
+                <Text style={styles.cUnit}>Unit</Text>
+                <Text style={styles.cAmt}>Amount</Text>
+              </>
+            ) : null}
           </View>
           {items.map((it, i) => (
             <View style={styles.tr} key={i}>
               <Text style={styles.cDesc}>{it.description}</Text>
               <Text style={styles.cQty}>{it.quantity}</Text>
-              <Text style={styles.cUnit}>{formatMoney(it.unitPrice, currency)}</Text>
-              <Text style={styles.cAmt}>{formatMoney((it.quantity || 0) * (it.unitPrice || 0), currency)}</Text>
+              {!isDeliveryOrder ? (
+                <>
+                  <Text style={styles.cUnit}>{formatMoney(it.unitPrice, currency)}</Text>
+                  <Text style={styles.cAmt}>{formatMoney((it.quantity || 0) * (it.unitPrice || 0), currency)}</Text>
+                </>
+              ) : null}
             </View>
           ))}
         </View>
 
-        <View style={styles.totals}>
-          <View style={styles.totalsRow}>
-            <Text>Subtotal</Text>
-            <Text>{formatMoney(doc.subtotal, currency)}</Text>
-          </View>
-          {doc.discountAmount > 0 ? (
+        {!isDeliveryOrder ? (
+          <View style={styles.totals}>
             <View style={styles.totalsRow}>
-              <Text>Discount{doc.discountType === "PERCENT" ? ` (${doc.discountValue}%)` : ""}</Text>
-              <Text>- {formatMoney(doc.discountAmount, currency)}</Text>
+              <Text>Subtotal</Text>
+              <Text>{formatMoney(doc.subtotal, currency)}</Text>
             </View>
-          ) : null}
-          <View style={styles.totalsRow}>
-            <Text>Tax ({doc.taxRate}%)</Text>
-            <Text>{formatMoney(doc.taxAmount, currency)}</Text>
+            {doc.discountAmount > 0 ? (
+              <View style={styles.totalsRow}>
+                <Text>Discount{doc.discountType === "PERCENT" ? ` (${doc.discountValue}%)` : ""}</Text>
+                <Text>- {formatMoney(doc.discountAmount, currency)}</Text>
+              </View>
+            ) : null}
+            <View style={styles.totalsRow}>
+              <Text>Tax ({doc.taxRate}%)</Text>
+              <Text>{formatMoney(doc.taxAmount, currency)}</Text>
+            </View>
+            <View style={[styles.totalsRow, styles.totalLine]}>
+              <Text>Total</Text>
+              <Text>{formatMoney(doc.total, currency)}</Text>
+            </View>
           </View>
-          <View style={[styles.totalsRow, styles.totalLine]}>
-            <Text>Total</Text>
-            <Text>{formatMoney(doc.total, currency)}</Text>
-          </View>
-        </View>
+        ) : null}
 
         <View style={styles.footer}>
           {doc.paymentTerms ? (
