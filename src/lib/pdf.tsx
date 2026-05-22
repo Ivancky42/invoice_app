@@ -7,21 +7,13 @@ import React from "react";
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 10, fontFamily: "Helvetica", color: "#111827" },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 },
-  brand: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    flexGrow: 1,
-    flexShrink: 1,
-    maxWidth: "58%",
-    paddingRight: 16,
-  },
-  brandInfo: { flex: 1, minWidth: 0 },
-  brandDelivery: { maxWidth: "52%" },
-  logo: { width: 50, height: 50, objectFit: "contain", marginRight: 10, flexShrink: 0 },
+  brand: { flexDirection: "row", alignItems: "flex-start", width: 300, paddingRight: 12 },
+  brandInfo: { width: 240 },
+  logo: { width: 50, height: 50, objectFit: "contain", marginRight: 10 },
   companyName: { fontSize: 14, fontFamily: "Helvetica-Bold" },
   small: { fontSize: 9, color: "#4b5563" },
-  headerRight: { flexShrink: 0, width: 190 },
-  docTitle: { fontSize: 22, fontFamily: "Helvetica-Bold", textAlign: "right" },
+  headerRight: { width: 200 },
+  docTitle: { fontSize: 20, fontFamily: "Helvetica-Bold", textAlign: "right" },
   docMeta: { fontSize: 9, color: "#4b5563", textAlign: "right", marginTop: 4 },
   twoCol: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
   block: { width: "48%" },
@@ -103,7 +95,7 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
     <Document>
       <Page size="A4" style={styles.page}>
         <View style={styles.header}>
-          <View style={isDeliveryOrder ? [styles.brand, styles.brandDelivery] : styles.brand}>
+          <View style={styles.brand}>
             {logoFile ? <Image style={styles.logo} src={logoFile} /> : null}
             <View style={styles.brandInfo}>
               <Text style={styles.companyName}>{company?.name || "Your Company"}</Text>
