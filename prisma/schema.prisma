@@ -250,6 +250,25 @@ model StockReport {
   @@index([reportDate])
 }
 
+/// One row per calendar day (GMT+8) — total portfolio value after Notion→Neon sync.
+model PortfolioSnapshot {
+  /// Noon UTC on the GMT+8 calendar date (matches price-sync day boundary).
+  snapshotDate    DateTime @unique
+  totalValue      Decimal  @db.Decimal(18, 4)
+  /// Equities mark-to-market (incl. CSPX via EODHD price in Notion).
+  equitiesValue   Decimal? @db.Decimal(18, 4)
+  /// CASH_USD balance from Notion.
+  cashValue       Decimal? @db.Decimal(18, 4)
+  /// Per-holding values: [{ key, label, value, isCash }, …]
+  holdingsBreakdown Json?
+  unrealizedPnl   Decimal? @db.Decimal(18, 4)
+  /// vs previous snapshot day; null on first row.
+  dailyReturnPct  Decimal? @db.Decimal(10, 4)
+  recordedAt      DateTime @default(now())
+
+  @@index([snapshotDate])
+}
+
 model SyncStatus {
   id            Int       @id @default(autoincrement())
   source        String    @unique

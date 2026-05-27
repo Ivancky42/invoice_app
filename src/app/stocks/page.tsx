@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { getPortfolio, getSyncStatus, getTrades, getWatchlist } from "@/lib/stocks/db";
+import { getPortfolio, getPortfolioSnapshots, getSyncStatus, getTrades, getWatchlist } from "@/lib/stocks/db";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import { DonutChart, type DonutSegment } from "@/app/_components/DonutChart";
+import { PortfolioChartPanel } from "@/app/stocks/_components/PortfolioChartPanel";
 import { StocksDailyBriefCard } from "@/app/stocks/_components/StocksDailyBriefCard";
 import {
   decToNum,
@@ -13,6 +14,7 @@ import {
   pnl,
   positionPnl,
 } from "@/lib/stocks/format";
+import { computePortfolioTotals } from "@/lib/stocks/portfolioTotals";
 
 export const revalidate = 900;
 
@@ -42,19 +44,23 @@ const RISK_COLORS: Record<string, string> = {
 const CASH_DONUT_COLOR = "#64748b";
 
 export default async function StocksOverview() {
-  const [portfolio, watchlist, trades, status] = await Promise.all([
+  const [portfolio, watchlist, trades, status, snapshotHistory] = await Promise.all([
     getPortfolio(),
     getWatchlist(),
     getTrades(),
     getSyncStatus(),
+    getPortfolioSnapshots(),
   ]);
 
   const holdings = holdingsByTicker(trades);
+  const portfolioTotals = computePortfolioTotals(portfolio, trades);
 
-  let totalPnlDollar = 0;
-  let totalEquitiesMarketValue = 0;
-  let hasPnl = false;
-  let hasEquitiesValue = false;
+  let totalPnlDollar = portfolioTotals.unrealizedPnl;
+  const hasPnl = portfolioTotals.hasPnl;
+  const totalEquitiesMarketValue = portfolioTotals.equitiesValue;
+  const hasEquitiesValue = portfolioTotals.equitiesValue > 0;
+  const cashPosition = portfolioTotals.cashValue;
+  const totalPortfolioValue = portfolioTotals.totalValue;
 
   type Row = {
     ticker: string;
@@ -83,17 +89,9 @@ export default async function StocksOverview() {
     }
     const cur = decToNum(p.currentPrice);
     const cost = decToNum(p.myAvgCost);
-    const shares = holdings.get(p.ticker) ?? null;
+    const shares = holdings.get(p.ticker) ?? holdings.get(p.ticker.trim().toUpperCase()) ?? null;
     const r = positionPnl(cur, cost, shares);
     const per = pnl(cur, cost);
-    if (r.dollar !== null) {
-      totalPnlDollar += r.dollar;
-      hasPnl = true;
-    }
-    if (r.marketValue !== null && r.marketValue > 0) {
-      totalEquitiesMarketValue += r.marketValue;
-      hasEquitiesValue = true;
-    }
     return {
       ticker: p.ticker,
       action: p.action,
@@ -106,18 +104,12 @@ export default async function StocksOverview() {
     };
   });
 
-  const cashPosition = rows
-    .filter((r) => isCashTicker(r.ticker) && r.marketValue !== null && r.marketValue > 0)
-    .reduce((s, r) => s + (r.marketValue as number), 0);
-
   const movers = rows
     .filter((m) => m.pnlPct !== null)
     .sort((a, b) => Math.abs(b.pnlPct ?? 0) - Math.abs(a.pnlPct ?? 0))
     .slice(0, 5);
 
   const openTrades = trades.filter((t) => t.status?.includes("Open")).length;
-
-  const totalPortfolioValue = totalEquitiesMarketValue + cashPosition;
 
   type ValueSlice = {
     label: string;
@@ -234,6 +226,21 @@ export default async function StocksOverview() {
             </div>
           )}
         </div>
+      </section>
+
+      <section className="card p-5 flex flex-col">
+        <div className="flex items-center justify-between mb-3 gap-4 shrink-0">
+          <div>
+            <h2 className="font-medium">Portfolio value over time</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Daily stacked bars by holding + CASH_USD. Priced via Notion sync (CSPX via EODHD).
+            </p>
+          </div>
+          {totalPortfolioValue > 0 ? (
+            <span className="text-xs text-gray-500 shrink-0">Live {fmtMoney(totalPortfolioValue)}</span>
+          ) : null}
+        </div>
+        <PortfolioChartPanel points={snapshotHistory} />
       </section>
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-3">

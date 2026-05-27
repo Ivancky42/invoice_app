@@ -12,10 +12,15 @@ export function isCashTicker(ticker: string | null | undefined): boolean {
   return (ticker ?? "").trim().toUpperCase() === "CASH_USD";
 }
 
+/** Notion Portfolio DB uses ticker `CSPX` for the passive S&P 500 ETF (priced via EODHD, not Finnhub). */
+export function isCspxTicker(ticker: string | null | undefined): boolean {
+  return (ticker ?? "").trim().toUpperCase() === "CSPX";
+}
+
 /** Rows/symbols we never send to Finnhub (Notion price sync manual + cron). */
 export function isPriceSyncExcludedTicker(ticker: string | null | undefined): boolean {
   if (isCashTicker(ticker)) return true;
-  return (ticker ?? "").trim().toUpperCase() === "CSPX";
+  return isCspxTicker(ticker);
 }
 
 /**

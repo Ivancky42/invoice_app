@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { parseHoldingSlices, type HoldingSlice } from "@/lib/stocks/portfolioTotals";
 import type {
 	Portfolio,
 	Watchlist,
@@ -182,6 +183,32 @@ export async function getLatestStockReport(
 			{ title: "desc" },
 		],
 	});
+}
+
+export type PortfolioSnapshotPoint = {
+	snapshotDate: string;
+	totalValue: number;
+	equitiesValue: number | null;
+	cashValue: number | null;
+	holdings: HoldingSlice[];
+	unrealizedPnl: number | null;
+	dailyReturnPct: number | null;
+};
+
+export async function getPortfolioSnapshots(limit = 400): Promise<PortfolioSnapshotPoint[]> {
+	const rows = await prisma.portfolioSnapshot.findMany({
+		orderBy: { snapshotDate: "desc" },
+		take: limit,
+	});
+	return rows.reverse().map((r) => ({
+		snapshotDate: r.snapshotDate.toISOString(),
+		totalValue: Number(r.totalValue),
+		equitiesValue: r.equitiesValue !== null ? Number(r.equitiesValue) : null,
+		cashValue: r.cashValue !== null ? Number(r.cashValue) : null,
+		holdings: parseHoldingSlices(r.holdingsBreakdown),
+		unrealizedPnl: r.unrealizedPnl !== null ? Number(r.unrealizedPnl) : null,
+		dailyReturnPct: r.dailyReturnPct !== null ? Number(r.dailyReturnPct) : null,
+	}));
 }
 
 export async function getSyncStatus(
