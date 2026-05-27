@@ -221,16 +221,22 @@ function MoveCard({ title, body }: { title: string; body: string | null }) {
 	);
 }
 
-export function DailyLogReader({ entry }: { entry: DailyLogDTO }) {
+export function DailyLogReader({
+	entry,
+	embedded = false,
+}: {
+	entry: DailyLogDTO;
+	embedded?: boolean;
+}) {
 	return (
 		<article className="space-y-6">
 			<header className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-gray-100">
-				<div>
-					<h2 className="text-xl font-semibold text-gray-900">
-						{entry.title}
-					</h2>
-				</div>
-				<dl className="flex flex-wrap gap-3 text-sm">
+				{!embedded ? (
+					<div>
+						<h2 className="text-xl font-semibold text-gray-900">{entry.title}</h2>
+					</div>
+				) : null}
+				<dl className={`flex flex-wrap gap-3 text-sm ${embedded ? "w-full" : ""}`}>
 					<div className="rounded-lg bg-gray-50 px-3 py-2">
 						<dt className="text-xs text-gray-500">Flags</dt>
 						<dd className="font-medium tabular-nums">

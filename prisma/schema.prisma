@@ -231,6 +231,25 @@ model DailyLog {
   @@index([logDate])
 }
 
+enum StockReportType {
+  WEEKLY
+  MONTHLY
+}
+
+/// Cached weekly / monthly report pages from Notion Stock Monitor HQ (child pages).
+model StockReport {
+  notionId   String          @id
+  title      String
+  reportType StockReportType
+  reportDate DateTime?
+  /// Normalized block tree for rendering (paragraphs, headings, tables, lists).
+  content    Json
+  syncedAt   DateTime        @updatedAt
+
+  @@index([reportType])
+  @@index([reportDate])
+}
+
 model SyncStatus {
   id            Int       @id @default(autoincrement())
   source        String    @unique

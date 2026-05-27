@@ -6,8 +6,11 @@ import type {
 	Trend,
 	Idea,
 	DailyLog,
+	StockReport,
 	SyncStatus,
 } from "@/generated/prisma/client";
+import { StockReportType } from "@/generated/prisma/client";
+import type { ReportBlock } from "@/lib/notion/blocks";
 import {
 	decToNum,
 	parseDcaZoneUpper,
@@ -25,6 +28,7 @@ export type TradeRow = Trade;
 export type TrendRow = Trend;
 export type IdeaRow = Idea;
 export type DailyLogRow = DailyLog;
+export type StockReportRow = StockReport;
 export type SyncStatusRow = SyncStatus;
 
 /** Plain shape for passing daily logs into client components (JSON-serializable). */
@@ -57,6 +61,25 @@ export function dailyLogToDTO(row: DailyLogRow): DailyLogDTO {
 		portfolioMove: row.portfolioMove,
 		topNews: row.topNews,
 		watchlistMove: row.watchlistMove,
+	};
+}
+
+/** Plain shape for passing stock reports into client components (JSON-serializable). */
+export type StockReportDTO = {
+	notionId: string;
+	title: string;
+	reportType: "WEEKLY" | "MONTHLY";
+	reportDate: string | null;
+	content: ReportBlock[];
+};
+
+export function stockReportToDTO(row: StockReportRow): StockReportDTO {
+	return {
+		notionId: row.notionId,
+		title: row.title,
+		reportType: row.reportType,
+		reportDate: row.reportDate ? row.reportDate.toISOString() : null,
+		content: row.content as ReportBlock[],
 	};
 }
 
@@ -135,6 +158,30 @@ export async function getLatestDailyLog(): Promise<DailyLogRow | null> {
 		],
 	});
 	return row;
+}
+
+export async function getStockReports(type?: StockReportType): Promise<StockReportRow[]> {
+	return prisma.stockReport.findMany({
+		where: type ? { reportType: type } : undefined,
+		orderBy: [
+			{ reportDate: { sort: "desc", nulls: "last" } },
+			{ syncedAt: "desc" },
+			{ title: "desc" },
+		],
+	});
+}
+
+export async function getLatestStockReport(
+	type: StockReportType,
+): Promise<StockReportRow | null> {
+	return prisma.stockReport.findFirst({
+		where: { reportType: type },
+		orderBy: [
+			{ reportDate: { sort: "desc", nulls: "last" } },
+			{ syncedAt: "desc" },
+			{ title: "desc" },
+		],
+	});
 }
 
 export async function getSyncStatus(

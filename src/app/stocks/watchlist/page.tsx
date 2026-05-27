@@ -2,6 +2,7 @@ import { getSyncStatus, getWatchlist } from "@/lib/stocks/db";
 import type { WatchlistRow } from "@/lib/stocks/db";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import { ExpandableText } from "@/app/_components/ExpandableText";
+import { NotesModalField } from "@/app/stocks/_components/NotesModalField";
 import {
   decToNum,
   fmtMoney,
@@ -76,7 +77,7 @@ export default async function WatchlistPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {g.items.map((w) => (
-              <div key={w.notionId} className="card p-4 space-y-2">
+              <div key={w.notionId} className="card p-4 flex flex-col gap-2 h-full">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="font-semibold">{w.ticker}</div>
@@ -135,21 +136,7 @@ export default async function WatchlistPage() {
                 {w.thesis && (
                   <div className="space-y-1">
                     <div className="text-xs font-medium text-gray-500">Thesis</div>
-                    <ExpandableText
-                      text={w.thesis}
-                      lines={3}
-                      textClassName="text-sm text-gray-700 whitespace-pre-wrap"
-                    />
-                  </div>
-                )}
-                {w.actionNotes && (
-                  <div className="space-y-1">
-                    <div className="text-xs font-medium text-gray-500">Action notes</div>
-                    <ExpandableText
-                      text={w.actionNotes}
-                      lines={3}
-                      textClassName="text-sm text-gray-700 whitespace-pre-wrap"
-                    />
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{w.thesis}</p>
                   </div>
                 )}
                 {w.impliedMove && (
@@ -179,6 +166,15 @@ export default async function WatchlistPage() {
                       text={w.socialPlatformBuzz}
                       lines={3}
                       textClassName="text-sm text-gray-700 whitespace-pre-wrap"
+                    />
+                  </div>
+                )}
+                {w.actionNotes && (
+                  <div className="mt-auto pt-3 border-t border-gray-100">
+                    <NotesModalField
+                      label="Action notes"
+                      text={w.actionNotes}
+                      context={w.ticker}
                     />
                   </div>
                 )}

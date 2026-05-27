@@ -5,6 +5,7 @@ import { syncTrades } from "@/lib/notion/mappers/trades";
 import { syncTrends } from "@/lib/notion/mappers/trends";
 import { syncIdeas } from "@/lib/notion/mappers/ideas";
 import { syncDailyLogs } from "@/lib/notion/mappers/dailyLogs";
+import { syncStockReports } from "@/lib/notion/mappers/stockReports";
 
 const SYNC_SOURCE = "notion";
 
@@ -53,6 +54,7 @@ export async function runNotionSync(): Promise<SyncResult> {
   steps.push(await runStep("trends", syncTrends));
   steps.push(await runStep("ideas", syncIdeas));
   steps.push(await runStep("dailyLogs", syncDailyLogs));
+  steps.push(await runStep("stockReports", syncStockReports));
 
   const allOk = steps.every((s) => s.ok);
   const rowCounts: Record<string, number | null> = {};

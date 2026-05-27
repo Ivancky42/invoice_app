@@ -1,5 +1,6 @@
 import { getPortfolio, getSyncStatus, getTrades } from "@/lib/stocks/db";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
+import { NotesModalField } from "@/app/stocks/_components/NotesModalField";
 import {
   actionBadgeClass,
   decToNum,
@@ -174,12 +175,9 @@ export default async function PortfolioPage() {
                     <p className="text-sm text-gray-700 whitespace-pre-wrap">{p.thesis}</p>
                   )}
                   {p.notes && (
-                    <p
-                      className={`text-sm text-gray-600 whitespace-pre-wrap ${p.thesis ? "mt-3 pt-3 border-t border-gray-100" : ""}`}
-                    >
-                      <span className="font-medium text-gray-700">Notes: </span>
-                      {p.notes}
-                    </p>
+                    <div className={p.thesis ? "mt-3 pt-3 border-t border-gray-100" : ""}>
+                      <NotesModalField label="Notes" text={p.notes} context={p.ticker} />
+                    </div>
                   )}
                   {p.keyRisk && (
                     <p className="text-xs text-amber-700 mt-2">
