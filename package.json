@@ -14,7 +14,8 @@
     "start:all": "pnpm db:up && pnpm db:push && pnpm dev",
     "db:resolve-baseline-prod": "prisma migrate resolve --applied 20250514190000_baseline --config prisma.config.ts",
     "db:resolve-daily-log-prod": "prisma migrate resolve --applied 20250514190100_daily_log --config prisma.config.ts",
-    "db:resolve-portfolio-snapshot-breakdown-prod": "prisma migrate resolve --rolled-back 20250527150000_portfolio_snapshot_breakdown --config prisma.config.ts",
+    "db:resolve-portfolio-snapshot-breakdown-prod": "prisma migrate resolve --applied 20250527150000_portfolio_snapshot_breakdown --config prisma.config.ts",
+    "db:repair-prod-migrations": "prisma migrate resolve --applied 20250527150000_portfolio_snapshot_breakdown --config prisma.config.ts && prisma migrate deploy --config prisma.config.ts",
     "db:migrate-prod": "prisma migrate deploy --config prisma.config.ts"
   },
   "dependencies": {
