@@ -109,6 +109,31 @@ export function fmtMoney(n: number | null | undefined): string {
   });
 }
 
+const UTC_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+/** SSR-safe short UTC date, e.g. "May 27" — avoids Intl locale drift between Node and browser. */
+export function fmtShortDateUtc(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isNaN(d.getTime())) {
+    return `${UTC_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  }
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    return `${UTC_MONTHS[parseInt(m[2]!, 10) - 1]} ${parseInt(m[3]!, 10)}`;
+  }
+  return iso.slice(0, 10);
+}
+
+/** Fixed-decimal USD string — stable across server/client (for SVG attributes). */
+export function fmtMoneyFixed(n: number, digits = 2): string {
+  if (!Number.isFinite(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  return `${sign}$${Math.abs(n).toFixed(digits)}`;
+}
+
 export function fmtPct(d: Decimal | number | null | undefined): string {
   const n = typeof d === "number" ? d : decToNum(d ?? null);
   if (n === null) return "—";

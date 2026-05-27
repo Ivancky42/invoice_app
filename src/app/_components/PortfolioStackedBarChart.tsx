@@ -1,5 +1,8 @@
-import { fmtMoney, fmtPct } from "@/lib/stocks/format";
-import { colorForHoldingKey } from "@/lib/stocks/chartColors";
+import { fmtMoney, fmtMoneyFixed, fmtPct, fmtShortDateUtc } from "@/lib/stocks/format";
+import {
+	assignPortfolioValueColors,
+	getPortfolioHoldingColor,
+} from "@/lib/stocks/chartColors";
 import type { HoldingSlice } from "@/lib/stocks/portfolioTotals";
 import type { PortfolioSnapshotPoint } from "@/lib/stocks/db";
 
@@ -8,16 +11,9 @@ type Props = {
 	width?: number;
 };
 
-function fmtShortDate(iso: string): string {
-	try {
-		return new Intl.DateTimeFormat("en-CA", {
-			month: "short",
-			day: "numeric",
-			timeZone: "UTC",
-		}).format(new Date(iso));
-	} catch {
-		return iso.slice(0, 10);
-	}
+/** Round SVG geometry so server/client floating-point output matches. */
+function svgNum(n: number): number {
+	return Math.round(n * 100) / 100;
 }
 
 function fmtAxisMoney(n: number): string {
@@ -85,16 +81,20 @@ function stackKeys(points: PortfolioSnapshotPoint[]): string[] {
 	return ordered;
 }
 
-function legendEntries(keys: string[], points: PortfolioSnapshotPoint[]) {
+function legendEntries(
+	keys: string[],
+	points: PortfolioSnapshotPoint[],
+	colorMap: Map<string, string>,
+) {
 	const latest = points[points.length - 1];
 	const latestBreakdown = latest ? effectiveBreakdown(latest) : [];
-	return keys.map((key) => {
+	return keys.map((key, i) => {
 		const sample = latestBreakdown.find((s) => s.key === key);
 		const value = sliceValue(latestBreakdown, key);
 		return {
 			key,
 			label: sample?.label ?? key,
-			color: colorForHoldingKey(key, keys),
+			color: getPortfolioHoldingColor(colorMap, key, i),
 			value,
 		};
 	});
@@ -165,11 +165,15 @@ export function PortfolioStackedBarChart({ points, width = 640 }: Props) {
 	}));
 
 	const keys = stackKeys(enriched);
-	const legend = legendEntries(keys, enriched);
-	const height = chartHeight(legend.length, enriched.length);
-
 	const latest = enriched[enriched.length - 1]!;
 	const first = enriched[0]!;
+	const latestBreakdown = effectiveBreakdown(latest);
+	const colorMap = assignPortfolioValueColors(
+		latestBreakdown.map((s) => ({ key: s.key, value: s.value, isCash: s.isCash })),
+	);
+	const legend = legendEntries(keys, enriched, colorMap);
+	const height = chartHeight(legend.length, enriched.length);
+
 	const periodReturn =
 		first.totalValue > 0 ? ((latest.totalValue - first.totalValue) / first.totalValue) * 100 : null;
 
@@ -185,7 +189,7 @@ export function PortfolioStackedBarChart({ points, width = 640 }: Props) {
 
 	const yTicks = [0, 0.5, 1].map((t) => ({
 		value: yMax * t,
-		y: pad.top + innerH - t * innerH,
+		y: svgNum(pad.top + innerH - t * innerH),
 	}));
 
 	const xLabelEvery = enriched.length <= 7 ? 1 : enriched.length <= 14 ? 2 : Math.ceil(enriched.length / 7);
@@ -250,7 +254,7 @@ export function PortfolioStackedBarChart({ points, width = 640 }: Props) {
 						))}
 
 						{enriched.map((point, i) => {
-							const barX = pad.left + i * (barWidth + barGap);
+							const barX = svgNum(pad.left + i * (barWidth + barGap));
 							let yCursor = pad.top + innerH;
 
 							return (
@@ -260,34 +264,34 @@ export function PortfolioStackedBarChart({ points, width = 640 }: Props) {
 										if (val <= 0) return null;
 										const segH = (val / yMax) * innerH;
 										yCursor -= segH;
-										const color = colorForHoldingKey(key, keys);
+										const y = svgNum(yCursor);
+										const h = svgNum(Math.max(segH, 0.5));
+										const color = getPortfolioHoldingColor(colorMap, key, keys.indexOf(key));
 										const label = point.breakdown.find((s) => s.key === key)?.label ?? key;
 										return (
 											<rect
 												key={key}
 												x={barX}
-												y={yCursor}
-												width={barWidth}
-												height={Math.max(segH, 0.5)}
+												y={y}
+												width={svgNum(barWidth)}
+												height={h}
 												fill={color}
 												stroke="#fff"
 												strokeWidth={0.5}
 											>
-												<title>
-													{fmtShortDate(point.snapshotDate)} — {label}: {fmtMoney(val)}
-												</title>
+												<title>{`${fmtShortDateUtc(point.snapshotDate)} - ${label}: ${fmtMoneyFixed(val)}`}</title>
 											</rect>
 										);
 									})}
 									{i % xLabelEvery === 0 || i === enriched.length - 1 ? (
 										<text
-											x={barX + barWidth / 2}
+											x={svgNum(barX + barWidth / 2)}
 											y={height - 8}
 											textAnchor="middle"
 											fontSize={10}
 											className="fill-gray-500"
 										>
-											{fmtShortDate(point.snapshotDate)}
+											{fmtShortDateUtc(point.snapshotDate)}
 										</text>
 									) : null}
 								</g>

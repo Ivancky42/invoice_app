@@ -15,21 +15,14 @@ import {
   positionPnl,
 } from "@/lib/stocks/format";
 import { computePortfolioTotals } from "@/lib/stocks/portfolioTotals";
+import {
+  assignPortfolioValueColors,
+  CASH_DONUT_COLOR,
+  getPortfolioHoldingColor,
+  PORTFOLIO_TICKER_PALETTE,
+} from "@/lib/stocks/chartColors";
 
 export const revalidate = 900;
-
-const TICKER_PALETTE = [
-  "#2563eb",
-  "#10b981",
-  "#f59e0b",
-  "#ef4444",
-  "#8b5cf6",
-  "#ec4899",
-  "#14b8a6",
-  "#f97316",
-  "#6366f1",
-  "#84cc16",
-];
 
 const RISK_COLORS: Record<string, string> = {
   Low: "#10b981",
@@ -40,8 +33,6 @@ const RISK_COLORS: Record<string, string> = {
   "Very High": "#b91c1c",
   Unknown: "#9ca3af",
 };
-
-const CASH_DONUT_COLOR = "#64748b";
 
 export default async function StocksOverview() {
   const [portfolio, watchlist, trades, status, snapshotHistory] = await Promise.all([
@@ -131,12 +122,18 @@ export default async function StocksOverview() {
     }))
     .sort((a, b) => b.value - a.value);
 
-  let paletteIdx = 0;
-  const valueSegments: DonutSegment[] = valueSlices.map((s) => ({
+  const valueColorMap = assignPortfolioValueColors(
+    valueSlices.map((s) => ({
+      key: s.isCash ? "CASH_USD" : s.label,
+      value: s.value,
+      isCash: s.isCash,
+    })),
+  );
+  const valueSegments: DonutSegment[] = valueSlices.map((s, i) => ({
     label: s.label,
     value: s.value,
     sublabel: s.sublabel,
-    color: s.isCash ? CASH_DONUT_COLOR : TICKER_PALETTE[paletteIdx++ % TICKER_PALETTE.length],
+    color: getPortfolioHoldingColor(valueColorMap, s.isCash ? "CASH_USD" : s.label, i),
   }));
 
   const riskTotals = new Map<string, number>();
@@ -177,7 +174,7 @@ export default async function StocksOverview() {
     .map(([label, value]) => ({
       label,
       value,
-      color: label === "Cash" ? CASH_DONUT_COLOR : TICKER_PALETTE[sectorPaletteIdx++ % TICKER_PALETTE.length],
+      color: label === "Cash" ? CASH_DONUT_COLOR : PORTFOLIO_TICKER_PALETTE[sectorPaletteIdx++ % PORTFOLIO_TICKER_PALETTE.length],
     }));
 
   return (
