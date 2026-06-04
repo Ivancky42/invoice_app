@@ -1,6 +1,7 @@
 import type { Prisma } from "@/generated/prisma/client";
 import { StockReportType } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { runInTransactionBatches } from "@/lib/notion/batchTransaction";
 import { fetchPageBlocks, listChildPages } from "@/lib/notion/blocks";
 
 const US_LONG_MONTH_TO_INDEX: Record<string, number> = {
@@ -78,7 +79,7 @@ export async function syncStockReports(): Promise<{ count: number }> {
 	}
 
 	if (rows.length > 0) {
-		await prisma.$transaction(
+		await runInTransactionBatches(
 			rows.map((r) =>
 				prisma.stockReport.upsert({ where: { notionId: r.notionId }, create: r, update: r }),
 			),

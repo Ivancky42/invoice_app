@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { asBoolean, asDate, asInt, asString, readPrimaryTitle, readProp } from "@/lib/notion/extract";
 import { notionDbId } from "@/lib/notion/client";
+import { runInTransactionBatches } from "@/lib/notion/batchTransaction";
 import { queryAllPages } from "@/lib/notion/queryAll";
 
 const US_LONG_MONTH_TO_INDEX: Record<string, number> = {
@@ -72,7 +73,7 @@ export async function syncDailyLogs(): Promise<{ count: number }> {
 	const rows = pages.map(mapPage).filter((r): r is Prisma.DailyLogUncheckedCreateInput => r !== null);
 
 	if (rows.length > 0) {
-		await prisma.$transaction(
+		await runInTransactionBatches(
 			rows.map((r) =>
 				prisma.dailyLog.upsert({ where: { notionId: r.notionId }, create: r, update: r }),
 			),

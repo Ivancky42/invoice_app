@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { asDate, asInt, asNumber, asString, readProp } from "@/lib/notion/extract";
 import { notionDbId } from "@/lib/notion/client";
+import { runInTransactionBatches } from "@/lib/notion/batchTransaction";
 import { queryAllPages } from "@/lib/notion/queryAll";
 
 function mapPage(page: PageObjectResponse): Prisma.WatchlistUncheckedCreateInput | null {
@@ -45,7 +46,7 @@ export async function syncWatchlist(): Promise<{ count: number }> {
   const pages = await queryAllPages(dbId);
   const rows = pages.map(mapPage).filter((r): r is Prisma.WatchlistUncheckedCreateInput => r !== null);
   const ids = rows.map((r) => r.notionId);
-  await prisma.$transaction(
+  await runInTransactionBatches(
     rows.map((r) => {
       const { notionId, ...update } = r;
       return prisma.watchlist.upsert({

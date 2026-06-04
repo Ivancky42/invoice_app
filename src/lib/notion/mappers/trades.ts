@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { asDate, asNumber, asString, readProp } from "@/lib/notion/extract";
 import { notionDbId } from "@/lib/notion/client";
+import { runInTransactionBatches } from "@/lib/notion/batchTransaction";
 import { queryAllPages } from "@/lib/notion/queryAll";
 
 function mapPage(page: PageObjectResponse): Prisma.TradeUncheckedCreateInput | null {
@@ -32,7 +33,7 @@ export async function syncTrades(): Promise<{ count: number }> {
   const dbId = notionDbId("NOTION_TRADES_DB");
   const pages = await queryAllPages(dbId);
   const rows = pages.map(mapPage).filter((r): r is Prisma.TradeUncheckedCreateInput => r !== null);
-  await prisma.$transaction(
+  await runInTransactionBatches(
     rows.map((r) =>
       prisma.trade.upsert({ where: { notionId: r.notionId }, create: r, update: r }),
     ),
