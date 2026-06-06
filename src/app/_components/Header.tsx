@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { lockSiteGate } from "@/lib/site-gate-actions";
 
 const STOCK_PATHS = ["/stocks"] as const;
-const INVOICE_PATHS = ["/invoices", "/documents", "/settings"] as const;
+const INVOICE_PATHS = ["/invoices", "/documents", "/settings", "/clients"] as const;
 
 type App = "invoices" | "stocks" | null;
 
@@ -30,6 +30,7 @@ const invoiceLinks = [
   { href: "/invoices", label: "Dashboard" },
   { href: "/documents", label: "Documents" },
   { href: "/documents/new?type=QUOTATION", label: "New" },
+  { href: "/clients", label: "Clients" },
   { href: "/settings", label: "Settings" },
 ];
 

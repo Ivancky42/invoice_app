@@ -8,9 +8,10 @@ export const dynamic = "force-dynamic";
 
 export default async function EditDocPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [doc, companies] = await Promise.all([
+  const [doc, companies, clients] = await Promise.all([
     prisma.document.findUnique({ where: { id } }),
     prisma.companyProfile.findMany({ orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }] }),
+    prisma.clientProfile.findMany({ orderBy: { name: "asc" } }),
   ]);
   if (!doc) return notFound();
   const items = (doc.items as unknown as LineItem[]) ?? [];
@@ -18,6 +19,15 @@ export default async function EditDocPage({ params }: { params: Promise<{ id: st
     <DocumentForm
       mode="edit"
       companies={companies.map((c) => ({ id: c.id, name: c.name, currency: c.currency, taxRate: c.taxRate }))}
+      clients={clients.map((c) => ({
+        id: c.id,
+        name: c.name,
+        address: c.address,
+        email: c.email,
+        phone: c.phone,
+        shipToAttn: c.shipToAttn,
+        shipToAddress: c.shipToAddress,
+      }))}
       saveAction={saveDocument}
       initial={{
         id: doc.id,
@@ -26,6 +36,7 @@ export default async function EditDocPage({ params }: { params: Promise<{ id: st
         issueDate: doc.issueDate.toISOString().slice(0, 10),
         dueDate: doc.dueDate ? doc.dueDate.toISOString().slice(0, 10) : "",
         companyId: doc.companyId,
+        clientId: doc.clientId,
         clientName: doc.clientName,
         clientAddress: doc.clientAddress ?? "",
         clientEmail: doc.clientEmail ?? "",

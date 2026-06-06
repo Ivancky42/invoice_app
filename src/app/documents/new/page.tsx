@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function NewDocumentPage({ searchParams }: { searchParams: Promise<{ type?: string }> }) {
   const { type } = await searchParams;
   const companies = await prisma.companyProfile.findMany({ orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }] });
+  const clients = await prisma.clientProfile.findMany({ orderBy: { name: "asc" } });
   const defaultCo = companies.find((c) => c.isDefault) ?? companies[0];
   const initialType = type && ["QUOTATION", "INVOICE", "DELIVERY_ORDER"].includes(type) ? type : "QUOTATION";
 
@@ -25,6 +26,15 @@ export default async function NewDocumentPage({ searchParams }: { searchParams: 
     <DocumentForm
       mode="create"
       companies={companies.map((c) => ({ id: c.id, name: c.name, currency: c.currency, taxRate: c.taxRate }))}
+      clients={clients.map((c) => ({
+        id: c.id,
+        name: c.name,
+        address: c.address,
+        email: c.email,
+        phone: c.phone,
+        shipToAttn: c.shipToAttn,
+        shipToAddress: c.shipToAddress,
+      }))}
       saveAction={saveDocument}
       initial={{
         type: initialType,

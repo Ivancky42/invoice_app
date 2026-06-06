@@ -12,6 +12,7 @@ type SaveInput = {
   issueDate: string;
   dueDate?: string | null;
   companyId?: string | null;
+  clientId?: string | null;
   clientName: string;
   clientAddress?: string;
   clientEmail?: string;
@@ -40,6 +41,7 @@ export async function saveDocument(input: SaveInput): Promise<{ id: string }> {
     issueDate: new Date(input.issueDate),
     dueDate: input.dueDate ? new Date(input.dueDate) : null,
     companyId: input.companyId || null,
+    clientId: input.clientId || null,
     clientName: input.clientName,
     clientAddress: input.clientAddress || null,
     clientEmail: input.clientEmail || null,
@@ -98,6 +100,7 @@ export async function convertDocument(id: string): Promise<{ id: string } | null
       status: "DRAFT",
       issueDate: new Date(),
       companyId: src.companyId,
+      clientId: src.clientId,
       clientName: src.clientName,
       clientAddress: src.clientAddress,
       clientEmail: src.clientEmail,

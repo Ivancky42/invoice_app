@@ -39,6 +39,19 @@ model CompanyProfile {
   documents    Document[]
 }
 
+model ClientProfile {
+  id            String   @id @default(cuid())
+  name          String
+  address       String?
+  email         String?
+  phone         String?
+  shipToAttn    String?
+  shipToAddress String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  documents     Document[]
+}
+
 model Document {
   id            String         @id @default(cuid())
   type          DocumentType
@@ -48,6 +61,8 @@ model Document {
   dueDate       DateTime?
   companyId     String?
   company       CompanyProfile? @relation(fields: [companyId], references: [id])
+  clientId      String?
+  client        ClientProfile? @relation(fields: [clientId], references: [id])
   clientName    String
   clientAddress String?
   clientEmail   String?

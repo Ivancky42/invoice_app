@@ -5,6 +5,15 @@ import { useRouter } from "next/navigation";
 import { LineItem, calcTotals, formatMoney, DOC_LABELS, DiscountType, PAYMENT_TERMS_PRESETS } from "@/lib/types";
 
 type CompanyOption = { id: string; name: string; currency: string; taxRate: number };
+type ClientOption = {
+  id: string;
+  name: string;
+  address?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  shipToAttn?: string | null;
+  shipToAddress?: string | null;
+};
 
 type Props = {
   mode: "create" | "edit";
@@ -16,6 +25,7 @@ type Props = {
     issueDate?: string;
     dueDate?: string | null;
     companyId?: string | null;
+    clientId?: string | null;
     clientName?: string;
     clientAddress?: string;
     clientEmail?: string;
@@ -34,14 +44,16 @@ type Props = {
     terms?: string;
   };
   companies: CompanyOption[];
+  clients: ClientOption[];
   saveAction: (data: any) => Promise<{ id: string }>;
 };
 
-export default function DocumentForm({ mode, initial, companies, saveAction }: Props) {
+export default function DocumentForm({ mode, initial, companies, clients, saveAction }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [type, setType] = useState(initial.type);
   const [companyId, setCompanyId] = useState<string>(initial.companyId ?? companies[0]?.id ?? "");
+  const [clientId, setClientId] = useState<string>(initial.clientId ?? "");
   const currentCompany = companies.find((c) => c.id === companyId);
   const currency = currentCompany?.currency || "USD";
   const [items, setItems] = useState<LineItem[]>(
@@ -80,12 +92,29 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
     setItems((prev) => [...prev, { description: "", quantity: 1, unitPrice: 0 }]);
   }
 
+  function selectClient(id: string) {
+    setClientId(id);
+    if (!id) return;
+    const c = clients.find((x) => x.id === id);
+    if (!c) return;
+    setForm((prev) => ({
+      ...prev,
+      clientName: c.name,
+      clientAddress: c.address ?? "",
+      clientEmail: c.email ?? "",
+      clientPhone: c.phone ?? "",
+      shipToAttn: c.shipToAttn ?? "",
+      shipToAddress: c.shipToAddress ?? "",
+    }));
+  }
+
   function submit() {
     start(async () => {
       const res = await saveAction({
         id: initial.id,
         type,
         companyId: companyId || null,
+        clientId: clientId || null,
         ...form,
         items,
         taxRate: Number(taxRate) || 0,
@@ -201,21 +230,35 @@ export default function DocumentForm({ mode, initial, companies, saveAction }: P
       <div className="card p-5 space-y-4">
         <h2 className="font-medium">Bill to</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="md:col-span-2">
+            <label className="label">Client</label>
+            <select className="input" value={clientId} onChange={(e) => selectClient(e.target.value)}>
+              <option value="">Enter manually</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            {clients.length === 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                No saved clients. <a href="/clients/new" className="underline">Add one</a> or fill in the fields below.
+              </p>
+            )}
+          </div>
           <div>
             <label className="label">Client name *</label>
-            <input className="input" value={form.clientName} onChange={(e) => setForm({ ...form, clientName: e.target.value })} />
+            <input className="input" value={form.clientName} onChange={(e) => { setClientId(""); setForm({ ...form, clientName: e.target.value }); }} />
           </div>
           <div>
             <label className="label">Email</label>
-            <input className="input" value={form.clientEmail} onChange={(e) => setForm({ ...form, clientEmail: e.target.value })} />
+            <input className="input" value={form.clientEmail} onChange={(e) => { setClientId(""); setForm({ ...form, clientEmail: e.target.value }); }} />
           </div>
           <div>
             <label className="label">Phone</label>
-            <input className="input" value={form.clientPhone} onChange={(e) => setForm({ ...form, clientPhone: e.target.value })} />
+            <input className="input" value={form.clientPhone} onChange={(e) => { setClientId(""); setForm({ ...form, clientPhone: e.target.value }); }} />
           </div>
           <div className="md:col-span-2">
             <label className="label">Address</label>
-            <textarea className="input" rows={3} value={form.clientAddress} onChange={(e) => setForm({ ...form, clientAddress: e.target.value })} />
+            <textarea className="input" rows={3} value={form.clientAddress} onChange={(e) => { setClientId(""); setForm({ ...form, clientAddress: e.target.value }); }} />
           </div>
         </div>
       </div>
