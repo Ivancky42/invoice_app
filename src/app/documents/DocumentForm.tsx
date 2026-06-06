@@ -2,7 +2,21 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import AppSelect from "@/components/AppSelect";
 import { LineItem, calcTotals, formatMoney, DOC_LABELS, DiscountType, PAYMENT_TERMS_PRESETS } from "@/lib/types";
+
+const TYPE_OPTIONS = [
+  { value: "QUOTATION", label: "Quotation" },
+  { value: "INVOICE", label: "Invoice" },
+  { value: "DELIVERY_ORDER", label: "Delivery Order" },
+];
+
+const STATUS_OPTIONS = [
+  { value: "DRAFT", label: "DRAFT" },
+  { value: "ISSUED", label: "ISSUED" },
+  { value: "PAID", label: "PAID" },
+  { value: "CANCELLED", label: "CANCELLED" },
+];
 
 type CompanyOption = { id: string; name: string; currency: string; taxRate: number };
 type ClientOption = {
@@ -145,35 +159,32 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
             {companies.length === 0 ? (
               <div className="text-sm text-red-600">No profiles. Create one in <a href="/settings/new" className="underline">Settings</a>.</div>
             ) : (
-              <select
-                className="input"
+              <AppSelect
                 value={companyId}
-                onChange={(e) => {
-                  const id = e.target.value;
+                onValueChange={(id) => {
                   setCompanyId(id);
                   const c = companies.find((x) => x.id === id);
                   if (c && mode === "create") setTaxRate(c.taxRate);
                 }}
-              >
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name} ({c.currency})</option>
-                ))}
-              </select>
+                options={companies.map((c) => ({
+                  value: c.id,
+                  label: `${c.name} (${c.currency})`,
+                }))}
+                placeholder="Select company profile"
+              />
             )}
           </div>
           <div>
             <label className="label">Type</label>
-            <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
-              <option value="QUOTATION">Quotation</option>
-              <option value="INVOICE">Invoice</option>
-              <option value="DELIVERY_ORDER">Delivery Order</option>
-            </select>
+            <AppSelect value={type} onValueChange={setType} options={TYPE_OPTIONS} />
           </div>
           <div>
             <label className="label">Status</label>
-            <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-              <option>DRAFT</option><option>ISSUED</option><option>PAID</option><option>CANCELLED</option>
-            </select>
+            <AppSelect
+              value={form.status}
+              onValueChange={(status) => setForm({ ...form, status })}
+              options={STATUS_OPTIONS}
+            />
           </div>
           <div>
             <label className="label">Issue date</label>
@@ -232,12 +243,15 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="md:col-span-2">
             <label className="label">Client</label>
-            <select className="input" value={clientId} onChange={(e) => selectClient(e.target.value)}>
-              <option value="">Enter manually</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+            <AppSelect
+              value={clientId}
+              onValueChange={selectClient}
+              options={[
+                { value: "", label: "Enter manually" },
+                ...clients.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+              placeholder="Enter manually"
+            />
             {clients.length === 0 && (
               <p className="text-xs text-gray-500 mt-1">
                 No saved clients. <a href="/clients/new" className="underline">Add one</a> or fill in the fields below.
@@ -325,10 +339,15 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
               <span className="text-gray-500">Discount</span>
               <div className="flex gap-1">
                 <input type="number" step="0.01" className="input w-24" value={discountValue} onChange={(e) => setDiscountValue(parseFloat(e.target.value) || 0)} />
-                <select className="input w-20" value={discountType} onChange={(e) => setDiscountType(e.target.value as DiscountType)}>
-                  <option value="PERCENT">%</option>
-                  <option value="AMOUNT">{currency}</option>
-                </select>
+                <AppSelect
+                  value={discountType}
+                  onValueChange={(v) => setDiscountType(v as DiscountType)}
+                  options={[
+                    { value: "PERCENT", label: "%" },
+                    { value: "AMOUNT", label: currency },
+                  ]}
+                  triggerClassName="w-20"
+                />
               </div>
             </div>
             {totals.discountAmount > 0 && (

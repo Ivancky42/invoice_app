@@ -8,6 +8,7 @@
   --muted: #6b7280;
   --border: #e5e7eb;
   --accent: #111827;
+  --radius: 0.375rem;
 }
 
 html, body { background: var(--bg); color: var(--fg); }

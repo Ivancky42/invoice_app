@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { DOC_LABELS, NEXT_STAGE, formatMoney, LineItem } from "@/lib/types";
+import DocStatusForm from "../DocStatusForm";
 import { convertDocument, deleteDocument, setStatus } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -67,12 +68,7 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
               <button className="btn">Convert → {DOC_LABELS[next]}</button>
             </form>
           )}
-          <form action={markStatus} className="flex gap-1">
-            <select name="status" defaultValue={doc.status} className="input !py-1 !w-auto">
-              <option>DRAFT</option><option>ISSUED</option><option>PAID</option><option>CANCELLED</option>
-            </select>
-            <button className="btn">Update</button>
-          </form>
+          <DocStatusForm action={markStatus} defaultStatus={doc.status} />
           <form action={doDelete}>
             <button className="btn btn-danger">Delete</button>
           </form>
