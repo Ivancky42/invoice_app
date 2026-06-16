@@ -115,6 +115,8 @@ model Portfolio {
   sectorTag        String?
   marketCapBucket  String?
   notes            String?
+  /// Daily notes from the Notion page body (canonical since Jun 2026).
+  pageNotes        String?   @db.Text
   keyRisk          String?
   beatRate         String?
   impliedMove      String?
@@ -148,6 +150,8 @@ model Watchlist {
   keyRisk          String?
   thesis           String?
   actionNotes      String?
+  /// Daily notes from the Notion page body (canonical since Jun 2026).
+  pageNotes        String?   @db.Text
   beatRate         String?
   impliedMove      String?
   analystCount     Int?

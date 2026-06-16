@@ -147,12 +147,12 @@ export default async function PortfolioPage() {
         </table>
       </section>
 
-      {rows.length > 0 && rows.some((p) => p.thesis || p.notes || p.keyRisk || p.entryZone) && (
+      {rows.length > 0 && rows.some((p) => p.thesis || p.pageNotes || p.keyRisk || p.entryZone) && (
         <section className="space-y-3">
           <h2 className="text-sm font-medium text-gray-700">Theses &amp; notes</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {rows.map((p) =>
-              p.thesis || p.notes || p.keyRisk || p.entryZone ? (
+              p.thesis || p.pageNotes || p.keyRisk || p.entryZone ? (
                 <div key={`th-${p.notionId}`} className="card p-4">
                   <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -166,7 +166,7 @@ export default async function PortfolioPage() {
                     {p.sectorTag && <span className="text-xs text-gray-500">{p.sectorTag}</span>}
                   </div>
                   {p.entryZone && (
-                    <p className={`text-sm text-gray-700 ${p.thesis || p.notes || p.keyRisk ? "mb-3" : ""}`}>
+                    <p className={`text-sm text-gray-700 ${p.thesis || p.pageNotes || p.keyRisk ? "mb-3" : ""}`}>
                       <span className="font-medium text-gray-700">Entry zone: </span>
                       <span className="whitespace-pre-wrap">{p.entryZone}</span>
                     </p>
@@ -174,9 +174,9 @@ export default async function PortfolioPage() {
                   {p.thesis && (
                     <p className="text-sm text-gray-700 whitespace-pre-wrap">{p.thesis}</p>
                   )}
-                  {p.notes && (
+                  {p.pageNotes && (
                     <div className={p.thesis ? "mt-3 pt-3 border-t border-gray-100" : ""}>
-                      <NotesModalField label="Notes" text={p.notes} context={p.ticker} />
+                      <NotesModalField label="Notes" text={p.pageNotes} context={p.ticker} />
                     </div>
                   )}
                   {p.keyRisk && (

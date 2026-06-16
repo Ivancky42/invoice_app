@@ -5,6 +5,7 @@ import { asDate, asInt, asNumber, asString, readProp } from "@/lib/notion/extrac
 import { notionDbId } from "@/lib/notion/client";
 import { runInTransactionBatches } from "@/lib/notion/batchTransaction";
 import { queryAllPages } from "@/lib/notion/queryAll";
+import { fetchPageBodyText } from "@/lib/notion/blocks";
 
 function mapPage(page: PageObjectResponse): Prisma.PortfolioUncheckedCreateInput | null {
   const ticker = asString(readProp(page, "Stock"));
@@ -41,7 +42,13 @@ function mapPage(page: PageObjectResponse): Prisma.PortfolioUncheckedCreateInput
 export async function syncPortfolio(): Promise<{ count: number }> {
   const dbId = notionDbId("NOTION_PORTFOLIO_DB");
   const pages = await queryAllPages(dbId);
-  const rows = pages.map(mapPage).filter((r): r is Prisma.PortfolioUncheckedCreateInput => r !== null);
+  const rows: Prisma.PortfolioUncheckedCreateInput[] = [];
+  for (const page of pages) {
+    const row = mapPage(page);
+    if (!row) continue;
+    const body = await fetchPageBodyText(page.id);
+    rows.push({ ...row, pageNotes: body || null });
+  }
   const ids = rows.map((r) => r.notionId);
   await runInTransactionBatches(
     rows.map((r) => {

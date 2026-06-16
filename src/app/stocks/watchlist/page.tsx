@@ -169,13 +169,18 @@ export default async function WatchlistPage() {
                     />
                   </div>
                 )}
-                {w.actionNotes && (
-                  <div className="mt-auto pt-3 border-t border-gray-100">
-                    <NotesModalField
-                      label="Action notes"
-                      text={w.actionNotes}
-                      context={w.ticker}
-                    />
+                {(w.pageNotes || w.actionNotes) && (
+                  <div className="mt-auto pt-3 border-t border-gray-100 flex flex-wrap gap-2">
+                    {w.pageNotes && (
+                      <NotesModalField label="Notes" text={w.pageNotes} context={w.ticker} />
+                    )}
+                    {w.actionNotes && (
+                      <NotesModalField
+                        label="Action notes"
+                        text={w.actionNotes}
+                        context={w.ticker}
+                      />
+                    )}
                   </div>
                 )}
               </div>

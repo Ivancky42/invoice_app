@@ -2,39 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { FormattedNoteText } from "@/app/stocks/_components/FormattedNoteText";
-
-type DatedNoteEntry = { date: string; body: string };
-
-type ParsedNotes = { preamble: string | null; entries: DatedNoteEntry[] };
-
-/** Split notes like `…preamble…\n\n2026-05-13: …\n\n2026-05-14: …` into dated entries. */
-function parseDatedNotes(text: string): ParsedNotes | null {
-	const trimmed = text.trim();
-	if (!trimmed) return null;
-
-	const chunks = trimmed.split(/\n(?=\d{4}-\d{2}-\d{2}:)/);
-	const entries: DatedNoteEntry[] = [];
-	let preamble: string | null = null;
-
-	for (const chunk of chunks) {
-		const m = /^(\d{4}-\d{2}-\d{2}):\s*([\s\S]*)$/.exec(chunk.trim());
-		if (m) {
-			const body = m[2].trim();
-			if (body) entries.push({ date: m[1], body });
-			continue;
-		}
-		const lead = chunk.trim();
-		if (lead && entries.length === 0) preamble = lead;
-	}
-
-	if (entries.length === 0) return null;
-
-	entries.sort((a, b) => b.date.localeCompare(a.date));
-	return { preamble, entries };
-}
+import { parseStockNotes } from "@/lib/stocks/parseStockNotes";
 
 function NotesModalBody({ text }: { text: string }) {
-	const parsed = useMemo(() => parseDatedNotes(text), [text]);
+	const parsed = useMemo(() => parseStockNotes(text), [text]);
 
 	if (!parsed) {
 		return (
@@ -74,7 +45,7 @@ function NotesModalBody({ text }: { text: string }) {
 								dateTime={entry.date}
 								className={`text-xs font-semibold tabular-nums ${isLatest ? "text-emerald-900" : "text-gray-700"}`}
 							>
-								{entry.date}
+								{entry.label}
 							</time>
 							{isLatest ? (
 								<span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded">

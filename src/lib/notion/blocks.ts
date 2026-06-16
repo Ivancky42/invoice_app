@@ -119,6 +119,44 @@ export async function fetchPageBlocks(pageId: string): Promise<ReportBlock[]> {
 	return out;
 }
 
+function blockToPlainText(block: ReportBlock): string {
+	switch (block.type) {
+		case "paragraph":
+		case "heading_1":
+		case "heading_2":
+		case "heading_3":
+		case "quote":
+		case "callout":
+			return block.text.trim();
+		case "bulleted_list_item":
+		case "numbered_list_item": {
+			const prefix = block.type === "bulleted_list_item" ? "- " : "1. ";
+			const nested =
+				block.children?.map(blockToPlainText).filter(Boolean).join("\n") ?? "";
+			return `${prefix}${block.text.trim()}${nested ? `\n${nested}` : ""}`;
+		}
+		case "divider":
+			return "---";
+		default:
+			return "";
+	}
+}
+
+/** Flatten normalized page blocks into plain text for dated note parsing. */
+export function blocksToPlainText(blocks: ReportBlock[]): string {
+	return blocks
+		.map(blockToPlainText)
+		.filter(Boolean)
+		.join("\n\n")
+		.trim();
+}
+
+/** Fetch page body as plain text (empty string if no content). */
+export async function fetchPageBodyText(pageId: string): Promise<string> {
+	const blocks = await fetchPageBlocks(pageId);
+	return blocksToPlainText(blocks);
+}
+
 export type HqChildPage = { id: string; title: string };
 
 /** List child_page blocks under a Notion page (e.g. Stock Monitor HQ). */
