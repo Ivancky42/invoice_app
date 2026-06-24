@@ -15,7 +15,15 @@ export default function DocumentFilters({
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  function update(key: "company" | "client", value: string) {
+  const STATUS_OPTIONS = [
+    { value: "", label: "All statuses" },
+    { value: "DRAFT", label: "Draft" },
+    { value: "ISSUED", label: "Issued" },
+    { value: "PAID", label: "Paid" },
+    { value: "CANCELLED", label: "Cancelled" },
+  ] as const;
+
+  function update(key: "company" | "client" | "status", value: string) {
     const params = new URLSearchParams(searchParams.toString());
     if (value) params.set(key, value);
     else params.delete(key);
@@ -25,6 +33,7 @@ export default function DocumentFilters({
 
   const company = searchParams.get("company") ?? "";
   const client = searchParams.get("client") ?? "";
+  const status = searchParams.get("status") ?? "";
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -50,7 +59,15 @@ export default function DocumentFilters({
         triggerClassName="w-auto min-w-[10rem]"
         aria-label="Filter by client"
       />
-      {(company || client) && (
+      <AppSelect
+        value={status}
+        onValueChange={(value) => update("status", value)}
+        options={[...STATUS_OPTIONS]}
+        placeholder="All statuses"
+        triggerClassName="w-auto min-w-[10rem]"
+        aria-label="Filter by status"
+      />
+      {(company || client || status) && (
         <button
           type="button"
           className="btn"
@@ -58,6 +75,7 @@ export default function DocumentFilters({
             const params = new URLSearchParams(searchParams.toString());
             params.delete("company");
             params.delete("client");
+            params.delete("status");
             const qs = params.toString();
             router.push(qs ? `/documents?${qs}` : "/documents");
           }}

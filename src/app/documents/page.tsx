@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import type { DocumentType, Prisma } from "@/generated/prisma/client";
+import type { DocumentStatus, DocumentType, Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { DOC_LABELS, formatMoney } from "@/lib/types";
 import DocumentFilters from "./DocumentFilters";
@@ -14,11 +14,14 @@ const STATUS_COLORS: Record<string, string> = {
   CANCELLED: "bg-red-100 text-red-700",
 };
 
-function documentsHref(params: { type?: string; company?: string; client?: string }) {
+const VALID_STATUSES = new Set<string>(["DRAFT", "ISSUED", "PAID", "CANCELLED"]);
+
+function documentsHref(params: { type?: string; company?: string; client?: string; status?: string }) {
   const q = new URLSearchParams();
   if (params.type && DOC_LABELS[params.type]) q.set("type", params.type);
   if (params.company) q.set("company", params.company);
   if (params.client) q.set("client", params.client);
+  if (params.status && VALID_STATUSES.has(params.status)) q.set("status", params.status);
   const qs = q.toString();
   return qs ? `/documents?${qs}` : "/documents";
 }
@@ -26,14 +29,15 @@ function documentsHref(params: { type?: string; company?: string; client?: strin
 export default async function DocumentsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ type?: string; company?: string; client?: string }>;
+  searchParams: Promise<{ type?: string; company?: string; client?: string; status?: string }>;
 }) {
-  const { type, company, client } = await searchParams;
+  const { type, company, client, status } = await searchParams;
 
   const where: Prisma.DocumentWhereInput = {};
   if (type && DOC_LABELS[type]) where.type = type as DocumentType;
   if (company) where.companyId = company;
   if (client) where.clientId = client;
+  if (status && VALID_STATUSES.has(status)) where.status = status as DocumentStatus;
 
   const [docs, defaultProfile, companies, clients] = await Promise.all([
     prisma.document.findMany({
@@ -46,7 +50,7 @@ export default async function DocumentsPage({
     prisma.clientProfile.findMany({ orderBy: { name: "asc" } }),
   ]);
 
-  const filterParams = { company, client };
+  const filterParams = { company, client, status };
 
   return (
     <div className="space-y-4">
