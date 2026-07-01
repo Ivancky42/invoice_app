@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { DailyLogDTO } from "@/lib/stocks/db";
 
 function splitPipeSegments(body: string | null): string[] {
@@ -17,6 +18,116 @@ function splitPipeSegments(body: string | null): string[] {
  * A new ticker row starts when a segment begins with TICKER + `$` (optional `.` class, e.g. BRK.B).
  */
 const TICKER_PRICE_HEADLINE = /^[A-Z]{1,6}(?:\.[A-Z]{1,2})?\s+\$/;
+
+/**
+ * Inline scan lines often look like:
+ * `GEV +6.6% → $1,174.86 details…). DDOG +4.7% → $260.36, …`
+ * or `OPRA flat $19.83 WATCH (…).`
+ * Supports `+`/`-`/`−` (unicode minus) before the percent.
+ */
+const TICKER_PCT_MOVE_SEGMENT =
+	/^([A-Z]{1,6}(?:\.[A-Z]{1,2})?)\s+([+\u2212-][\d.]+%)\s*→\s*(\$[\d,]+(?:\.\d+)?)([\s\S]*)$/;
+
+const TICKER_FLAT_MOVE_SEGMENT =
+	/^([A-Z]{1,6}(?:\.[A-Z]{1,2})?)\s+flat\s+(\$[\d,]+(?:\.\d+)?)([\s\S]*)$/;
+
+/** Inline ticker head after start-of-text or `. `. */
+const INLINE_TICKER_HEAD =
+	/(?:^|(?<=\.\s))([A-Z]{1,6}(?:\.[A-Z]{1,2})?)\s+(?:[+\u2212-][\d.]+%\s*→\s*\$[\d,]+(?:\.\d+)?|flat\s+\$[\d,]+(?:\.\d+)?)/g;
+
+type InlineTickerBlock = {
+	symbol: string;
+	changeLabel: string;
+	price: string;
+	details: string;
+};
+
+type ParsedInlineTickerMoves = {
+	blocks: InlineTickerBlock[];
+	footnote: string | null;
+};
+
+function cleanInlineTickerDetails(raw: string): string {
+	return raw.trim().replace(/^,\s*/, "").replace(/\.$/, "").trim();
+}
+
+function parseInlineTickerSegment(segment: string): InlineTickerBlock | null {
+	const trimmed = segment.trim();
+	const pct = trimmed.match(TICKER_PCT_MOVE_SEGMENT);
+	if (pct) {
+		return {
+			symbol: pct[1],
+			changeLabel: pct[2],
+			price: pct[3],
+			details: cleanInlineTickerDetails(pct[4]),
+		};
+	}
+	const flat = trimmed.match(TICKER_FLAT_MOVE_SEGMENT);
+	if (flat) {
+		return {
+			symbol: flat[1],
+			changeLabel: "flat",
+			price: flat[2],
+			details: cleanInlineTickerDetails(flat[3]),
+		};
+	}
+	return null;
+}
+
+/** Closing summary after the last ticker, e.g. "No promotions, demotions, or BUY signals today." */
+function peelTrailingFootnote(segment: string): {
+	segment: string;
+	footnote: string | null;
+} {
+	const m = /\.\s+(No\s+[A-Za-z][\s\S]*)$/.exec(segment.trim());
+	if (!m) return { segment, footnote: null };
+	return {
+		segment: segment.trim().slice(0, m.index).trim(),
+		footnote: m[1].trim().replace(/\.$/, "").trim(),
+	};
+}
+
+function parseInlineTickerMoves(body: string): ParsedInlineTickerMoves | null {
+	const trimmed = body.trim();
+	if (!trimmed) return null;
+
+	const lines = trimmed.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+	if (lines.length > 1) {
+		const fromLines = lines.map(parseInlineTickerSegment);
+		if (fromLines.every((b): b is InlineTickerBlock => b !== null)) {
+			return { blocks: fromLines, footnote: null };
+		}
+	}
+
+	const headMatches = [...trimmed.matchAll(INLINE_TICKER_HEAD)];
+	if (headMatches.length === 0) return null;
+
+	const starts = headMatches
+		.map((match) => match.index)
+		.filter((index): index is number => index !== undefined);
+
+	const blocks: InlineTickerBlock[] = [];
+	let footnote: string | null = null;
+
+	for (let i = 0; i < starts.length; i++) {
+		let segment = trimmed.slice(starts[i], starts[i + 1] ?? trimmed.length).trim();
+		if (i === starts.length - 1) {
+			const peeled = peelTrailingFootnote(segment);
+			segment = peeled.segment;
+			footnote = peeled.footnote;
+		}
+		const block = parseInlineTickerSegment(segment);
+		if (!block) return null;
+		blocks.push(block);
+	}
+
+	return blocks.length > 0 ? { blocks, footnote } : null;
+}
+
+function changeLabelTone(changeLabel: string): "up" | "down" | "flat" {
+	if (changeLabel === "flat") return "flat";
+	return changeLabel.trim().startsWith("+") ? "up" : "down";
+}
 
 function parseMoveBodyIntoTickerBlocks(
 	body: string,
@@ -67,6 +178,42 @@ function MoveTickerHeadline({ headline }: { headline: string }) {
 	);
 }
 
+function InlineTickerMoveHeadline({ block }: { block: InlineTickerBlock }) {
+	const tone = changeLabelTone(block.changeLabel);
+	const labelClass =
+		tone === "up"
+			? "text-emerald-600"
+			: tone === "down"
+				? "text-red-600"
+				: "text-gray-500";
+
+	return (
+		<div>
+			<div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+				<span className="font-semibold tracking-wide text-gray-900">
+					{block.symbol}
+				</span>
+				<span className={`tabular-nums font-semibold ${labelClass}`}>
+					{block.changeLabel}
+				</span>
+				{tone !== "flat" ? (
+					<span className="text-gray-400" aria-hidden>
+						→
+					</span>
+				) : null}
+				<span className="tabular-nums font-medium text-gray-900">
+					{block.price}
+				</span>
+			</div>
+			{block.details ? (
+				<p className="m-0 mt-2 text-sm leading-snug text-gray-800 whitespace-pre-wrap">
+					{block.details}
+				</p>
+			) : null}
+		</div>
+	);
+}
+
 /** First `:` divides label/ticker from the rest (`TICKER … : details`) — text before ":" is bold. */
 function MoveLine({ segment }: { segment: string }) {
 	const colon = segment.indexOf(":");
@@ -102,42 +249,67 @@ function PipeSeparatedMoveBody({ text }: { text: string | null }) {
 	);
 }
 
-/** When body matches `TICKER $price | … | TICKER $price | …`, render one card per ticker with bullet points. */
-function TickerGroupedMoveBody({ text }: { text: string }) {
-	const blocks = parseMoveBodyIntoTickerBlocks(text);
-	if (!blocks) {
-		return <PipeSeparatedMoveBody text={text} />;
-	}
-
+function TickerMoveCard({
+	children,
+}: {
+	children: ReactNode;
+}) {
 	return (
-		<div className="flex flex-col gap-4">
-			{blocks.map((block, idx) => (
-				<div
-					key={`${block.headline}-${idx}`}
-					className="rounded-lg border border-emerald-200/70 bg-white/55 px-3 py-3 shadow-sm"
-				>
-					<div className="text-sm leading-snug">
-						<MoveTickerHeadline headline={block.headline} />
-					</div>
-					{block.bullets.length > 0 ? (
-						<ul className="m-0 mt-2.5 space-y-1.5 border-t border-emerald-100/80 pt-2.5 p-0 text-sm leading-snug text-gray-800 list-none">
-							{block.bullets.map((bullet, j) => (
-								<li key={j} className="flex gap-2">
-									<span
-										className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-600/55"
-										aria-hidden
-									/>
-									<span className="min-w-0 whitespace-pre-wrap">
-										<MoveLine segment={bullet} />
-									</span>
-								</li>
-							))}
-						</ul>
-					) : null}
-				</div>
-			))}
+		<div className="rounded-lg border border-emerald-200/70 bg-white/55 px-3 py-3 shadow-sm text-sm leading-snug">
+			{children}
 		</div>
 	);
+}
+
+/** When body matches `TICKER $price | … | TICKER $price | …`, render one card per ticker with bullet points. */
+function TickerGroupedMoveBody({ text }: { text: string }) {
+	const pipeBlocks = parseMoveBodyIntoTickerBlocks(text);
+	if (pipeBlocks) {
+		return (
+			<div className="flex flex-col gap-4">
+				{pipeBlocks.map((block, idx) => (
+					<TickerMoveCard key={`${block.headline}-${idx}`}>
+						<MoveTickerHeadline headline={block.headline} />
+						{block.bullets.length > 0 ? (
+							<ul className="m-0 mt-2.5 space-y-1.5 border-t border-emerald-100/80 pt-2.5 p-0 text-sm leading-snug text-gray-800 list-none">
+								{block.bullets.map((bullet, j) => (
+									<li key={j} className="flex gap-2">
+										<span
+											className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-600/55"
+											aria-hidden
+										/>
+										<span className="min-w-0 whitespace-pre-wrap">
+											<MoveLine segment={bullet} />
+										</span>
+									</li>
+								))}
+							</ul>
+						) : null}
+					</TickerMoveCard>
+				))}
+			</div>
+		);
+	}
+
+	const inlineParsed = parseInlineTickerMoves(text);
+	if (inlineParsed) {
+		return (
+			<div className="flex flex-col gap-4">
+				{inlineParsed.blocks.map((block, idx) => (
+					<TickerMoveCard key={`${block.symbol}-${idx}`}>
+						<InlineTickerMoveHeadline block={block} />
+					</TickerMoveCard>
+				))}
+				{inlineParsed.footnote ? (
+					<p className="m-0 pt-1 text-sm leading-relaxed text-gray-600 italic border-t border-emerald-100/80">
+						{inlineParsed.footnote}
+					</p>
+				) : null}
+			</div>
+		);
+	}
+
+	return <PipeSeparatedMoveBody text={text} />;
 }
 
 /**
