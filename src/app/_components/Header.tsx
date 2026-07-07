@@ -5,12 +5,14 @@ import { usePathname } from "next/navigation";
 import { lockSiteGate } from "@/lib/site-gate-actions";
 
 const STOCK_PATHS = ["/stocks"] as const;
+const CRYPTO_PATHS = ["/crypto"] as const;
 const INVOICE_PATHS = ["/invoices", "/documents", "/settings", "/clients"] as const;
 
-type App = "invoices" | "stocks" | null;
+type App = "invoices" | "stocks" | "crypto" | null;
 
 function activeApp(pathname: string): App {
   if (STOCK_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return "stocks";
+  if (CRYPTO_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return "crypto";
   if (INVOICE_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return "invoices";
   return null;
 }
@@ -26,6 +28,15 @@ const stockLinks = [
   { href: "/stocks/reports", label: "Reports" },
 ];
 
+const cryptoLinks = [
+  { href: "/crypto", label: "Overview" },
+  { href: "/crypto/portfolio", label: "Portfolio" },
+  { href: "/crypto/watchlist", label: "Watchlist" },
+  { href: "/crypto/trades", label: "Trades" },
+  { href: "/crypto/catalysts", label: "Catalysts" },
+  { href: "/crypto/briefs", label: "Briefs" },
+];
+
 const invoiceLinks = [
   { href: "/invoices", label: "Dashboard" },
   { href: "/documents", label: "Documents" },
@@ -39,9 +50,17 @@ export function Header({ pinGate }: { pinGate: boolean }) {
   const app = activeApp(pathname);
 
   const isStocksActive = app === "stocks";
+  const isCryptoActive = app === "crypto";
   const isInvoicesActive = app === "invoices";
 
-  const subLinks = app === "stocks" ? stockLinks : app === "invoices" ? invoiceLinks : [];
+  const subLinks =
+    app === "stocks"
+      ? stockLinks
+      : app === "crypto"
+        ? cryptoLinks
+        : app === "invoices"
+          ? invoiceLinks
+          : [];
 
   return (
     <header className="border-b border-gray-200 bg-white">
@@ -66,6 +85,14 @@ export function Header({ pinGate }: { pinGate: boolean }) {
             }`}
           >
             Stocks
+          </Link>
+          <Link
+            href="/crypto"
+            className={`px-3 py-1.5 rounded-md font-medium transition ${
+              isCryptoActive ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100"
+            }`}
+          >
+            Crypto
           </Link>
         </nav>
 

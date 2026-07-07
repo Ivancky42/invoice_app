@@ -1,9 +1,10 @@
 # Command Center
 
-Personal Next.js dashboard hosting two apps behind a single PIN gate:
+Personal Next.js dashboard hosting three apps behind a single PIN gate:
 
 - **Invoices** — Quotation → Invoice → Delivery Order lifecycle with PDF export.
 - **Stocks** — read-only mirror of Notion-backed portfolios; Vercel crons refresh Finnhub prices on Notion once daily and pull Notion into Neon once daily (later the same morning, GMT+8); the UI reads from Neon (`revalidate = 900`).
+- **Crypto** — Neon-native (no Notion) portfolio/watchlist monitor with daily technical signals (RSI, MA crosses, volume spikes, BTC beta, funding, TVL), trending-token discovery, RSS catalysts, and an AI daily brief written by claude.ai scheduled tasks. See [Crypto app](#crypto-app).
 
 ## Stack
 - Next.js 15 (App Router) + TypeScript + Tailwind CSS
@@ -82,3 +83,46 @@ The stocks UI never talks to Notion directly for reads: it uses Neon. Vercel cro
 - **Manual HTTP**: `GET /api/sync/notion?secret=$SYNC_SECRET` — same orchestrator, returns per-DB row counts and any per-DB errors.
 - Sync: **Finnhub → Notion** (prices on board databases) via cron and manual button; **Notion → Neon** via cron and “Sync now” (cache only).
 - If sync fails or is missed, the UI keeps serving the last good Neon rows. A stale banner appears when the last successful **Notion→Neon** sync is older than **~26 hours**.
+
+## Crypto app
+
+Routes: `/crypto` (overview), `/crypto/portfolio`, `/crypto/watchlist`, `/crypto/trades`, `/crypto/catalysts`, `/crypto/briefs`. The DB is the source of truth — no Notion. Thesis/notes/targets are edited in-app; trending tokens (from CoinGecko) can be graduated to watchlist → portfolio with one click.
+
+### Data sources (all free)
+
+- **CoinGecko** — price, market cap, supply, ATH, trending. Works keyless; a free [Demo API key](https://www.coingecko.com/en/api/pricing) (`COINGECKO_API_KEY`) raises rate limits.
+- **Binance public data mirror** (`data-api.binance.vision`) — daily klines for RSI14 / MA20-50 crosses / volume spikes / 30d BTC beta; perp funding + open interest are optional (geo-blocked regions just get nulls).
+- **DeFiLlama** — chain TVL + 7d change (keyless).
+- **Alternative.me** — Fear & Greed index (keyless).
+- **RSS** — CoinDesk / Cointelegraph / The Block / Decrypt headlines matched to tracked symbols → `/crypto/catalysts`.
+
+### Env vars
+
+All optional (missing vars degrade gracefully, nothing crashes):
+
+- `COINGECKO_API_KEY` — CoinGecko Demo key (recommended).
+- `CRYPTO_TASK_SECRET` — dedicated secret for the claude.ai scheduled tasks (rotatable independently of `SYNC_SECRET`; both are accepted by the crypto endpoints).
+- `BINANCE_API_BASE` — override the Binance spot base URL (leave unset normally).
+
+### One-time setup
+
+1. Deploy (the migration applies via `prisma migrate deploy` in the build step), then seed the initial assets (BTC/ETH/SOL/SEI):
+   ```bash
+   curl -X POST "https://<domain>/api/crypto/seed?secret=$CRYPTO_TASK_SECRET"
+   ```
+2. Run the first data sync (or use the "Sync now" button on `/crypto`):
+   ```bash
+   curl "https://<domain>/api/crypto/sync?secret=$CRYPTO_TASK_SECRET"
+   ```
+3. Set your holdings (quantity / avg cost) and theses on `/crypto/portfolio`.
+4. **Daily schedule**: add the `SYNC_SECRET` repo secret on GitHub and replace `YOUR-PROD-DOMAIN` in [.github/workflows/crypto-sync.yml](.github/workflows/crypto-sync.yml) — it hits `/api/crypto/sync` daily at 21:45 UTC (05:45 GMT+8). Vercel crons aren't used (Hobby's 2-cron cap is taken by stocks).
+5. **AI briefs**: create three claude.ai scheduled tasks (daily ~06:15 GMT+8, weekly Sunday, monthly 1st) using the prompts in [docs/crypto-ai-tasks.md](docs/crypto-ai-tasks.md), substituting your domain and `CRYPTO_TASK_SECRET`. The daily task reads `GET /api/crypto/context`, decides BUY/ADD/HOLD/TRIM/SELL per holding, grades yesterday's calls, and POSTs to `/api/crypto/brief` + `/api/crypto/learning`; weekly/monthly tasks rewrite the heuristics playbook that feeds the next daily run. Running a task manually works the same as a scheduled run (briefs upsert per GMT+8 day).
+
+### Endpoints
+
+- `GET /api/crypto/sync` — full daily sync (markets → signals → derivatives → TVL → trending → catalysts). Auth: `?secret=` or `Authorization: Bearer` with `SYNC_SECRET`/`CRON_SECRET`/`CRYPTO_TASK_SECRET`.
+- `POST /api/crypto/seed` — idempotent seed of the starter assets.
+- `GET /api/crypto/context[?scope=weekly|monthly]` — compact JSON snapshot for the AI tasks.
+- `POST /api/crypto/brief`, `POST /api/crypto/learning` — written back by the AI tasks.
+
+If a sync or brief is missed, the UI keeps serving the last good rows; the overview shows a staleness warning when the latest brief is older than 2 days.
