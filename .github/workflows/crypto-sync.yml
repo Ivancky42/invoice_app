@@ -1,0 +1,14 @@
+name: Crypto sync
+on:
+  schedule:
+    - cron: "45 21 * * *"   # 05:45 GMT+8, before the ~06:15 claude.ai daily task
+  workflow_dispatch: {}
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -sS --fail-with-body --max-time 120 \
+            -H "Authorization: Bearer ${{ secrets.SYNC_SECRET }}" \
+            "https://YOUR-PROD-DOMAIN/api/crypto/sync"
+        # Replace YOUR-PROD-DOMAIN with the deployed Vercel domain (not found in repo config).
