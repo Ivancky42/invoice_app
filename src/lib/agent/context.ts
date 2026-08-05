@@ -2,11 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import {
-  getCash,
-  getLimits,
-  getSentimentThresholds,
-  getEarningsRiskThresholds,
-  getTrackedTickers,
+  getAgentRuntimeConfig,
   CONFIG_KEYS,
 } from "@/lib/stocks/config";
 import {
@@ -15,7 +11,6 @@ import {
   getTrades,
   getTrends,
   getIdeas,
-  getSyncStatus,
 } from "@/lib/stocks/db";
 import {
   computePortfolioTotals,
@@ -77,11 +72,12 @@ async function lastRunSummary(): Promise<{
   prices: SyncRunSummary | null;
   notion: SyncRunSummary | null;
 }> {
-  const [prices, notion] = await Promise.all([
-    getSyncStatus("prices"),
-    getSyncStatus("notion"),
-  ]);
-  const map = (row: Awaited<ReturnType<typeof getSyncStatus>>, source: string): SyncRunSummary | null => {
+  const rows = await prisma.syncStatus.findMany({
+    where: { source: { in: ["prices", "notion"] } },
+  });
+  const bySource = new Map(rows.map((r) => [r.source, r]));
+  const map = (source: string): SyncRunSummary | null => {
+    const row = bySource.get(source);
     if (!row) return null;
     return {
       source,
@@ -91,8 +87,8 @@ async function lastRunSummary(): Promise<{
     };
   };
   return {
-    prices: map(prices, "prices"),
-    notion: map(notion, "notion"),
+    prices: map("prices"),
+    notion: map("notion"),
   };
 }
 
@@ -308,31 +304,26 @@ export async function getPromptMarkdown(name: PromptName): Promise<string> {
 export async function buildAgentContext(routine: AgentRoutine) {
   const trendDetail = routine !== "earnings";
 
-  const [
+  // Batched: 1 Config query (+ optional cash fallback) + 5 table reads + 1 SyncStatus.
+  // Previously fanned out to ~12–13 concurrent queries (pool pressure on cold Neon).
+  const [runtime, portfolio, trades, watchlist, trends, ideas, lastRun] =
+    await Promise.all([
+      getAgentRuntimeConfig(),
+      getPortfolio(),
+      getTrades(),
+      getWatchlist(),
+      getTrends(),
+      getIdeas(),
+      lastRunSummary(),
+    ]);
+
+  const {
     cash,
     limits,
     sentimentThresholds,
     earningsRiskThresholds,
     trackedTickers,
-    portfolio,
-    trades,
-    watchlist,
-    trends,
-    ideas,
-    lastRun,
-  ] = await Promise.all([
-    getCash(),
-    getLimits(),
-    getSentimentThresholds(),
-    getEarningsRiskThresholds(),
-    getTrackedTickers(),
-    getPortfolio(),
-    getTrades(),
-    getWatchlist(),
-    getTrends(),
-    getIdeas(),
-    lastRunSummary(),
-  ]);
+  } = runtime;
 
   const holdings = holdingsByTicker(trades);
   const totals = computePortfolioTotals(portfolio, trades);

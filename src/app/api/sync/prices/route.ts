@@ -48,7 +48,15 @@ export async function GET(req: NextRequest) {
   const errors = [...result.errors];
   let snapshotThrew = false;
 
-  if (result.ok) {
+  if (result.updated > 0 || result.failed === 0) {
+    if (result.updated > 0 && result.failed > 0) {
+      errors.push(
+        `portfolioSnapshot: recording after partial price sync (updated=${result.updated}, failed=${result.failed})`,
+      );
+      console.warn(
+        `[sync/prices] partial success: updated=${result.updated} failed=${result.failed}; recording portfolio snapshot`,
+      );
+    }
     try {
       const snap = await recordPortfolioSnapshot();
       snapshotOk = snap.ok;

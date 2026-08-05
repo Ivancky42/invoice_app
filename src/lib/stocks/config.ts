@@ -153,6 +153,39 @@ export async function getEarningsRiskThresholds(): Promise<EarningsRiskThreshold
   return parseEarningsRisk(raw) ?? DEFAULT_EARNINGS_RISK;
 }
 
+function cashFromRaw(
+  usdRaw: Prisma.JsonValue | null | undefined,
+  myrRaw: Prisma.JsonValue | null | undefined,
+  fxRaw: Prisma.JsonValue | null | undefined,
+  updatedRaw: Prisma.JsonValue | null | undefined,
+): Omit<CashConfig, "usd"> & { usd: number | null } {
+  const fxRate = asNumber(fxRaw, 4.2);
+  let usd: number | null = null;
+  if (usdRaw !== null && usdRaw !== undefined) {
+    const n = asNumber(usdRaw, Number.NaN);
+    if (Number.isFinite(n)) usd = n;
+  }
+  const myrStored = asNumber(myrRaw, Number.NaN);
+  return {
+    usd,
+    myr: Number.isFinite(myrStored) ? myrStored : (usd ?? 0) * fxRate,
+    fxRate,
+    lastUpdated: asString(updatedRaw),
+  };
+}
+
+async function resolveCashUsdFallback(usd: number | null): Promise<number> {
+  // Missing Config only — explicit 0 is a valid cash balance (do not resurrect from CASH_USD).
+  if (usd !== null) return usd;
+  const cashRow = await prisma.portfolio.findFirst({
+    where: { ticker: { equals: "CASH_USD", mode: "insensitive" } },
+  });
+  if (cashRow) {
+    return notionCashBalanceUsd(cashRow.currentPrice, cashRow.myAvgCost);
+  }
+  return 0;
+}
+
 export async function getCash(): Promise<CashConfig> {
   const [usdRaw, myrRaw, fxRaw, updatedRaw] = await Promise.all([
     getConfig(CONFIG_KEYS.CASH_POSITION_USD),
@@ -160,37 +193,23 @@ export async function getCash(): Promise<CashConfig> {
     getConfig(CONFIG_KEYS.FX_RATE_USD_MYR),
     getConfig(CONFIG_KEYS.CASH_LAST_UPDATED),
   ]);
-  const fxRate = asNumber(fxRaw, 4.2);
-
-  let usd: number | null = null;
-  if (usdRaw !== null) {
-    const n = asNumber(usdRaw, Number.NaN);
-    if (Number.isFinite(n)) usd = n;
-  }
-
-  // Missing / zero-ish Config → fall back to Portfolio CASH_USD (same as logTrade).
-  if (usd === null || Math.abs(usd) < 1e-9) {
-    const cashRow = await prisma.portfolio.findFirst({
-      where: { ticker: { equals: "CASH_USD", mode: "insensitive" } },
-    });
-    if (cashRow) {
-      const bal = notionCashBalanceUsd(cashRow.currentPrice, cashRow.myAvgCost);
-      if (usd === null || bal > 0) usd = bal;
-    }
-  }
-  if (usd === null) usd = 0;
-
+  const partial = cashFromRaw(usdRaw, myrRaw, fxRaw, updatedRaw);
+  const usd = await resolveCashUsdFallback(partial.usd);
   const myrStored = asNumber(myrRaw, Number.NaN);
   return {
     usd,
-    myr: Number.isFinite(myrStored) ? myrStored : usd * fxRate,
-    fxRate,
-    lastUpdated: asString(updatedRaw),
+    myr: Number.isFinite(myrStored) ? myrStored : usd * partial.fxRate,
+    fxRate: partial.fxRate,
+    lastUpdated: partial.lastUpdated,
   };
 }
 
 export async function getTrackedTickers(): Promise<TrackedTickersConfig> {
   const raw = await getConfig(CONFIG_KEYS.TRACKED_TICKERS);
+  return parseTrackedTickers(raw);
+}
+
+function parseTrackedTickers(raw: Prisma.JsonValue | null | undefined): TrackedTickersConfig {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { portfolio: [], watchlist: [] };
   }
@@ -198,6 +217,47 @@ export async function getTrackedTickers(): Promise<TrackedTickersConfig> {
   return {
     portfolio: asStringArray(o.portfolio),
     watchlist: asStringArray(o.watchlist),
+  };
+}
+
+/**
+ * One Config round-trip for agent context (cash + limits + thresholds + tracked).
+ * Avoids the N+1 getConfig fan-out inside buildAgentContext.
+ */
+export async function getAgentRuntimeConfig(): Promise<{
+  cash: CashConfig;
+  limits: LimitsConfig;
+  sentimentThresholds: SentimentThresholds;
+  earningsRiskThresholds: EarningsRiskThresholds;
+  trackedTickers: TrackedTickersConfig;
+}> {
+  const keys = Object.values(CONFIG_KEYS);
+  const rows = await prisma.config.findMany({ where: { key: { in: [...keys] } } });
+  const map = new Map(rows.map((r) => [r.key, r.value]));
+
+  const partial = cashFromRaw(
+    map.get(CONFIG_KEYS.CASH_POSITION_USD),
+    map.get(CONFIG_KEYS.CASH_POSITION_MYR),
+    map.get(CONFIG_KEYS.FX_RATE_USD_MYR),
+    map.get(CONFIG_KEYS.CASH_LAST_UPDATED),
+  );
+  const usd = await resolveCashUsdFallback(partial.usd);
+  const myrStored = asNumber(map.get(CONFIG_KEYS.CASH_POSITION_MYR), Number.NaN);
+
+  return {
+    cash: {
+      usd,
+      myr: Number.isFinite(myrStored) ? myrStored : usd * partial.fxRate,
+      fxRate: partial.fxRate,
+      lastUpdated: partial.lastUpdated,
+    },
+    limits: parseLimits(map.get(CONFIG_KEYS.LIMITS) ?? null) ?? DEFAULT_LIMITS,
+    sentimentThresholds:
+      parseSentiment(map.get(CONFIG_KEYS.SENTIMENT_THRESHOLDS) ?? null) ?? DEFAULT_SENTIMENT,
+    earningsRiskThresholds:
+      parseEarningsRisk(map.get(CONFIG_KEYS.EARNINGS_RISK_THRESHOLDS) ?? null) ??
+      DEFAULT_EARNINGS_RISK,
+    trackedTickers: parseTrackedTickers(map.get(CONFIG_KEYS.TRACKED_TICKERS)),
   };
 }
 

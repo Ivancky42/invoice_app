@@ -69,6 +69,8 @@ export const logTradeInputSchema = z.object({
   notes: reportBlocksSchema.nullable().optional(),
   rulesVersion: z.string().max(64).nullable().optional(),
   status: z.enum(enumValues(TradeStatus)).optional(),
+  /** Optional theme for new BUY positions (enables theme_cap before insert). */
+  theme: z.enum(enumValues(Theme)).nullable().optional(),
   /** When true on a full exit, upsert a minimal Watchlist row for the ticker. */
   reAddToWatchlist: z.boolean().optional(),
 });
@@ -158,7 +160,7 @@ export const upsertIdeaFieldsSchema = z.object({
   leadTicker: z.string().min(1).max(32).nullable().optional(),
   company: z.string().max(200).nullable().optional(),
   theme: z.enum(enumValues(Theme)).nullable().optional(),
-  riskLevel: z.string().max(64).nullable().optional(),
+  riskLevel: z.enum(enumValues(RiskLevel)).nullable().optional(),
   status: z.enum(enumValues(IdeaStatus)).nullable().optional(),
   ideaStage: z.enum(enumValues(IdeaStage)).nullable().optional(),
   socialBuzz: z.string().max(500).nullable().optional(),
@@ -279,6 +281,16 @@ const PATH_TO_ENUM: Record<string, string> = {
   reportType: "StockReportType",
 };
 
+/** Disambiguate `status` (TradeStatus vs IdeaStatus) using the issue's option set. */
+function resolveEnumName(field: string, options?: string[]): string | undefined {
+  if (field === "status" && options?.length) {
+    const idea = new Set(LEGAL_ENUM_VALUES.IdeaStatus);
+    if (options.every((o) => idea.has(o))) return "IdeaStatus";
+    return "TradeStatus";
+  }
+  return PATH_TO_ENUM[field];
+}
+
 export type AgentValidationFailure = {
   error: string;
   issues: z.ZodIssue[];
@@ -291,11 +303,11 @@ export function validationFailure(err: z.ZodError): AgentValidationFailure {
   const enumIssue = err.issues.find((i) => String(i.code) === "invalid_enum_value");
   if (enumIssue) {
     const field = String(enumIssue.path[enumIssue.path.length - 1] ?? "");
-    const enumName = PATH_TO_ENUM[field];
     const fromIssue =
       "options" in enumIssue && Array.isArray((enumIssue as { options?: unknown }).options)
         ? ((enumIssue as { options: string[] }).options as string[])
         : undefined;
+    const enumName = resolveEnumName(field, fromIssue);
     return {
       error: `invalid enum value for ${field || "field"}`,
       issues: err.issues,

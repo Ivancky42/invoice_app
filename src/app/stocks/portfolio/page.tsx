@@ -75,7 +75,7 @@ export default async function PortfolioPage() {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={11} className="px-4 py-8 text-center text-gray-500">
-                  No holdings yet — run the Notion sync.
+                  No holdings yet — run Update prices.
                 </td>
               </tr>
             )}

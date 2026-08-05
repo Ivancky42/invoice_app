@@ -223,13 +223,15 @@ export function holdingsByTicker(trades: TradeRow[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const t of trades) {
     if (!t.ticker) continue;
+    const key = t.ticker.trim().toUpperCase();
+    if (!key) continue;
     const shares = decToNum(t.shares);
     if (shares === null || shares === 0) continue;
     // Prefer enum column; fall back to typeRaw during transition.
     const parsed = parseTradeType(t.type ?? (t as { typeRaw?: string | null }).typeRaw);
     if (parsed == null) continue;
     const signed = TRADE_DIRECTION[parsed] * Math.abs(shares);
-    map.set(t.ticker, (map.get(t.ticker) ?? 0) + signed);
+    map.set(key, (map.get(key) ?? 0) + signed);
   }
   for (const [k, v] of map) {
     if (Math.abs(v) < 1e-6) map.delete(k);

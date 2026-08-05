@@ -1,6 +1,7 @@
 import {
   Prisma,
   type Portfolio,
+  type Theme,
   type Trade,
   type TradeStatus,
   type TradeType,
@@ -47,6 +48,8 @@ export type LogTradeInput = {
   notes?: ReportBlock[] | null;
   rulesVersion?: string | null;
   status?: TradeStatus;
+  /** Optional theme for new BUY — enables theme_cap before insert. */
+  theme?: Theme | null;
   reAddToWatchlist?: boolean;
 };
 
@@ -137,13 +140,12 @@ async function loadCashFromTx(
     const n = asNumber(map.get(CONFIG_KEYS.CASH_POSITION_USD), Number.NaN);
     usd = Number.isFinite(n) ? n : null;
   }
-  // Missing or zero-ish Config — fall back to Portfolio CASH_USD (matches getCash()).
-  if (usd === null || Math.abs(usd) < 1e-9) {
+  // Missing Config only — explicit 0 is a valid cash balance (do not resurrect from CASH_USD).
+  if (usd === null) {
     const portfolioRows = portfolio ?? (await tx.portfolio.findMany());
     const cashRow = portfolioRows.find((p) => isCashTicker(p.ticker));
     if (cashRow) {
-      const bal = notionCashBalanceUsd(cashRow.currentPrice, cashRow.myAvgCost);
-      if (usd === null || bal > 0) usd = bal;
+      usd = notionCashBalanceUsd(cashRow.currentPrice, cashRow.myAvgCost);
     }
   }
   if (usd === null) {
@@ -224,8 +226,10 @@ function buildEquitySlices(
   newShares: number,
   tradePrice: number,
   holdings: Map<string, number>,
+  opts?: { requireMarks?: boolean; newTheme?: Theme | null },
 ): EquitySlice[] {
   const slices: EquitySlice[] = [];
+  const missingMark: string[] = [];
   let sawTradeTicker = false;
 
   for (const p of portfolio) {
@@ -237,7 +241,10 @@ function buildEquitySlices(
         : (resolvePositionShares(p, holdings) ?? 0);
     if (Math.abs(shares) < SHARES_EPS) continue;
     const px = markPrice(p, tradeTicker, tradePrice);
-    if (px === null) continue;
+    if (px === null) {
+      missingMark.push(ticker);
+      continue;
+    }
     slices.push({
       ticker,
       shares,
@@ -254,9 +261,13 @@ function buildEquitySlices(
       ticker: tradeTicker,
       shares: newShares,
       value: newShares * tradePrice,
-      theme: null,
+      theme: opts?.newTheme ?? null,
       isCspx: isCspxTicker(tradeTicker),
     });
+  }
+
+  if (opts?.requireMarks && missingMark.length > 0) {
+    throw new InvariantViolation("missing_mark", { tickers: missingMark });
   }
 
   return slices;
@@ -286,8 +297,9 @@ function defaultStatus(
   newShares: number,
   override?: TradeStatus,
 ): TradeStatus {
-  if (override) return override;
+  // Flat position is always CLOSED — ignore status override that would keep OPEN.
   if (newShares <= SHARES_EPS) return "CLOSED";
+  if (override) return override;
   if (TRADE_DIRECTION[type] < 0) return "PARTIAL";
   return "OPEN";
 }
@@ -386,7 +398,10 @@ export async function logTrade(
         return buildSuccessFromState(tx, existing, true);
       }
 
-      // Serialize concurrent logTrade on the same ticker / cash rows.
+      // Serialize concurrent first trades on the same ticker (advisory + row locks).
+      await tx.$queryRaw(
+        Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`stock-hq-trade:${ticker}`}))`,
+      );
       await tx.$queryRaw`
         SELECT id FROM "Portfolio"
         WHERE upper(ticker) IN (${Prisma.join([ticker, "CASH_USD"])})
@@ -478,8 +493,8 @@ export async function logTrade(
         newAddsUsed = 0;
       }
 
-      // Theme for the traded name (existing row; new BUY may have null until patch)
-      const tradeTheme = position?.theme ?? null;
+      // Theme for the traded name: existing row, else optional input on new BUY.
+      const tradeTheme = position?.theme ?? input.theme ?? null;
 
       // Post-trade equity slices for NAV / caps
       const slices = buildEquitySlices(
@@ -488,6 +503,7 @@ export async function logTrade(
         newShares,
         price,
         holdings,
+        { requireMarks: true, newTheme: tradeTheme },
       ).map((s) =>
         s.ticker === ticker ? { ...s, theme: tradeTheme ?? s.theme } : s,
       );
@@ -542,10 +558,14 @@ export async function logTrade(
         }
       }
 
-      // 8. Soft tier-band warnings
+      // 8. Soft tier-band warnings (same ex-CSPX denominator as hard caps)
       const warnings: string[] = [];
-      if (newShares > SHARES_EPS && nav > MONEY_EPS) {
-        const weight = positionValue / nav;
+      if (
+        !isCspxTicker(ticker) &&
+        newShares > SHARES_EPS &&
+        nonCspxNav > MONEY_EPS
+      ) {
+        const weight = positionValue / nonCspxNav;
         if (!weightInBands(weight, limits)) {
           warnings.push(
             `position_weight_outside_tier_bands: ${(weight * 100).toFixed(2)}% not in TEST_STARTER/CONFIRMATION/CONVICTION bands`,
@@ -619,6 +639,7 @@ export async function logTrade(
             shares: newShares,
             myAvgCost: newAvg,
             addsUsed: newAddsUsed,
+            ...(tradeTheme ? { theme: tradeTheme } : {}),
           },
         });
       }
@@ -635,7 +656,7 @@ export async function logTrade(
       await upsertConfig(tx, CONFIG_KEYS.CASH_POSITION_MYR, newCashMyr);
       await upsertConfig(tx, CONFIG_KEYS.CASH_LAST_UPDATED, cashUpdatedAt);
 
-      // Keep CASH_USD portfolio row in sync for UI totals (if present).
+      // Always sync CASH_USD portfolio row (create if missing) so UI/snapshots stay aligned.
       const cashRow = allPortfolio.find((p) => isCashTicker(p.ticker));
       if (cashRow) {
         await tx.portfolio.update({
@@ -646,33 +667,62 @@ export async function logTrade(
             lastPriceUpdate: new Date(),
           },
         });
+      } else {
+        await tx.portfolio.create({
+          data: {
+            ticker: "CASH_USD",
+            currentPrice: newCashUsd,
+            myAvgCost: newCashUsd,
+            lastPriceUpdate: new Date(),
+          },
+        });
       }
 
-      // 11. Cash reconciliation assert
+      // 11. Cash reconciliation: Config cash vs independent Portfolio CASH_USD book check
+      const portfolioAfter = await tx.portfolio.findMany();
+      const configCash = newCashUsd;
+      const cashRowAfter = portfolioAfter.find((p) => isCashTicker(p.ticker));
+      if (cashRowAfter) {
+        const portfolioCash = notionCashBalanceUsd(
+          cashRowAfter.currentPrice,
+          cashRowAfter.myAvgCost,
+        );
+        if (Math.abs(configCash - portfolioCash) > MONEY_EPS) {
+          throw new InvariantViolation("cash_reconciliation", {
+            configCash,
+            portfolioCash,
+            drift: Math.abs(configCash - portfolioCash),
+          });
+        }
+      }
+      if (newShares < -SHARES_EPS) {
+        throw new InvariantViolation("cash_reconciliation", {
+          reason: "negative_shares",
+          shares: newShares,
+        });
+      }
+
       const finalSlices = buildEquitySlices(
-        // Re-read after mutations for assert
-        await tx.portfolio.findMany(),
+        portfolioAfter,
         ticker,
         deleted ? 0 : newShares,
         price,
         holdings,
+        { requireMarks: true, newTheme: tradeTheme },
       );
       const finalEquities = finalSlices.reduce((s, x) => s + x.value, 0);
-      const recomputedNav = newCashUsd + finalEquities;
-      const drift = Math.abs(recomputedNav - (newCashUsd + finalEquities));
-      if (drift > MONEY_EPS) {
+      const recomputedNav = configCash + finalEquities;
+      if (
+        !Number.isFinite(recomputedNav) ||
+        !Number.isFinite(finalEquities) ||
+        recomputedNav < -MONEY_EPS ||
+        finalEquities < -MONEY_EPS
+      ) {
         throw new InvariantViolation("cash_reconciliation", {
-          cash: newCashUsd,
+          reason: "nav_not_finite_or_negative",
+          cash: configCash,
           equities: finalEquities,
           nav: recomputedNav,
-          drift,
-        });
-      }
-      // Also: NAV identity must hold with Config cash (tautological check + shares non-neg).
-      if (finalEquities < -MONEY_EPS) {
-        throw new InvariantViolation("cash_reconciliation", {
-          reason: "negative_equities",
-          equities: finalEquities,
         });
       }
 

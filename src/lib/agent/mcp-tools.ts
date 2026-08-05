@@ -40,8 +40,9 @@ import {
 } from "@/lib/agent/writes";
 
 function textJson(data: unknown) {
+  // Compact JSON — pretty-print bloated get_context ~25% and can stall MCP bridges.
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(data) }],
   };
 }
 
@@ -77,8 +78,27 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       if (!isAgentRoutine(routine)) {
         return textError(`Invalid routine. Allowed: ${AGENT_ROUTINES.join(", ")}`);
       }
-      const ctx = await buildAgentContext(routine);
-      return textJson(ctx);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const ctx = await Promise.race([
+          buildAgentContext(routine),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("context_timeout")), 20_000);
+          }),
+        ]);
+        return textJson(ctx);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "context_failed";
+        if (message === "context_timeout") {
+          return textError(
+            "get_context exceeded 20s — retry; if persistent, check Neon compute / pool",
+          );
+        }
+        console.error("[mcp get_context]", message);
+        return textError("Failed to build agent context");
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     },
   );
 

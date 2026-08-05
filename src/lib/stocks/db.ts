@@ -90,7 +90,7 @@ export function stockReportToDTO(row: StockReportRow): StockReportDTO {
 		title: row.title,
 		reportType: row.reportType,
 		reportDate: row.reportDate ? row.reportDate.toISOString() : null,
-		content: row.content as ReportBlock[],
+		content: asReportBlocks(row.content),
 	};
 }
 

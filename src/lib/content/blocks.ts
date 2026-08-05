@@ -30,7 +30,12 @@ function isReportBlock(value: unknown): value is ReportBlock {
 	if (!BLOCK_TYPES.has(value.type)) return false;
 	if (value.type === "divider") return true;
 	if (value.type === "table") {
-		return Array.isArray(value.headers) && Array.isArray(value.rows);
+		if (!Array.isArray(value.headers) || !Array.isArray(value.rows)) return false;
+		if (!value.headers.every((h): h is string => typeof h === "string")) return false;
+		return value.rows.every(
+			(row) =>
+				Array.isArray(row) && row.every((cell): cell is string => typeof cell === "string"),
+		);
 	}
 	if (typeof value.text !== "string") return false;
 	if (

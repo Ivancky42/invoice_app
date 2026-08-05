@@ -16,7 +16,11 @@ function createClient(): PrismaClient {
     globalForPrisma.pgPool ??
     new Pool({
       connectionString: normalizePgConnectionString(url),
-      max: 10,
+      // Serverless: keep small; avoid waiting forever on a stuck/cold Neon connect.
+      max: 4,
+      connectionTimeoutMillis: 10_000,
+      idleTimeoutMillis: 10_000,
+      allowExitOnIdle: true,
     });
   globalForPrisma.pgPool = pool;
 

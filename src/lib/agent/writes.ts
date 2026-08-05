@@ -370,7 +370,7 @@ export async function patchConfig(input: PatchConfigInput) {
   if (input.CASH_POSITION_USD !== undefined) {
     await setConfig(CONFIG_KEYS.CASH_POSITION_USD, input.CASH_POSITION_USD);
     updated.push(CONFIG_KEYS.CASH_POSITION_USD);
-    // Keep CASH_USD portfolio row in sync for UI totals (same as logTrade).
+    // Always sync CASH_USD portfolio row so UI/snapshots stay aligned with Config.
     const cashRow = await prisma.portfolio.findFirst({
       where: { ticker: { equals: "CASH_USD", mode: "insensitive" } },
     });
@@ -378,6 +378,15 @@ export async function patchConfig(input: PatchConfigInput) {
       await prisma.portfolio.update({
         where: { id: cashRow.id },
         data: {
+          currentPrice: input.CASH_POSITION_USD,
+          myAvgCost: input.CASH_POSITION_USD,
+          lastPriceUpdate: new Date(),
+        },
+      });
+    } else {
+      await prisma.portfolio.create({
+        data: {
+          ticker: "CASH_USD",
           currentPrice: input.CASH_POSITION_USD,
           myAvgCost: input.CASH_POSITION_USD,
           lastPriceUpdate: new Date(),
