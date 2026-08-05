@@ -1,5 +1,5 @@
-import type { TradeType } from "@/generated/prisma/client";
-import { TradeType as TradeTypeEnum } from "@/generated/prisma/client";
+import type { TradeType } from "@/generated/prisma/enums";
+import { TradeType as TradeTypeEnum } from "@/generated/prisma/enums";
 import { normalizeTradeType } from "@/lib/stocks/normalizeStatus";
 
 /** +1 opens/adds; −1 reduces/exits. Exhaustive over TradeType. */

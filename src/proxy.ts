@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { SITE_GATE_COOKIE, gateEnv, verifySiteGateToken } from "@/lib/site-gate";
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const g = gateEnv();
   if (!g) return NextResponse.next();
 
