@@ -6,7 +6,6 @@ import { syncTrends } from "@/lib/notion/mappers/trends";
 import { syncIdeas } from "@/lib/notion/mappers/ideas";
 import { syncDailyLogs } from "@/lib/notion/mappers/dailyLogs";
 import { syncStockReports } from "@/lib/notion/mappers/stockReports";
-import { recordPortfolioSnapshot } from "@/lib/notion/recordPortfolioSnapshot";
 
 const SYNC_SOURCE = "notion";
 
@@ -39,6 +38,11 @@ async function runStep(
  * Run all Notion → Neon syncs sequentially (rate limit: 3 req/s) and
  * record the outcome on the shared `SyncStatus` row. Always resolves —
  * partial failures are reflected in `errors` and `lastError`, never thrown.
+ *
+ * Phase 1: portfolio snapshot is no longer taken here. The prices cron
+ * (`/api/sync/prices`) writes Finnhub/EODHD quotes to Neon and then calls
+ * `recordPortfolioSnapshot()`. Leaving a snapshot step here would race /
+ * overwrite with stale Notion prices before the next Neon price sync.
  */
 export async function runNotionSync(): Promise<SyncResult> {
   const startedAt = new Date();
@@ -56,12 +60,7 @@ export async function runNotionSync(): Promise<SyncResult> {
   steps.push(await runStep("ideas", syncIdeas));
   steps.push(await runStep("dailyLogs", syncDailyLogs));
   steps.push(await runStep("stockReports", syncStockReports));
-  steps.push(
-    await runStep("portfolioSnapshot", async () => {
-      const { ok } = await recordPortfolioSnapshot();
-      return { count: ok ? 1 : 0 };
-    }),
-  );
+  // portfolioSnapshot: owned by /api/sync/prices (Phase 1+) — intentionally omitted.
 
   const allOk = steps.every((s) => s.ok);
   const rowCounts: Record<string, number | null> = {};

@@ -7,3 +7,5 @@ node_modules
 /src/generated/prisma
 # next-agents-md
 .next-docs/
+.vercel
+.env*

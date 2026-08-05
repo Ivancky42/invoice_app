@@ -20,13 +20,19 @@ export function SyncStatusBanner({
   status: SyncStatusRow | null;
   showButton?: boolean;
 }) {
+  const notionSyncEnabled = process.env.NOTION_SYNC_ENABLED === "true";
+  const buttons = showButton ? (
+    <NotionSyncButtons notionSyncEnabled={notionSyncEnabled} />
+  ) : null;
+
   if (!status) {
     return (
       <div className="rounded-md bg-amber-50 border border-amber-100 text-amber-900 text-sm px-3 py-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <span className="min-w-0 flex-1">
-          No Notion sync has run yet. Trigger one now or wait for the daily cron (Notion→Neon ~09:30 GMT+8).
+          No price sync has run yet. Use &quot;Update prices&quot; or wait for the daily cron
+          (~06:00 GMT+8). Portfolio writes go through the agent API / MCP.
         </span>
-        {showButton ? <NotionSyncButtons /> : null}
+        {buttons}
       </div>
     );
   }
@@ -39,12 +45,12 @@ export function SyncStatusBanner({
     return (
       <div className="rounded-md bg-amber-50 border border-amber-100 text-amber-900 text-sm px-3 py-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <span className="min-w-0 flex-1">
-          Showing cached data. Last successful sync: <strong>{lastLabel}</strong>
+          Showing Neon data. Last successful price sync: <strong>{lastLabel}</strong>
           {status.lastError ? (
             <span className="text-amber-700"> · last error: {status.lastError}</span>
           ) : null}
         </span>
-        {showButton ? <NotionSyncButtons /> : null}
+        {buttons}
       </div>
     );
   }
@@ -52,9 +58,11 @@ export function SyncStatusBanner({
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <span className="text-xs text-gray-500 min-w-0 flex-1">
-        Synced {lastLabel} from Notion. Daily: Finnhub→Notion ~06:00 GMT+8; Notion→Neon ~09:30 GMT+8 (22:00 / 01:30 UTC).
+        Prices synced {lastLabel}. Neon is the book of record — agents write via MCP /{" "}
+        <code className="text-[0.7rem]">/api/agent/*</code>; daily Finnhub/EODHD price cron ~06:00
+        GMT+8 (22:00 UTC).
       </span>
-      {showButton ? <NotionSyncButtons /> : null}
+      {buttons}
     </div>
   );
 }

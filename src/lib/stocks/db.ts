@@ -11,7 +11,8 @@ import type {
 	SyncStatus,
 } from "@/generated/prisma/client";
 import { StockReportType } from "@/generated/prisma/client";
-import type { ReportBlock } from "@/lib/notion/blocks";
+import type { ReportBlock } from "@/lib/content/blocks";
+import { asReportBlocks } from "@/lib/content/blocks";
 import {
 	decToNum,
 	parseDcaZoneUpper,
@@ -34,40 +35,48 @@ export type SyncStatusRow = SyncStatus;
 
 /** Plain shape for passing daily logs into client components (JSON-serializable). */
 export type DailyLogDTO = {
-	notionId: string;
+	id: string;
+	notionId: string | null;
 	title: string;
 	logDate: string | null;
-	actionTaken: string | null;
+	actionTaken: ReportBlock[] | null;
 	alertEmailSent: boolean | null;
-	flaggedTickers: string | null;
-	flagsCount: number | null;
-	marketContext: string | null;
-	notes: string | null;
-	portfolioMove: string | null;
-	topNews: string | null;
-	watchlistMove: string | null;
+	flaggedTickers: string[];
+	marketContext: ReportBlock[] | null;
+	notes: ReportBlock[] | null;
+	portfolioMove: ReportBlock[] | null;
+	topNews: ReportBlock[] | null;
+	watchlistMove: ReportBlock[] | null;
+	rulesVersion: string | null;
 };
+
+function jsonBlocksOrNull(value: unknown): ReportBlock[] | null {
+	const blocks = asReportBlocks(value);
+	return blocks.length > 0 ? blocks : null;
+}
 
 export function dailyLogToDTO(row: DailyLogRow): DailyLogDTO {
 	return {
+		id: row.id,
 		notionId: row.notionId,
 		title: row.title,
 		logDate: row.logDate ? row.logDate.toISOString() : null,
-		actionTaken: row.actionTaken,
+		actionTaken: jsonBlocksOrNull(row.actionTaken),
 		alertEmailSent: row.alertEmailSent,
-		flaggedTickers: row.flaggedTickers,
-		flagsCount: row.flagsCount,
-		marketContext: row.marketContext,
-		notes: row.notes,
-		portfolioMove: row.portfolioMove,
-		topNews: row.topNews,
-		watchlistMove: row.watchlistMove,
+		flaggedTickers: row.flaggedTickers ?? [],
+		marketContext: jsonBlocksOrNull(row.marketContext),
+		notes: jsonBlocksOrNull(row.notes),
+		portfolioMove: jsonBlocksOrNull(row.portfolioMove),
+		topNews: jsonBlocksOrNull(row.topNews),
+		watchlistMove: jsonBlocksOrNull(row.watchlistMove),
+		rulesVersion: row.rulesVersion ?? null,
 	};
 }
 
 /** Plain shape for passing stock reports into client components (JSON-serializable). */
 export type StockReportDTO = {
-	notionId: string;
+	id: string;
+	notionId: string | null;
 	title: string;
 	reportType: "WEEKLY" | "MONTHLY";
 	reportDate: string | null;
@@ -76,6 +85,7 @@ export type StockReportDTO = {
 
 export function stockReportToDTO(row: StockReportRow): StockReportDTO {
 	return {
+		id: row.id,
 		notionId: row.notionId,
 		title: row.title,
 		reportType: row.reportType,
@@ -212,12 +222,13 @@ export async function getPortfolioSnapshots(limit = 400): Promise<PortfolioSnaps
 }
 
 export async function getSyncStatus(
-	source = "notion",
+	source = "prices",
 ): Promise<SyncStatusRow | null> {
 	return prisma.syncStatus.findUnique({ where: { source } });
 }
 
-// Sync: daily Finnhub→Notion 22:00 UTC (= 06:00 GMT+8); Notion→Neon 01:30 UTC (= 09:30 GMT+8).
+// Phase 5: banner tracks price sync (Finnhub/EODHD → Neon, 22:00 UTC = 06:00 GMT+8).
+// Notion sync is frozen unless NOTION_SYNC_ENABLED=true.
 // Flag stale if last success is older than ~26h so a missed daily run is visible.
 const STALE_THRESHOLD_MS = 26 * 60 * 60 * 1000;
 

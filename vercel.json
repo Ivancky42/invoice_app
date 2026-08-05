@@ -1,12 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/sync/notion-prices",
+      "path": "/api/sync/prices",
       "schedule": "0 22 * * *"
-    },
-    {
-      "path": "/api/sync/notion",
-      "schedule": "30 1 * * *"
     }
   ]
 }

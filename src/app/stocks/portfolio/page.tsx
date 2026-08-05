@@ -1,6 +1,12 @@
 import { getPortfolio, getSyncStatus, getTrades } from "@/lib/stocks/db";
+import {
+  getEarningsRiskThresholds,
+  getSentimentThresholds,
+} from "@/lib/stocks/config";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import { NotesModalField } from "@/app/stocks/_components/NotesModalField";
+import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
+import { asReportBlocks, hasReportBlocks } from "@/lib/content/blocks";
 import {
   actionBadgeClass,
   decToNum,
@@ -14,15 +20,29 @@ import {
   positionPnl,
   riskBadgeClass,
 } from "@/lib/stocks/format";
+import { resolvePositionShares } from "@/lib/stocks/portfolioTotals";
+import {
+  DERIVED_EARNINGS_RISK_CLASS,
+  DERIVED_EARNINGS_RISK_LABEL,
+  DERIVED_SENTIMENT_CLASS,
+  DERIVED_SENTIMENT_LABEL,
+  positionActionLabel,
+  riskLevelLabel,
+  themeLabel,
+} from "@/lib/stocks/labels";
+import { earningsRiskFromDays, sentimentFromScore } from "@/lib/stocks/derived";
 
 export const revalidate = 900;
 
 export default async function PortfolioPage() {
-  const [rows, trades, status] = await Promise.all([
-    getPortfolio(),
-    getTrades(),
-    getSyncStatus(),
-  ]);
+  const [rows, trades, status, sentimentThresholds, earningsRiskThresholds] =
+    await Promise.all([
+      getPortfolio(),
+      getTrades(),
+      getSyncStatus(),
+      getSentimentThresholds(),
+      getEarningsRiskThresholds(),
+    ]);
   const holdings = holdingsByTicker(trades);
 
   return (
@@ -62,15 +82,23 @@ export default async function PortfolioPage() {
             {rows.map((p) => {
               const cur = decToNum(p.currentPrice);
               const cost = decToNum(p.myAvgCost);
-              const shares = holdings.get(p.ticker) ?? null;
+              const shares = resolvePositionShares(p, holdings);
               const cashRow = isCashTicker(p.ticker);
               const cashBal = cashRow ? notionCashBalanceUsd(p.currentPrice, p.myAvgCost) : 0;
               const per = cashRow ? { pct: null } : pnl(cur, cost);
               const pos = cashRow
                 ? { dollar: null }
                 : positionPnl(cur, cost, shares);
+              const derivedSentiment = sentimentFromScore(
+                p.socialScore,
+                sentimentThresholds,
+              );
+              const derivedEarningsRisk = earningsRiskFromDays(
+                p.daysToEarnings,
+                earningsRiskThresholds,
+              );
               return (
-                <tr key={p.notionId} className="hover:bg-gray-50">
+                <tr key={p.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{p.ticker}</span>
@@ -83,6 +111,11 @@ export default async function PortfolioPage() {
                     <div className="text-xs text-gray-500">
                       {cashRow ? "Cash balance" : (p.company ?? "—")}
                     </div>
+                    {derivedSentiment && (
+                      <span className={`badge mt-1 ${DERIVED_SENTIMENT_CLASS[derivedSentiment]}`}>
+                        {DERIVED_SENTIMENT_LABEL[derivedSentiment]}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     {cashRow ? (
@@ -115,14 +148,18 @@ export default async function PortfolioPage() {
                   <td className="px-4 py-3 text-right">{fmtPct(p.upsidePct)}</td>
                   <td className="px-4 py-3">
                     {p.action ? (
-                      <span className={`badge ${actionBadgeClass(p.action)}`}>{p.action}</span>
+                      <span className={`badge ${actionBadgeClass(p.action)}`}>
+                        {positionActionLabel(p.action)}
+                      </span>
                     ) : (
                       <span className="text-gray-400">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3">
                     {p.riskLevel ? (
-                      <span className={`badge ${riskBadgeClass(p.riskLevel)}`}>{p.riskLevel}</span>
+                      <span className={`badge ${riskBadgeClass(p.riskLevel)}`}>
+                        {riskLevelLabel(p.riskLevel)}
+                      </span>
                     ) : (
                       <span className="text-gray-400">—</span>
                     )}
@@ -134,6 +171,11 @@ export default async function PortfolioPage() {
                         <div className="text-xs text-gray-500">
                           {p.earningsDate ? p.earningsDate.toISOString().slice(0, 10) : "—"}
                         </div>
+                        {derivedEarningsRisk && (
+                          <span className={`badge mt-1 ${DERIVED_EARNINGS_RISK_CLASS[derivedEarningsRisk]}`}>
+                            {DERIVED_EARNINGS_RISK_LABEL[derivedEarningsRisk]}
+                          </span>
+                        )}
                       </div>
                     ) : (
                       <span className="text-gray-400">—</span>
@@ -147,13 +189,13 @@ export default async function PortfolioPage() {
         </table>
       </section>
 
-      {rows.length > 0 && rows.some((p) => p.thesis || p.pageNotes || p.keyRisk || p.entryZone) && (
+      {rows.length > 0 && rows.some((p) => hasReportBlocks(p.thesis) || hasReportBlocks(p.pageNotes) || p.keyRisk || p.entryZone) && (
         <section className="space-y-3">
           <h2 className="text-sm font-medium text-gray-700">Theses &amp; notes</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {rows.map((p) =>
-              p.thesis || p.pageNotes || p.keyRisk || p.entryZone ? (
-                <div key={`th-${p.notionId}`} className="card p-4">
+              hasReportBlocks(p.thesis) || hasReportBlocks(p.pageNotes) || p.keyRisk || p.entryZone ? (
+                <div key={`th-${p.id}`} className="card p-4">
                   <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{p.ticker}</span>
@@ -163,20 +205,24 @@ export default async function PortfolioPage() {
                         </span>
                       )}
                     </div>
-                    {p.sectorTag && <span className="text-xs text-gray-500">{p.sectorTag}</span>}
+                    {p.theme ? (
+                      <span className="text-xs text-gray-500">{themeLabel(p.theme)}</span>
+                    ) : p.sectorTagRaw ? (
+                      <span className="text-xs text-gray-400">{p.sectorTagRaw}</span>
+                    ) : null}
                   </div>
                   {p.entryZone && (
-                    <p className={`text-sm text-gray-700 ${p.thesis || p.pageNotes || p.keyRisk ? "mb-3" : ""}`}>
+                    <p className={`text-sm text-gray-700 ${hasReportBlocks(p.thesis) || hasReportBlocks(p.pageNotes) || p.keyRisk ? "mb-3" : ""}`}>
                       <span className="font-medium text-gray-700">Entry zone: </span>
                       <span className="whitespace-pre-wrap">{p.entryZone}</span>
                     </p>
                   )}
-                  {p.thesis && (
-                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{p.thesis}</p>
+                  {hasReportBlocks(p.thesis) && (
+                    <ReportBlocks blocks={asReportBlocks(p.thesis)} className="space-y-2" />
                   )}
-                  {p.pageNotes && (
-                    <div className={p.thesis ? "mt-3 pt-3 border-t border-gray-100" : ""}>
-                      <NotesModalField label="Notes" text={p.pageNotes} context={p.ticker} />
+                  {hasReportBlocks(p.pageNotes) && (
+                    <div className={hasReportBlocks(p.thesis) ? "mt-3 pt-3 border-t border-gray-100" : ""}>
+                      <NotesModalField label="Notes" text={asReportBlocks(p.pageNotes)} context={p.ticker} />
                     </div>
                   )}
                   {p.keyRisk && (

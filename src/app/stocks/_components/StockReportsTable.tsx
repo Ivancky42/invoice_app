@@ -99,7 +99,7 @@ export function StockReportsTable({ rows }: { rows: StockReportDTO[] }) {
 					</thead>
 					<tbody className="divide-y">
 						{filtered.map((r, index) => (
-							<tr key={r.notionId} className="hover:bg-gray-50 cursor-pointer align-top">
+							<tr key={r.id} className="hover:bg-gray-50 cursor-pointer align-top">
 								<td className="px-5 py-3 tabular-nums text-gray-600 whitespace-nowrap" onClick={() => setOpen(r)}>
 									<div className="flex flex-col gap-1">
 										<span>{fmtDate(r)}</span>

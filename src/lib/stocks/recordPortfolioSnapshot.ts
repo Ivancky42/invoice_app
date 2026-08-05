@@ -1,14 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import {
 	computePortfolioTotals,
-	parseHoldingSlices,
-	snapshotDateGMT8,
 	type HoldingSlice,
+	snapshotDateGMT8,
 } from "@/lib/stocks/portfolioTotals";
 
 /**
- * Upsert today's portfolio snapshot (GMT+8 date). Safe to call on every
- * Notion→Neon sync — reruns the same day update the row, not duplicate it.
+ * Upsert today's portfolio snapshot (GMT+8 date). Safe to call after price
+ * sync — reruns the same day update the row, not duplicate it.
  */
 export async function recordPortfolioSnapshot(): Promise<{ ok: boolean }> {
 	const [portfolio, trades] = await Promise.all([

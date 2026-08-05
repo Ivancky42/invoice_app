@@ -1,15 +1,12 @@
 import type { BlockObjectResponse } from "@notionhq/client";
 import { notionClient } from "@/lib/notion/client";
+import {
+	blocksToPlainText,
+	type ReportBlock,
+} from "@/lib/content/blocks";
 
-export type ReportBlock =
-	| { type: "paragraph"; text: string }
-	| { type: "heading_1" | "heading_2" | "heading_3"; text: string }
-	| { type: "bulleted_list_item"; text: string; children?: ReportBlock[] }
-	| { type: "numbered_list_item"; text: string; children?: ReportBlock[] }
-	| { type: "quote"; text: string }
-	| { type: "callout"; text: string }
-	| { type: "divider" }
-	| { type: "table"; headers: string[]; rows: string[][] };
+export type { ReportBlock } from "@/lib/content/blocks";
+export { blocksToPlainText } from "@/lib/content/blocks";
 
 function richText(arr: { plain_text: string }[] | undefined): string {
 	return (arr ?? []).map((t) => t.plain_text).join("");
@@ -117,38 +114,6 @@ export async function fetchPageBlocks(pageId: string): Promise<ReportBlock[]> {
 		if (normalized) out.push(normalized);
 	}
 	return out;
-}
-
-function blockToPlainText(block: ReportBlock): string {
-	switch (block.type) {
-		case "paragraph":
-		case "heading_1":
-		case "heading_2":
-		case "heading_3":
-		case "quote":
-		case "callout":
-			return block.text.trim();
-		case "bulleted_list_item":
-		case "numbered_list_item": {
-			const prefix = block.type === "bulleted_list_item" ? "- " : "1. ";
-			const nested =
-				block.children?.map(blockToPlainText).filter(Boolean).join("\n") ?? "";
-			return `${prefix}${block.text.trim()}${nested ? `\n${nested}` : ""}`;
-		}
-		case "divider":
-			return "---";
-		default:
-			return "";
-	}
-}
-
-/** Flatten normalized page blocks into plain text for dated note parsing. */
-export function blocksToPlainText(blocks: ReportBlock[]): string {
-	return blocks
-		.map(blockToPlainText)
-		.filter(Boolean)
-		.join("\n\n")
-		.trim();
 }
 
 /** Fetch page body as plain text (empty string if no content). */

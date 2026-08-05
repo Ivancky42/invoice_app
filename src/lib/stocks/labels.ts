@@ -1,0 +1,372 @@
+import type {
+  AnalystRating,
+  DiscoveredVia,
+  IdeaStage,
+  IdeaStatus,
+  MarketCapBucket,
+  PositionAction,
+  RiskLevel,
+  Sleeve,
+  Theme,
+  TradeStatus,
+  TradeType,
+  TrendStage,
+  TrendVerdict,
+  WatchlistPriority,
+  WeekMomentum,
+} from "@/generated/prisma/client";
+import type { DerivedEarningsRisk, DerivedSentiment } from "@/lib/stocks/derived";
+
+/** Grey badge only for null/undefined — never for unknown enum members. */
+export const NULL_BADGE_CLASS = "bg-gray-100 text-gray-600";
+
+export const POSITION_ACTION_LABEL: Record<PositionAction, string> = {
+  HOLD: "Hold",
+  ADD_ON_DIP: "Add on dip",
+  REDUCE: "Reduce",
+  EXIT: "Exit",
+  WATCH: "Watch",
+};
+
+export const POSITION_ACTION_CLASS: Record<PositionAction, string> = {
+  HOLD: "bg-gray-100 text-gray-700",
+  ADD_ON_DIP: "bg-emerald-100 text-emerald-800",
+  REDUCE: "bg-amber-100 text-amber-800",
+  EXIT: "bg-red-100 text-red-700",
+  WATCH: "bg-blue-100 text-blue-700",
+};
+
+export const RISK_LEVEL_LABEL: Record<RiskLevel, string> = {
+  LOW: "Low",
+  LOW_MEDIUM: "Low-Medium",
+  MEDIUM: "Medium",
+  MEDIUM_HIGH: "Medium-High",
+  HIGH: "High",
+  VERY_HIGH: "Very High",
+};
+
+export const RISK_LEVEL_CLASS: Record<RiskLevel, string> = {
+  LOW: "bg-emerald-50 text-emerald-700",
+  LOW_MEDIUM: "bg-emerald-50 text-emerald-700",
+  MEDIUM: "bg-yellow-50 text-yellow-700",
+  MEDIUM_HIGH: "bg-orange-50 text-orange-700",
+  HIGH: "bg-red-50 text-red-700",
+  VERY_HIGH: "bg-red-100 text-red-800",
+};
+
+/** Donut / chart hex colours keyed by RiskLevel. */
+export const RISK_LEVEL_COLOR: Record<RiskLevel, string> = {
+  LOW: "#10b981",
+  LOW_MEDIUM: "#22c55e",
+  MEDIUM: "#eab308",
+  MEDIUM_HIGH: "#f97316",
+  HIGH: "#ef4444",
+  VERY_HIGH: "#b91c1c",
+};
+
+export const WATCHLIST_PRIORITY_LABEL: Record<WatchlistPriority, string> = {
+  BUY_NOW: "Buy now",
+  WAIT_FOR_ENTRY: "Wait for entry",
+  WATCH: "Watch",
+  SKIP_FOR_NOW: "Skip for now",
+};
+
+export const WATCHLIST_PRIORITY_CLASS: Record<WatchlistPriority, string> = {
+  BUY_NOW: "bg-emerald-100 text-emerald-800",
+  WAIT_FOR_ENTRY: "bg-blue-100 text-blue-700",
+  WATCH: "bg-gray-100 text-gray-700",
+  SKIP_FOR_NOW: "bg-red-50 text-red-700",
+};
+
+export const ANALYST_RATING_LABEL: Record<AnalystRating, string> = {
+  STRONG_BUY: "Strong Buy",
+  BUY: "Buy",
+  HOLD: "Hold",
+  SELL: "Sell",
+  NO_COVERAGE: "No Coverage",
+};
+
+export const ANALYST_RATING_CLASS: Record<AnalystRating, string> = {
+  STRONG_BUY: "bg-emerald-100 text-emerald-800",
+  BUY: "bg-emerald-50 text-emerald-700",
+  HOLD: "bg-gray-100 text-gray-700",
+  SELL: "bg-red-50 text-red-700",
+  NO_COVERAGE: "bg-gray-50 text-gray-600",
+};
+
+export const MARKET_CAP_BUCKET_LABEL: Record<MarketCapBucket, string> = {
+  MEGA: "Mega Cap >$100B",
+  LARGE: "Large Cap $10-100B",
+  MID: "Mid Cap $1-10B",
+  SMALL: "Small Cap <$1B",
+};
+
+export const MARKET_CAP_BUCKET_CLASS: Record<MarketCapBucket, string> = {
+  MEGA: "bg-indigo-50 text-indigo-700",
+  LARGE: "bg-blue-50 text-blue-700",
+  MID: "bg-sky-50 text-sky-700",
+  SMALL: "bg-slate-50 text-slate-700",
+};
+
+export const SLEEVE_LABEL: Record<Sleeve, string> = {
+  QUALITY_CORE: "Quality Core",
+  MOMENTUM_CATALYST: "Momentum-Catalyst",
+  SPECULATIVE: "Speculative",
+};
+
+export const SLEEVE_CLASS: Record<Sleeve, string> = {
+  QUALITY_CORE: "bg-emerald-50 text-emerald-800",
+  MOMENTUM_CATALYST: "bg-amber-50 text-amber-800",
+  SPECULATIVE: "bg-violet-50 text-violet-800",
+};
+
+export const TREND_STAGE_LABEL: Record<TrendStage, string> = {
+  EMERGING: "Emerging",
+  BUILDING: "Building",
+  HOT: "Hot",
+  PEAKED: "Peaked",
+  FADED: "Faded",
+  PAUSED: "Paused",
+};
+
+export const TREND_STAGE_CLASS: Record<TrendStage, string> = {
+  EMERGING: "bg-emerald-50 text-emerald-700",
+  BUILDING: "bg-orange-50 text-orange-700",
+  HOT: "bg-red-50 text-red-700",
+  PEAKED: "bg-amber-50 text-amber-800",
+  FADED: "bg-slate-100 text-slate-600",
+  PAUSED: "bg-gray-100 text-gray-600",
+};
+
+export const TREND_VERDICT_LABEL: Record<TrendVerdict, string> = {
+  WIN: "Win",
+  LOSS: "Loss",
+  ONGOING: "Ongoing",
+  TOO_EARLY: "Too Early",
+};
+
+export const TREND_VERDICT_CLASS: Record<TrendVerdict, string> = {
+  WIN: "bg-emerald-100 text-emerald-800",
+  LOSS: "bg-red-50 text-red-700",
+  ONGOING: "bg-blue-50 text-blue-700",
+  TOO_EARLY: "bg-gray-100 text-gray-600",
+};
+
+export const WEEK_MOMENTUM_LABEL: Record<WeekMomentum, string> = {
+  ACCELERATING: "Accelerating",
+  STABLE: "Stable",
+  DECELERATING: "Decelerating",
+  REVERSED: "Reversed",
+};
+
+export const WEEK_MOMENTUM_CLASS: Record<WeekMomentum, string> = {
+  ACCELERATING: "bg-emerald-50 text-emerald-700",
+  STABLE: "bg-gray-100 text-gray-700",
+  DECELERATING: "bg-amber-50 text-amber-700",
+  REVERSED: "bg-red-50 text-red-700",
+};
+
+export const DISCOVERED_VIA_LABEL: Record<DiscoveredVia, string> = {
+  DAILY_SCAN: "Daily Scan",
+  WEEKLY_SCAN: "Weekly Scan",
+  MONTHLY_SURVEY: "Monthly Survey",
+  MANUAL: "Manual",
+};
+
+export const DISCOVERED_VIA_CLASS: Record<DiscoveredVia, string> = {
+  DAILY_SCAN: "bg-blue-50 text-blue-700",
+  WEEKLY_SCAN: "bg-indigo-50 text-indigo-700",
+  MONTHLY_SURVEY: "bg-violet-50 text-violet-700",
+  MANUAL: "bg-gray-100 text-gray-700",
+};
+
+export const TRADE_TYPE_LABEL: Record<TradeType, string> = {
+  BUY: "Buy",
+  ADD: "Add",
+  TRIM: "Trim",
+  SELL: "Sell",
+  STOP_LOSS: "Stop Loss",
+};
+
+export const TRADE_TYPE_CLASS: Record<TradeType, string> = {
+  BUY: "bg-emerald-100 text-emerald-800",
+  ADD: "bg-emerald-50 text-emerald-700",
+  TRIM: "bg-amber-100 text-amber-800",
+  SELL: "bg-red-100 text-red-700",
+  STOP_LOSS: "bg-red-50 text-red-700",
+};
+
+export const TRADE_STATUS_LABEL: Record<TradeStatus, string> = {
+  OPEN: "Open",
+  PARTIAL: "Partial",
+  CLOSED: "Closed",
+};
+
+export const TRADE_STATUS_CLASS: Record<TradeStatus, string> = {
+  OPEN: "bg-emerald-50 text-emerald-700",
+  PARTIAL: "bg-amber-50 text-amber-700",
+  CLOSED: "bg-gray-100 text-gray-700",
+};
+
+export const IDEA_STATUS_LABEL: Record<IdeaStatus, string> = {
+  RESEARCHING: "Researching",
+  READY_FOR_WATCHLIST: "Add to Watchlist",
+  HOLD_OFF: "Hold Off",
+  PASS: "Pass",
+  GRADUATED: "Graduated",
+};
+
+export const IDEA_STATUS_CLASS: Record<IdeaStatus, string> = {
+  RESEARCHING: "bg-gray-100 text-gray-700",
+  READY_FOR_WATCHLIST: "bg-emerald-100 text-emerald-800",
+  HOLD_OFF: "bg-amber-100 text-amber-800",
+  PASS: "bg-red-50 text-red-700",
+  GRADUATED: "bg-blue-100 text-blue-700",
+};
+
+export const IDEA_STAGE_LABEL: Record<IdeaStage, string> = {
+  RADAR: "Radar",
+  PRE_BUZZ: "Pre-buzz",
+  EMERGING: "Emerging",
+  INSTITUTIONALIZING: "Institutionalizing",
+  MAINSTREAM: "Mainstream",
+};
+
+export const IDEA_STAGE_CLASS: Record<IdeaStage, string> = {
+  RADAR: "bg-slate-100 text-slate-700",
+  PRE_BUZZ: "bg-emerald-50 text-emerald-800",
+  EMERGING: "bg-sky-50 text-sky-800",
+  INSTITUTIONALIZING: "bg-indigo-50 text-indigo-800",
+  MAINSTREAM: "bg-amber-50 text-amber-800",
+};
+
+export const THEME_LABEL: Record<Theme, string> = {
+  AI_INFRASTRUCTURE: "AI Infrastructure",
+  NUCLEAR_POWER: "Nuclear / Power",
+  HUMANOID_ROBOTS: "Humanoid Robots",
+  SPACE: "Space",
+  CRYPTO: "Crypto",
+  RETAIL_TECH: "Retail Tech",
+  HEALTHCARE: "Healthcare",
+  FINTECH_PAYMENTS: "FinTech / Payments",
+  DEFENSE_DRONES: "Defense / Drones",
+  MEME_SPECIAL_SIT: "Meme / Special Sit",
+};
+
+export const THEME_CLASS: Record<Theme, string> = {
+  AI_INFRASTRUCTURE: "bg-violet-50 text-violet-800",
+  NUCLEAR_POWER: "bg-amber-50 text-amber-800",
+  HUMANOID_ROBOTS: "bg-sky-50 text-sky-800",
+  SPACE: "bg-indigo-50 text-indigo-800",
+  CRYPTO: "bg-orange-50 text-orange-800",
+  RETAIL_TECH: "bg-pink-50 text-pink-800",
+  HEALTHCARE: "bg-teal-50 text-teal-800",
+  FINTECH_PAYMENTS: "bg-emerald-50 text-emerald-800",
+  DEFENSE_DRONES: "bg-stone-100 text-stone-800",
+  MEME_SPECIAL_SIT: "bg-fuchsia-50 text-fuchsia-800",
+};
+
+/** Donut / chart hex colours keyed by Theme. */
+export const THEME_COLOR: Record<Theme, string> = {
+  AI_INFRASTRUCTURE: "#7c3aed",
+  NUCLEAR_POWER: "#d97706",
+  HUMANOID_ROBOTS: "#0284c7",
+  SPACE: "#4338ca",
+  CRYPTO: "#ea580c",
+  RETAIL_TECH: "#db2777",
+  HEALTHCARE: "#0d9488",
+  FINTECH_PAYMENTS: "#059669",
+  DEFENSE_DRONES: "#57534e",
+  MEME_SPECIAL_SIT: "#c026d3",
+};
+
+export const DERIVED_SENTIMENT_LABEL: Record<DerivedSentiment, string> = {
+  VERY_BULLISH: "Extremely Bullish",
+  BULLISH: "Bullish",
+  NEUTRAL: "Neutral",
+  BEARISH: "Bearish",
+};
+
+export const DERIVED_SENTIMENT_CLASS: Record<DerivedSentiment, string> = {
+  VERY_BULLISH: "bg-emerald-100 text-emerald-900",
+  BULLISH: "bg-emerald-50 text-emerald-800",
+  NEUTRAL: "bg-gray-100 text-gray-700",
+  BEARISH: "bg-red-50 text-red-700",
+};
+
+export const DERIVED_EARNINGS_RISK_LABEL: Record<DerivedEarningsRisk, string> = {
+  IMMINENT: "Imminent",
+  SOON: "Soon",
+  CLEAR: "Clear",
+};
+
+export const DERIVED_EARNINGS_RISK_CLASS: Record<DerivedEarningsRisk, string> = {
+  IMMINENT: "bg-red-50 text-red-700",
+  SOON: "bg-amber-50 text-amber-800",
+  CLEAR: "bg-emerald-50 text-emerald-700",
+};
+
+export function positionActionLabel(v: PositionAction | null | undefined): string {
+  if (v == null) return "—";
+  return POSITION_ACTION_LABEL[v];
+}
+
+export function riskLevelLabel(v: RiskLevel | null | undefined): string {
+  if (v == null) return "—";
+  return RISK_LEVEL_LABEL[v];
+}
+
+export function watchlistPriorityLabel(v: WatchlistPriority | null | undefined): string {
+  if (v == null) return "—";
+  return WATCHLIST_PRIORITY_LABEL[v];
+}
+
+export function tradeTypeLabel(v: TradeType | null | undefined): string {
+  if (v == null) return "—";
+  return TRADE_TYPE_LABEL[v];
+}
+
+export function tradeStatusLabel(v: TradeStatus | null | undefined): string {
+  if (v == null) return "—";
+  return TRADE_STATUS_LABEL[v];
+}
+
+export function ideaStatusLabel(v: IdeaStatus | null | undefined): string {
+  if (v == null) return "—";
+  return IDEA_STATUS_LABEL[v];
+}
+
+export function ideaStageLabel(v: IdeaStage | null | undefined): string {
+  if (v == null) return "—";
+  return IDEA_STAGE_LABEL[v];
+}
+
+export function trendStageLabel(v: TrendStage | null | undefined): string {
+  if (v == null) return "—";
+  return TREND_STAGE_LABEL[v];
+}
+
+export function trendVerdictLabel(v: TrendVerdict | null | undefined): string {
+  if (v == null) return "—";
+  return TREND_VERDICT_LABEL[v];
+}
+
+export function weekMomentumLabel(v: WeekMomentum | null | undefined): string {
+  if (v == null) return "—";
+  return WEEK_MOMENTUM_LABEL[v];
+}
+
+export function themeLabel(v: Theme | null | undefined): string {
+  if (v == null) return "—";
+  return THEME_LABEL[v];
+}
+
+export function derivedSentimentLabel(v: DerivedSentiment | null | undefined): string {
+  if (v == null) return "—";
+  return DERIVED_SENTIMENT_LABEL[v];
+}
+
+export function derivedEarningsRiskLabel(v: DerivedEarningsRisk | null | undefined): string {
+  if (v == null) return "—";
+  return DERIVED_EARNINGS_RISK_LABEL[v];
+}

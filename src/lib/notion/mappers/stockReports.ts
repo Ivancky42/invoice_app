@@ -80,9 +80,11 @@ export async function syncStockReports(): Promise<{ count: number }> {
 
 	if (rows.length > 0) {
 		await runInTransactionBatches(
-			rows.map((r) =>
-				prisma.stockReport.upsert({ where: { notionId: r.notionId }, create: r, update: r }),
-			),
+			rows.map((r) => {
+				const { notionId, ...update } = r;
+				if (!notionId) throw new Error("StockReport sync row missing notionId");
+				return prisma.stockReport.upsert({ where: { notionId }, create: r, update });
+			}),
 		);
 	}
 

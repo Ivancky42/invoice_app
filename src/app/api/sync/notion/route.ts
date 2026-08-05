@@ -31,6 +31,17 @@ export async function GET(req: NextRequest) {
   if (!authorized(req)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
+  // Phase 5: Notion sync frozen by default. Emergency re-enable for go-back window only.
+  if (process.env.NOTION_SYNC_ENABLED !== "true") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "notion sync frozen — set NOTION_SYNC_ENABLED=true to re-enable during go-back window",
+      },
+      { status: 503 },
+    );
+  }
   const result = await runNotionSync();
   return NextResponse.json(result, { status: 200 });
 }

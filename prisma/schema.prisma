@@ -90,95 +90,251 @@ model Document {
   updatedAt     DateTime       @updatedAt
 }
 
-// === Stock dashboard (Notion-cached) ===
-// All tables use notionId as primary key for idempotent upserts from the Notion sync.
-// Source of truth: Notion. This database is a read cache only — never write back to Notion.
+// === Stock dashboard ===
+// Source of truth: Neon. Notion sync is legacy/frozen (Phase 5; NOTION_SYNC_ENABLED for go-back).
+// Phase 2: cuid primary keys; notionId is optional unique (nullable for agent-created rows).
+// Notion sync (when re-enabled) still upserts by notionId.
+// Phase 3: Config table holds live cash/FX/limits/thresholds (rules in git /prompts).
+// Phase 0a: status-like columns are nullable enums; *Raw strings kept for one release.
+// Phase 4+: agents read/write via /api/agent/* and MCP (/api/mcp/mcp).
+
+enum PositionAction {
+  HOLD
+  ADD_ON_DIP
+  REDUCE
+  EXIT
+  WATCH
+}
+
+enum RiskLevel {
+  LOW
+  LOW_MEDIUM
+  MEDIUM
+  MEDIUM_HIGH
+  HIGH
+  VERY_HIGH
+}
+
+enum WatchlistPriority {
+  BUY_NOW
+  WAIT_FOR_ENTRY
+  WATCH
+  SKIP_FOR_NOW
+}
+
+enum AnalystRating {
+  STRONG_BUY
+  BUY
+  HOLD
+  SELL
+  NO_COVERAGE
+}
+
+enum MarketCapBucket {
+  MEGA
+  LARGE
+  MID
+  SMALL
+}
+
+enum Sleeve {
+  QUALITY_CORE
+  MOMENTUM_CATALYST
+  SPECULATIVE
+}
+
+enum TrendStage {
+  EMERGING
+  BUILDING
+  HOT
+  PEAKED
+  FADED
+  PAUSED
+}
+
+enum TrendVerdict {
+  WIN
+  LOSS
+  ONGOING
+  TOO_EARLY
+}
+
+enum WeekMomentum {
+  ACCELERATING
+  STABLE
+  DECELERATING
+  REVERSED
+}
+
+enum DiscoveredVia {
+  DAILY_SCAN
+  WEEKLY_SCAN
+  MONTHLY_SURVEY
+  MANUAL
+}
+
+/// Notion Trade Tracker Type options (Aug 2026): BUY / SELL / ADD / TRIM / STOP LOSS.
+enum TradeType {
+  BUY
+  ADD
+  TRIM
+  SELL
+  STOP_LOSS
+}
+
+enum TradeStatus {
+  OPEN
+  PARTIAL
+  CLOSED
+}
+
+/// Notion Ideas Status options (Aug 2026). "Add to Watchlist" → READY_FOR_WATCHLIST.
+/// GRADUATED added from Notion; CONVICTION_BUILDING not present in Notion selects.
+enum IdeaStatus {
+  RESEARCHING
+  READY_FOR_WATCHLIST
+  HOLD_OFF
+  PASS
+  GRADUATED
+}
+
+/// Notion Ideas Stage options (Aug 2026 dump): Radar / Pre-buzz / Emerging / Institutionalizing / Mainstream.
+enum IdeaStage {
+  RADAR
+  PRE_BUZZ
+  EMERGING
+  INSTITUTIONALIZING
+  MAINSTREAM
+}
+
+/// Phase 0b: cross-table theme buckets (signed §3.2 mapping). Unmapped raw kept; theme null.
+enum Theme {
+  AI_INFRASTRUCTURE
+  NUCLEAR_POWER
+  HUMANOID_ROBOTS
+  SPACE
+  CRYPTO
+  RETAIL_TECH
+  HEALTHCARE
+  FINTECH_PAYMENTS
+  DEFENSE_DRONES
+  MEME_SPECIAL_SIT
+}
 
 model Portfolio {
-  notionId         String    @id
-  ticker           String
+  id               String          @id @default(cuid())
+  notionId         String?         @unique
+  ticker           String          @unique
   company          String?
-  currentPrice     Decimal?  @db.Decimal(14, 4)
-  myAvgCost        Decimal?  @db.Decimal(14, 4)
-  analystTarget    Decimal?  @db.Decimal(14, 4)
-  upsidePct        Decimal?  @db.Decimal(8, 4)
-  action           String?
-  riskLevel        String?
-  analystRating    String?
+  /// Shares from Notion Portfolio "Shares" property (not derived from trade log).
+  shares           Decimal?        @db.Decimal(18, 4)
+  currentPrice     Decimal?        @db.Decimal(14, 4)
+  myAvgCost        Decimal?        @db.Decimal(14, 4)
+  analystTarget    Decimal?        @db.Decimal(14, 4)
+  upsidePct        Decimal?        @db.Decimal(8, 4)
+  action           PositionAction?
+  actionRaw        String?
+  riskLevel        RiskLevel?
+  riskLevelRaw     String?
+  analystRating    AnalystRating?
+  analystRatingRaw String?
   socialScore      Int?
   socialSentiment  String?
   earningsDate     DateTime?
   daysToEarnings   Int?
-  stopLoss         Decimal?  @db.Decimal(14, 4)
+  stopLoss         Decimal?        @db.Decimal(14, 4)
   entryZone        String?
-  thesis           String?
-  sectorTag        String?
-  marketCapBucket  String?
-  notes            String?
-  /// Daily notes from the Notion page body (canonical since Jun 2026).
-  pageNotes        String?   @db.Text
+  /// Long-form thesis as ReportBlock[].
+  thesis           Json?
+  theme            Theme?
+  /// Former sectorTag string; retained for one release.
+  sectorTagRaw     String?
+  marketCapBucket  MarketCapBucket?
+  marketCapBucketRaw String?
+  sleeve           Sleeve?
+  conviction       Int?
+  addsUsed         Int?
+  /// Long-form notes as ReportBlock[].
+  notes            Json?
+  /// Daily notes from the Notion page body (ReportBlock[]).
+  pageNotes        Json?
   keyRisk          String?
   beatRate         String?
   impliedMove      String?
   lastPriceUpdate  DateTime?
-  syncedAt         DateTime  @updatedAt
+  syncedAt         DateTime        @updatedAt
 
-  @@index([ticker])
+  @@index([theme])
 }
 
 model Watchlist {
-  notionId         String    @id
-  ticker           String
+  id               String            @id @default(cuid())
+  notionId         String?           @unique
+  ticker           String            @unique
   company          String?
-  theme            String?
-  sector           String?
-  priority         String?
-  currentPrice     Decimal?  @db.Decimal(14, 4)
-  analystTarget    Decimal?  @db.Decimal(14, 4)
-  bullTarget       Decimal?  @db.Decimal(14, 4)
-  upsidePct        Decimal?  @db.Decimal(8, 4)
-  riskLevel        String?
-  analystRating    String?
+  theme            Theme?
+  themeRaw         String?
+  sectorRaw        String?
+  priority         WatchlistPriority?
+  priorityRaw      String?
+  currentPrice     Decimal?          @db.Decimal(14, 4)
+  analystTarget    Decimal?          @db.Decimal(14, 4)
+  bullTarget       Decimal?          @db.Decimal(14, 4)
+  upsidePct        Decimal?          @db.Decimal(8, 4)
+  riskLevel        RiskLevel?
+  riskLevelRaw     String?
+  analystRating    AnalystRating?
+  analystRatingRaw String?
   socialScore      Int?
   socialPlatformBuzz String?
   earningsDate     DateTime?
   daysToEarnings   Int?
   earningsRisk     String?
   entryZone        String?
-  stopLoss         Decimal?  @db.Decimal(14, 4)
+  stopLoss         Decimal?          @db.Decimal(14, 4)
   keyCatalyst      String?
   keyRisk          String?
-  thesis           String?
-  actionNotes      String?
-  /// Daily notes from the Notion page body (canonical since Jun 2026).
-  pageNotes        String?   @db.Text
+  /// Long-form thesis as ReportBlock[].
+  thesis           Json?
+  /// Long-form action notes as ReportBlock[].
+  actionNotes      Json?
+  /// Daily notes from the Notion page body (ReportBlock[]).
+  pageNotes        Json?
   beatRate         String?
   impliedMove      String?
   analystCount     Int?
-  marketCapBucket  String?
-  syncedAt         DateTime  @updatedAt
+  marketCapBucket  MarketCapBucket?
+  marketCapBucketRaw String?
+  syncedAt         DateTime          @updatedAt
 
-  @@index([ticker])
   @@index([priority])
+  @@index([theme])
 }
 
 model Trade {
-  notionId         String    @id
+  id               String       @id @default(cuid())
+  notionId         String?      @unique
+  /// Future logTrade idempotency; not populated by Notion sync.
+  idempotencyKey   String?      @unique
   title            String
   ticker           String?
-  type             String?
+  type             TradeType?
+  typeRaw          String?
   date             DateTime?
-  pricePerShare    Decimal?  @db.Decimal(14, 4)
-  shares           Decimal?  @db.Decimal(18, 4)
-  totalValue       Decimal?  @db.Decimal(18, 4)
-  pnlDollar        Decimal?  @db.Decimal(18, 4)
-  pnlPct           Decimal?  @db.Decimal(8, 4)
-  status           String?
-  avgCostBasis     Decimal?  @db.Decimal(14, 4)
+  pricePerShare    Decimal?     @db.Decimal(14, 4)
+  shares           Decimal?     @db.Decimal(18, 4)
+  totalValue       Decimal?     @db.Decimal(18, 4)
+  pnlDollar        Decimal?     @db.Decimal(18, 4)
+  pnlPct           Decimal?     @db.Decimal(8, 4)
+  status           TradeStatus?
+  statusRaw        String?
+  avgCostBasis     Decimal?     @db.Decimal(14, 4)
   exitReason       String?
-  thesisAtEntry    String?
-  notes            String?
-  syncedAt         DateTime  @updatedAt
+  /// Long-form thesis at entry as ReportBlock[].
+  thesisAtEntry    Json?
+  /// Long-form notes as ReportBlock[].
+  notes            Json?
+  syncedAt         DateTime     @updatedAt
 
   @@index([ticker])
   @@index([date])
@@ -186,68 +342,100 @@ model Trade {
 }
 
 model Trend {
-  notionId               String   @id
-  trendName              String
+  id                     String         @id @default(cuid())
+  notionId               String?        @unique
+  trendName              String         @unique
   dateDiscovered         DateTime?
   representativeTickers  String?
-  themeSector            String?
-  lifecycleStage         String?
+  theme                  Theme?
+  /// Former themeSector string; retained for one release.
+  themeSectorRaw         String?
+  lifecycleStage         TrendStage?
+  lifecycleStageRaw      String?
   signalScore            Int?
   socialVelocity         Int?
   analystMomentum        Int?
   priceClustering        Int?
   fundamentalBacking     Int?
-  discoveredVia          String?
-  weekMomentum           String?
-  perf1m                 Decimal? @db.Decimal(8, 4)
-  perf3m                 Decimal? @db.Decimal(8, 4)
-  verdict                String?
+  discoveredVia          DiscoveredVia?
+  discoveredViaRaw       String?
+  weekMomentum           WeekMomentum?
+  weekMomentumRaw        String?
+  perf1m                 Decimal?       @db.Decimal(8, 4)
+  perf3m                 Decimal?       @db.Decimal(8, 4)
+  verdict                TrendVerdict?
+  verdictRaw             String?
   similarToPastTrend     String?
   keyCatalyst            String?
-  avoidReason            String?
-  notes                  String?
-  retrospective          String?
-  syncedAt               DateTime @updatedAt
+  /// Long-form avoid reason as ReportBlock[].
+  avoidReason            Json?
+  /// Long-form notes as ReportBlock[].
+  notes                  Json?
+  /// Long-form retrospective as ReportBlock[].
+  retrospective          Json?
+  syncedAt               DateTime       @updatedAt
 
   @@index([lifecycleStage])
   @@index([signalScore])
+  @@index([theme])
 }
 
 model Idea {
-  notionId         String    @id
-  stockSector      String
-  theme            String?
-  currentPrice     Decimal?  @db.Decimal(14, 4)
-  analystTarget    Decimal?  @db.Decimal(14, 4)
-  upsidePct        Decimal?  @db.Decimal(8, 4)
+  id               String      @id @default(cuid())
+  notionId         String?     @unique
+  /// Notion title property "Stock / Sector".
+  stockSector      String      @unique
+  leadTicker       String?
+  company          String?
+  theme            Theme?
+  themeRaw         String?
+  currentPrice     Decimal?    @db.Decimal(14, 4)
+  analystTarget    Decimal?    @db.Decimal(14, 4)
+  upsidePct        Decimal?    @db.Decimal(8, 4)
   riskLevel        String?
-  status           String?
+  status           IdeaStatus?
+  statusRaw        String?
+  ideaStage        IdeaStage?
+  ideaStageRaw     String?
   socialBuzz       String?
   foundVia         String?
-  whyInteresting   String?
-  syncedAt         DateTime  @updatedAt
+  /// Long-form why-interesting as ReportBlock[].
+  whyInteresting   Json?
+  keyRisk          String?
+  /// Long-form notes as ReportBlock[].
+  notes            Json?
+  catalystDate     DateTime?
+  dateFound        DateTime?
+  lastReviewed     DateTime?
+  graduationDate   DateTime?
+  graduationPrice  Decimal?    @db.Decimal(14, 4)
+  syncedAt         DateTime    @updatedAt
 
   @@index([status])
+  @@index([ideaStage])
+  @@index([theme])
 }
 
 /// Cached rows from Notion Daily Logs DB (journal / briefing).
 model DailyLog {
-  notionId         String    @id
+  id               String    @id @default(cuid())
+  notionId         String?   @unique
   /// Typically the ISO date (`Name` column), e.g. 2026-05-14
   title            String
-  logDate          DateTime?
-  actionTaken      String?   @db.Text
-  alertEmailSent   Boolean?
-  flaggedTickers   String?   @db.Text
-  flagsCount       Int?
-  marketContext    String?   @db.Text
-  notes            String?   @db.Text
-  portfolioMove    String?   @db.Text
-  topNews          String?   @db.Text
-  watchlistMove    String?   @db.Text
+  logDate          DateTime? @unique
+  /// Long-form sections as ReportBlock[].
+  marketContext    Json?
+  topNews          Json?
+  portfolioMove    Json?
+  watchlistMove    Json?
+  actionTaken      Json?
+  notes            Json?
+  flaggedTickers   String[]  @default([])
+  alertEmailSent   Boolean?  @default(false)
+  rulesVersion     String?
   syncedAt         DateTime  @updatedAt
-
-  @@index([logDate])
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 enum StockReportType {
@@ -257,7 +445,8 @@ enum StockReportType {
 
 /// Cached weekly / monthly report pages from Notion Stock Monitor HQ (child pages).
 model StockReport {
-  notionId   String          @id
+  id         String          @id @default(cuid())
+  notionId   String?         @unique
   title      String
   reportType StockReportType
   reportDate DateTime?
@@ -265,6 +454,7 @@ model StockReport {
   content    Json
   syncedAt   DateTime        @updatedAt
 
+  @@unique([reportType, reportDate])
   @@index([reportType])
   @@index([reportDate])
 }
@@ -295,4 +485,12 @@ model SyncStatus {
   lastSuccessAt DateTime?
   lastError     String?
   rowCounts     Json?
+}
+
+/// Phase 3: live Stock HQ config (cash, FX, limits, thresholds, tracked tickers).
+/// Rules prose lives in git `/prompts`; mutable state lives here.
+model Config {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
 }

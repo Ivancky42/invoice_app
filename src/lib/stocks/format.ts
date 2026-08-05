@@ -1,5 +1,24 @@
 import type { Decimal } from "@/generated/prisma/internal/prismaNamespace";
+import type {
+  PositionAction,
+  RiskLevel,
+  TradeType,
+  WatchlistPriority,
+} from "@/generated/prisma/client";
 import type { TradeRow } from "@/lib/stocks/db";
+import {
+  NULL_BADGE_CLASS,
+  POSITION_ACTION_CLASS,
+  RISK_LEVEL_CLASS,
+  TRADE_TYPE_CLASS,
+  WATCHLIST_PRIORITY_CLASS,
+} from "@/lib/stocks/labels";
+import {
+  normalizePositionAction,
+  normalizeRiskLevel,
+  normalizeWatchlistPriority,
+} from "@/lib/stocks/normalizeStatus";
+import { parseTradeType, TRADE_DIRECTION } from "@/lib/stocks/tradeMath";
 
 export function decToNum(d: Decimal | null | undefined): number | null {
   if (d === null || d === undefined) return null;
@@ -17,7 +36,7 @@ export function isCspxTicker(ticker: string | null | undefined): boolean {
   return (ticker ?? "").trim().toUpperCase() === "CSPX";
 }
 
-/** Rows/symbols we never send to Finnhub (Notion price sync manual + cron). */
+/** Rows/symbols we never send to Finnhub (Neon price sync manual + cron). */
 export function isPriceSyncExcludedTicker(ticker: string | null | undefined): boolean {
   if (isCashTicker(ticker)) return true;
   return isCspxTicker(ticker);
@@ -145,50 +164,45 @@ export function fmtNum(n: number | null | undefined, digits = 2): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-/** Action badge color mapping (Tailwind classes, neutral palette + accents). */
-export function actionBadgeClass(action: string | null | undefined): string {
-  switch (action) {
-    case "ADD on dip":
-      return "bg-emerald-100 text-emerald-800";
-    case "HOLD":
-      return "bg-gray-100 text-gray-700";
-    case "REDUCE":
-      return "bg-amber-100 text-amber-800";
-    case "EXIT":
-      return "bg-red-100 text-red-700";
-    case "WATCH":
-      return "bg-blue-100 text-blue-700";
-    default:
-      return "bg-gray-100 text-gray-600";
-  }
+/**
+ * Badge class for PositionAction. Accepts enum or legacy Notion string (normalised).
+ * Grey only when null/undefined or unmapped legacy string — never a silent default for known enums.
+ */
+export function actionBadgeClass(
+  action: PositionAction | string | null | undefined,
+): string {
+  if (action == null) return NULL_BADGE_CLASS;
+  if (action in POSITION_ACTION_CLASS) return POSITION_ACTION_CLASS[action as PositionAction];
+  const v = normalizePositionAction(action);
+  if (v == null) return NULL_BADGE_CLASS;
+  return POSITION_ACTION_CLASS[v];
 }
 
-export function riskBadgeClass(level: string | null | undefined): string {
-  switch (level) {
-    case "Low":
-      return "bg-emerald-50 text-emerald-700";
-    case "Low-Medium":
-      return "bg-emerald-50 text-emerald-700";
-    case "Medium":
-      return "bg-yellow-50 text-yellow-700";
-    case "Medium-High":
-      return "bg-orange-50 text-orange-700";
-    case "High":
-      return "bg-red-50 text-red-700";
-    case "Very High":
-      return "bg-red-100 text-red-800";
-    default:
-      return "bg-gray-50 text-gray-600";
-  }
+export function riskBadgeClass(level: RiskLevel | string | null | undefined): string {
+  if (level == null) return NULL_BADGE_CLASS;
+  if (level in RISK_LEVEL_CLASS) return RISK_LEVEL_CLASS[level as RiskLevel];
+  const v = normalizeRiskLevel(level);
+  if (v == null) return NULL_BADGE_CLASS;
+  return RISK_LEVEL_CLASS[v];
 }
 
-export function priorityBadgeClass(priority: string | null | undefined): string {
-  if (!priority) return "bg-gray-100 text-gray-600";
-  if (priority.includes("Buy now")) return "bg-emerald-100 text-emerald-800";
-  if (priority.includes("Wait for entry")) return "bg-blue-100 text-blue-700";
-  if (priority.includes("Watch")) return "bg-gray-100 text-gray-700";
-  if (priority.includes("Skip")) return "bg-red-50 text-red-700";
-  return "bg-gray-100 text-gray-700";
+export function priorityBadgeClass(
+  priority: WatchlistPriority | string | null | undefined,
+): string {
+  if (priority == null) return NULL_BADGE_CLASS;
+  if (priority in WATCHLIST_PRIORITY_CLASS) {
+    return WATCHLIST_PRIORITY_CLASS[priority as WatchlistPriority];
+  }
+  const v = normalizeWatchlistPriority(priority);
+  if (v == null) return NULL_BADGE_CLASS;
+  return WATCHLIST_PRIORITY_CLASS[v];
+}
+
+export function tradeTypeBadgeClass(type: TradeType | string | null | undefined): string {
+  if (type == null) return NULL_BADGE_CLASS;
+  const v = parseTradeType(type);
+  if (v == null) return NULL_BADGE_CLASS;
+  return TRADE_TYPE_CLASS[v];
 }
 
 /** Compute per-share P&L vs avg cost (in dollars and percent). */
@@ -202,8 +216,8 @@ export function pnl(currentPrice: number | null, avgCost: number | null): { doll
 
 /**
  * Compute net shares currently held per ticker by walking the trade log.
- * Adds (BUY/ADD) increase the position; reductions (SELL/TRIM/EXIT/STOP/CLOSE)
- * decrease it. Tickers with zero or near-zero net shares are dropped.
+ * Direction comes from TRADE_DIRECTION via parseTradeType (enum or legacy string).
+ * Tickers with zero or near-zero net shares are dropped.
  */
 export function holdingsByTicker(trades: TradeRow[]): Map<string, number> {
   const map = new Map<string, number>();
@@ -211,21 +225,10 @@ export function holdingsByTicker(trades: TradeRow[]): Map<string, number> {
     if (!t.ticker) continue;
     const shares = decToNum(t.shares);
     if (shares === null || shares === 0) continue;
-    const type = (t.type ?? "").toUpperCase();
-    let signed = 0;
-    if (type.includes("BUY") || type.includes("ADD")) {
-      signed = Math.abs(shares);
-    } else if (
-      type.includes("SELL") ||
-      type.includes("TRIM") ||
-      type.includes("EXIT") ||
-      type.includes("STOP") ||
-      type.includes("CLOSE")
-    ) {
-      signed = -Math.abs(shares);
-    } else {
-      continue;
-    }
+    // Prefer enum column; fall back to typeRaw during transition.
+    const parsed = parseTradeType(t.type ?? (t as { typeRaw?: string | null }).typeRaw);
+    if (parsed == null) continue;
+    const signed = TRADE_DIRECTION[parsed] * Math.abs(shares);
     map.set(t.ticker, (map.get(t.ticker) ?? 0) + signed);
   }
   for (const [k, v] of map) {

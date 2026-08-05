@@ -1,66 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FormattedNoteText } from "@/app/stocks/_components/FormattedNoteText";
-import { parseStockNotes } from "@/lib/stocks/parseStockNotes";
+import type { ReportBlock } from "@/lib/content/blocks";
+import { asReportBlocks, isReportBlockArray, textToBlocks } from "@/lib/content/blocks";
+import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
 
-function NotesModalBody({ text }: { text: string }) {
-	const parsed = useMemo(() => parseStockNotes(text), [text]);
-
-	if (!parsed) {
-		return (
-			<p className="text-sm text-gray-800 leading-relaxed m-0">
-				<FormattedNoteText text={text} />
-			</p>
-		);
-	}
-
-	const { preamble, entries } = parsed;
-
-	return (
-		<div className="space-y-3">
-			{preamble ? (
-				<div className="pb-1 mb-1 border-b border-gray-100">
-					<div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
-						Context
-					</div>
-					<p className="text-sm text-gray-700 leading-relaxed m-0">
-						<FormattedNoteText text={preamble} />
-					</p>
-				</div>
-			) : null}
-			{entries.map((entry, index) => {
-				const isLatest = index === 0;
-				return (
-					<div
-						key={`${entry.date}-${index}`}
-						className={
-							isLatest
-								? "rounded-lg border border-emerald-200 bg-emerald-50/60 px-4 py-3.5 shadow-sm"
-								: "rounded-lg border border-gray-100 bg-gray-50/40 px-4 py-3.5"
-						}
-					>
-						<div className="flex flex-wrap items-center gap-2 mb-2">
-							<time
-								dateTime={entry.date}
-								className={`text-xs font-semibold tabular-nums ${isLatest ? "text-emerald-900" : "text-gray-700"}`}
-							>
-								{entry.label}
-							</time>
-							{isLatest ? (
-								<span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded">
-									Latest
-								</span>
-							) : null}
-						</div>
-						<p className="text-sm text-gray-800 leading-relaxed m-0">
-							<FormattedNoteText text={entry.body} />
-						</p>
-					</div>
-				);
-			})}
-		</div>
-	);
+function normalizeNotes(
+	text: ReportBlock[] | string | null | undefined,
+): ReportBlock[] {
+	if (text == null) return [];
+	if (isReportBlockArray(text)) return text;
+	if (typeof text === "string") return textToBlocks(text);
+	return asReportBlocks(text);
 }
 
 export function NotesModalField({
@@ -69,11 +20,13 @@ export function NotesModalField({
 	context,
 }: {
 	label: string;
-	text: string;
+	/** ReportBlock[] preferred; legacy string accepted during transition. */
+	text: ReportBlock[] | string | null | undefined;
 	/** Shown in the modal header, e.g. ticker symbol. */
 	context?: string;
 }) {
 	const [open, setOpen] = useState(false);
+	const blocks = useMemo(() => normalizeNotes(text), [text]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -83,6 +36,8 @@ export function NotesModalField({
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
 	}, [open]);
+
+	if (blocks.length === 0) return null;
 
 	const modalTitle = context ? `${context} — ${label}` : label;
 
@@ -122,7 +77,7 @@ export function NotesModalField({
 							</button>
 						</div>
 						<div className="overflow-y-auto overscroll-contain px-6 py-5">
-							<NotesModalBody text={text} />
+							<ReportBlocks blocks={blocks} />
 						</div>
 					</div>
 				</div>

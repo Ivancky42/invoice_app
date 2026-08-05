@@ -40,10 +40,23 @@ function sharesHeld(ticker: string, holdings: Map<string, number>): number | nul
 }
 
 /**
+ * Prefer Portfolio.shares (book of record) when the column is set — including 0 (flat).
+ * Fall back to trade-log net only when shares is null/unset.
+ */
+export function resolvePositionShares(
+	p: Portfolio,
+	holdings: Map<string, number>,
+): number | null {
+	const stored = decToNum(p.shares);
+	if (stored !== null) return stored;
+	return sharesHeld(p.ticker, holdings);
+}
+
+/**
  * Per-holding mark-to-market values (same rules as stocks overview donuts).
  *
  * - **CASH_USD**: balance from Notion `Current Price` / `My Avg Cost`.
- * - **Equities** (incl. CSPX): trade-log shares × synced `Current Price`.
+ * - **Equities** (incl. CSPX): Portfolio.shares (preferred) or trade-log × synced `Current Price`.
  */
 export function computePortfolioBreakdown(
 	portfolio: Portfolio[],
@@ -68,7 +81,7 @@ export function computePortfolioBreakdown(
 
 		const cur = decToNum(p.currentPrice);
 		const cost = decToNum(p.myAvgCost);
-		const shares = sharesHeld(p.ticker, holdings);
+		const shares = resolvePositionShares(p, holdings);
 		const r = positionPnl(cur, cost, shares);
 
 		if (r.marketValue !== null && r.marketValue > 0) {
@@ -99,7 +112,7 @@ export function computePortfolioTotals(
 		if (isCashTicker(p.ticker)) continue;
 		const cur = decToNum(p.currentPrice);
 		const cost = decToNum(p.myAvgCost);
-		const shares = sharesHeld(p.ticker, holdings);
+		const shares = resolvePositionShares(p, holdings);
 		const r = positionPnl(cur, cost, shares);
 		if (r.dollar !== null) {
 			unrealizedPnl += r.dollar;

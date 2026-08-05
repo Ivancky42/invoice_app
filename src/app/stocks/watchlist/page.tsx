@@ -1,8 +1,15 @@
 import { getSyncStatus, getWatchlist } from "@/lib/stocks/db";
 import type { WatchlistRow } from "@/lib/stocks/db";
+import {
+  getEarningsRiskThresholds,
+  getSentimentThresholds,
+} from "@/lib/stocks/config";
+import { WatchlistPriority } from "@/generated/prisma/client";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import { ExpandableText } from "@/app/_components/ExpandableText";
 import { NotesModalField } from "@/app/stocks/_components/NotesModalField";
+import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
+import { asReportBlocks, hasReportBlocks } from "@/lib/content/blocks";
 import {
   decToNum,
   fmtMoney,
@@ -10,25 +17,38 @@ import {
   priorityBadgeClass,
   riskBadgeClass,
 } from "@/lib/stocks/format";
+import {
+  DERIVED_EARNINGS_RISK_CLASS,
+  DERIVED_EARNINGS_RISK_LABEL,
+  DERIVED_SENTIMENT_CLASS,
+  DERIVED_SENTIMENT_LABEL,
+  riskLevelLabel,
+  themeLabel,
+  watchlistPriorityLabel,
+  WATCHLIST_PRIORITY_LABEL,
+} from "@/lib/stocks/labels";
+import { earningsRiskFromDays, sentimentFromScore } from "@/lib/stocks/derived";
 
 export const revalidate = 900;
 
-const PRIORITY_ORDER: Array<{ match: (s: string | null) => boolean; label: string }> = [
-  { match: (s) => !!s && s.includes("Buy now"), label: "Buy now" },
-  { match: (s) => !!s && s.includes("Wait for entry"), label: "Wait for entry" },
-  { match: (s) => !!s && s.includes("Watch"), label: "Watching" },
-  { match: (s) => !!s && s.includes("Skip"), label: "Skip" },
-  { match: (s) => !s, label: "Unsorted" },
+const PRIORITY_ORDER: Array<WatchlistPriority | null> = [
+  WatchlistPriority.BUY_NOW,
+  WatchlistPriority.WAIT_FOR_ENTRY,
+  WatchlistPriority.WATCH,
+  WatchlistPriority.SKIP_FOR_NOW,
+  null,
 ];
 
 function groupByPriority(rows: WatchlistRow[]) {
-  const groups: { label: string; items: WatchlistRow[] }[] = PRIORITY_ORDER.map((g) => ({
-    label: g.label,
-    items: [],
-  }));
+  const groups: { key: WatchlistPriority | null; label: string; items: WatchlistRow[] }[] =
+    PRIORITY_ORDER.map((key) => ({
+      key,
+      label: key ? WATCHLIST_PRIORITY_LABEL[key] : "Unsorted",
+      items: [],
+    }));
   for (const r of rows) {
-    const idx = PRIORITY_ORDER.findIndex((g) => g.match(r.priority));
-    groups[idx === -1 ? PRIORITY_ORDER.length - 1 : idx].items.push(r);
+    const idx = PRIORITY_ORDER.indexOf(r.priority);
+    groups[idx === -1 ? PRIORITY_ORDER.length - 1 : idx]!.items.push(r);
   }
   return groups.filter((g) => g.items.length > 0);
 }
@@ -53,7 +73,12 @@ function UpsideBar({ pct }: { pct: number | null }) {
 }
 
 export default async function WatchlistPage() {
-  const [rows, status] = await Promise.all([getWatchlist(), getSyncStatus()]);
+  const [rows, status, sentimentThresholds, earningsRiskThresholds] = await Promise.all([
+    getWatchlist(),
+    getSyncStatus(),
+    getSentimentThresholds(),
+    getEarningsRiskThresholds(),
+  ]);
   const groups = groupByPriority(rows);
 
   return (
@@ -76,19 +101,35 @@ export default async function WatchlistPage() {
             <span className="text-xs text-gray-500">{g.items.length}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {g.items.map((w) => (
-              <div key={w.notionId} className="card p-4 flex flex-col gap-2 h-full">
+            {g.items.map((w) => {
+              const derivedSentiment = sentimentFromScore(
+                w.socialScore,
+                sentimentThresholds,
+              );
+              const derivedEarningsRisk = earningsRiskFromDays(
+                w.daysToEarnings,
+                earningsRiskThresholds,
+              );
+              return (
+              <div key={w.id} className="card p-4 flex flex-col gap-2 h-full">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="font-semibold">{w.ticker}</div>
                     <div className="text-xs text-gray-500">{w.company ?? "—"}</div>
+                    {w.theme && (
+                      <div className="text-xs text-gray-500 mt-0.5">{themeLabel(w.theme)}</div>
+                    )}
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     {w.priority && (
-                      <span className={`badge ${priorityBadgeClass(w.priority)}`}>{w.priority}</span>
+                      <span className={`badge ${priorityBadgeClass(w.priority)}`}>
+                        {watchlistPriorityLabel(w.priority)}
+                      </span>
                     )}
                     {w.riskLevel && (
-                      <span className={`badge ${riskBadgeClass(w.riskLevel)}`}>{w.riskLevel}</span>
+                      <span className={`badge ${riskBadgeClass(w.riskLevel)}`}>
+                        {riskLevelLabel(w.riskLevel)}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -117,12 +158,22 @@ export default async function WatchlistPage() {
                     <div className="text-right">
                       <div className="text-gray-500">Social</div>
                       <div className="font-medium">{w.socialScore}</div>
+                      {derivedSentiment && (
+                        <span className={`badge mt-0.5 ${DERIVED_SENTIMENT_CLASS[derivedSentiment]}`}>
+                          {DERIVED_SENTIMENT_LABEL[derivedSentiment]}
+                        </span>
+                      )}
                     </div>
                   )}
                   {w.daysToEarnings !== null && (
                     <div className="text-right">
                       <div className="text-gray-500">Earnings</div>
                       <div className="font-medium">{w.daysToEarnings}d</div>
+                      {derivedEarningsRisk && (
+                        <span className={`badge mt-0.5 ${DERIVED_EARNINGS_RISK_CLASS[derivedEarningsRisk]}`}>
+                          {DERIVED_EARNINGS_RISK_LABEL[derivedEarningsRisk]}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -133,10 +184,10 @@ export default async function WatchlistPage() {
                     <span className="font-medium">{w.entryZone}</span>
                   </div>
                 )}
-                {w.thesis && (
+                {hasReportBlocks(w.thesis) && (
                   <div className="space-y-1">
                     <div className="text-xs font-medium text-gray-500">Thesis</div>
-                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{w.thesis}</p>
+                    <ReportBlocks blocks={asReportBlocks(w.thesis)} className="space-y-2" />
                   </div>
                 )}
                 {w.impliedMove && (
@@ -169,22 +220,23 @@ export default async function WatchlistPage() {
                     />
                   </div>
                 )}
-                {(w.pageNotes || w.actionNotes) && (
+                {(hasReportBlocks(w.pageNotes) || hasReportBlocks(w.actionNotes)) && (
                   <div className="mt-auto pt-3 border-t border-gray-100 flex flex-wrap gap-2">
-                    {w.pageNotes && (
-                      <NotesModalField label="Notes" text={w.pageNotes} context={w.ticker} />
+                    {hasReportBlocks(w.pageNotes) && (
+                      <NotesModalField label="Notes" text={asReportBlocks(w.pageNotes)} context={w.ticker} />
                     )}
-                    {w.actionNotes && (
+                    {hasReportBlocks(w.actionNotes) && (
                       <NotesModalField
                         label="Action notes"
-                        text={w.actionNotes}
+                        text={asReportBlocks(w.actionNotes)}
                         context={w.ticker}
                       />
                     )}
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       ))}

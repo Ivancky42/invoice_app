@@ -3,7 +3,7 @@
 Personal Next.js dashboard hosting two apps behind a single PIN gate:
 
 - **Invoices** — Quotation → Invoice → Delivery Order lifecycle with PDF export.
-- **Stocks** — read-only mirror of Notion-backed portfolios; Vercel crons refresh Finnhub prices on Notion once daily and pull Notion into Neon once daily (later the same morning, GMT+8); the UI reads from Neon (`revalidate = 900`).
+- **Stocks** — Neon is the book of record. Agents read/write via `/api/agent/*` and MCP (`/api/mcp/mcp`). A daily Vercel cron refreshes Finnhub/EODHD prices into Neon (`/api/sync/prices`). Notion sync is legacy/frozen (Phase 5). See [docs/STOCK_HQ_AGENTS.md](docs/STOCK_HQ_AGENTS.md).
 
 ## Stack
 - Next.js 15 (App Router) + TypeScript + Tailwind CSS
@@ -65,20 +65,41 @@ pnpm db:studio   # browse data with Prisma Studio
 
 Connection string (default): `postgresql://invoice:invoice@localhost:5433/invoice_app`
 
-## Stocks app — Notion sync
+## Stocks app — Neon SoT (Phase 5)
 
-The stocks UI never talks to Notion directly for reads: it uses Neon. Vercel crons **once per day** at **22:00 UTC** push Finnhub quotes to Notion (`/api/sync/notion-prices`, **06:00 GMT+8**), and at **01:30 UTC** sync Notion → Neon (`/api/sync/notion`, **09:30 GMT+8**). Pages use `revalidate = 900`.
+Neon is the source of truth for portfolio, watchlist, trades, trends, ideas, daily logs, and reports. The `/stocks/*` UI is read-only against Neon (`revalidate = 900`). Agents mutate data only through the Bearer-token API and MCP — not via raw SQL and not via Notion.
 
-### One-time Notion setup
+Full connection guide (tools, auth, go-back checklist): **[docs/STOCK_HQ_AGENTS.md](docs/STOCK_HQ_AGENTS.md)**.
 
-1. Create an internal integration at <https://www.notion.so/my-integrations> (type **Internal**, pick the right workspace). Copy the token (starts with `secret_` or `ntn_`).
-2. Set `NOTION_TOKEN` and the five `NOTION_*_DB` IDs in your environment (see `.env.example`). Set `SYNC_SECRET` (any long random string) for manual triggers; on Vercel also set `CRON_SECRET` so the auto-injected cron `Authorization` header is accepted.
-3. For each of the 5 databases (Portfolio, Watchlist, Trades, Trends, Ideas) open it in Notion ▸ ••• ▸ **Connections** ▸ add the integration. Without this the API will return empty results.
+### Architecture
 
-### Endpoints and schedule
+```
+Agents (Cowork / Claude / Cursor)
+        │
+   MCP /api/mcp/mcp  ──or──  HTTPS /api/agent/*
+        │
+   Bearer AGENT_TOKEN
+        │
+      Neon  ←── /api/sync/prices (Finnhub + EODHD cron, daily 22:00 UTC)
+        │
+   /stocks/* UI (read-only)
+```
 
-- **Daily crons**: `0 22 * * *` → `/api/sync/notion-prices` (Finnhub → Notion, **22:00 UTC** / **06:00 GMT+8**); `30 1 * * *` → `/api/sync/notion` (Notion → Neon, **01:30 UTC** / **09:30 GMT+8**). See [vercel.json](vercel.json). Both use `Authorization: Bearer $CRON_SECRET` from Vercel.
-- **Manual button**: every stocks page (and the home hub) shows a "Sync now" button that calls a server action. The action is reachable only to PIN-authenticated browsers and reuses the same orchestrator as the cron, then revalidates the stocks routes.
-- **Manual HTTP**: `GET /api/sync/notion?secret=$SYNC_SECRET` — same orchestrator, returns per-DB row counts and any per-DB errors.
-- Sync: **Finnhub → Notion** (prices on board databases) via cron and manual button; **Notion → Neon** via cron and “Sync now” (cache only).
-- If sync fails or is missed, the UI keeps serving the last good Neon rows. A stale banner appears when the last successful **Notion→Neon** sync is older than **~26 hours**.
+Notion DBs remain readable as an archived fallback during the ~2-week go-back window. Notion→Neon sync (`/api/sync/notion`, `manualSyncNotion`) is **frozen** unless `NOTION_SYNC_ENABLED=true`. The Notion sync cron has been removed from [vercel.json](vercel.json); `src/lib/notion/` stays in the repo unwired.
+
+### Price sync
+
+- **Daily cron**: `0 22 * * *` → `/api/sync/prices` (Finnhub → Neon Portfolio/Watchlist/Ideas; EODHD for CSPX; then portfolio snapshot). **22:00 UTC / 06:00 GMT+8**. Auth: `Authorization: Bearer $CRON_SECRET`.
+- **Manual**: “Update prices” on stocks pages (PIN-gated server action).
+
+### Agent API / MCP
+
+- Set `AGENT_TOKEN` (32+ chars). Same token for `/api/agent/*` and `/api/mcp/mcp`.
+- Reads + writes: context, prompts, portfolio, watchlist, trades, ideas, trends, config, daily log, reports, `log_trade`.
+- Never grant `DATABASE_URL` to agents.
+
+### Legacy Notion sync (emergency only)
+
+- Env: `NOTION_SYNC_ENABLED=true` plus existing `NOTION_*` / `SYNC_SECRET`.
+- `GET /api/sync/notion?secret=$SYNC_SECRET` — otherwise **503** frozen.
+- UI shows “Sync from Notion (legacy)” only when enabled.

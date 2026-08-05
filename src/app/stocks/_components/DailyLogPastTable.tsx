@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { blocksToPlainText } from "@/lib/content/blocks";
 import type { DailyLogDTO } from "@/lib/stocks/db";
 import { DailyLogReader } from "./DailyLogReader";
 
@@ -15,8 +16,14 @@ function fmtShortDate(entry: DailyLogDTO): string {
 	return entry.title.slice(0, 10);
 }
 
-function preview(marketContext: string | null, fallback: string): string {
-	const raw = (marketContext ?? fallback)?.replace(/\s+/g, " ").trim() ?? "";
+function preview(marketContext: DailyLogDTO["marketContext"], fallback: string): string {
+	const raw =
+		(marketContext && marketContext.length > 0
+			? blocksToPlainText(marketContext)
+			: fallback
+		)
+			?.replace(/\s+/g, " ")
+			.trim() ?? "";
 	if (raw.length <= 140) return raw;
 	return `${raw.slice(0, 140)}…`;
 }
@@ -52,58 +59,62 @@ export function DailyLogPastTable({ rows }: { rows: DailyLogDTO[] }) {
 						</tr>
 					</thead>
 					<tbody className="divide-y">
-						{rows.map((r, index) => (
-							<tr key={r.notionId} className="hover:bg-gray-50 cursor-pointer align-top">
-								<td className="px-5 py-3 tabular-nums text-gray-600 whitespace-nowrap" onClick={() => setOpen(r)}>
-									<div className="flex flex-col gap-1">
-										<span>{fmtShortDate(r)}</span>
-										{index === 0 ? (
-											<span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded w-fit">
-												Latest
-											</span>
-										) : null}
-									</div>
-								</td>
-								<td className="px-5 py-3 font-medium text-gray-900" onClick={() => setOpen(r)}>
-									{r.title}
-								</td>
-								<td className="px-5 py-3 text-right tabular-nums">{r.flagsCount ?? "—"}</td>
-								<td
-									className="px-5 py-3 text-gray-600 max-w-[14rem] truncate hidden lg:table-cell"
-									title={r.flaggedTickers ?? undefined}
-									onClick={() => setOpen(r)}
-								>
-									{r.flaggedTickers ?? "—"}
-								</td>
-								<td className="px-5 py-3 text-center" onClick={() => setOpen(r)}>
-									{r.alertEmailSent === null ? (
-										<span className="text-gray-400">—</span>
-									) : r.alertEmailSent ? (
-										<span className="badge bg-emerald-100 text-emerald-800">Yes</span>
-									) : (
-										<span className="badge bg-gray-100 text-gray-600">No</span>
-									)}
-								</td>
-								<td
-									className="px-5 py-3 text-gray-500 text-xs hidden md:table-cell leading-snug max-w-md"
-									onClick={() => setOpen(r)}
-								>
-									{preview(r.marketContext, "")}
-								</td>
-								<td className="px-5 py-3 text-right whitespace-nowrap">
-									<button
-										type="button"
-										onClick={(e) => {
-											e.stopPropagation();
-											setOpen(r);
-										}}
-										className="text-sm font-medium text-gray-900 hover:underline"
+						{rows.map((r, index) => {
+							const flagged = r.flaggedTickers ?? [];
+							const flaggedLabel = flagged.length > 0 ? flagged.join(", ") : null;
+							return (
+								<tr key={r.id} className="hover:bg-gray-50 cursor-pointer align-top">
+									<td className="px-5 py-3 tabular-nums text-gray-600 whitespace-nowrap" onClick={() => setOpen(r)}>
+										<div className="flex flex-col gap-1">
+											<span>{fmtShortDate(r)}</span>
+											{index === 0 ? (
+												<span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded w-fit">
+													Latest
+												</span>
+											) : null}
+										</div>
+									</td>
+									<td className="px-5 py-3 font-medium text-gray-900" onClick={() => setOpen(r)}>
+										{r.title}
+									</td>
+									<td className="px-5 py-3 text-right tabular-nums">{flagged.length || "—"}</td>
+									<td
+										className="px-5 py-3 text-gray-600 max-w-[14rem] truncate hidden lg:table-cell"
+										title={flaggedLabel ?? undefined}
+										onClick={() => setOpen(r)}
 									>
-										View full
-									</button>
-								</td>
-							</tr>
-						))}
+										{flaggedLabel ?? "—"}
+									</td>
+									<td className="px-5 py-3 text-center" onClick={() => setOpen(r)}>
+										{r.alertEmailSent === null ? (
+											<span className="text-gray-400">—</span>
+										) : r.alertEmailSent ? (
+											<span className="badge bg-emerald-100 text-emerald-800">Yes</span>
+										) : (
+											<span className="badge bg-gray-100 text-gray-600">No</span>
+										)}
+									</td>
+									<td
+										className="px-5 py-3 text-gray-500 text-xs hidden md:table-cell leading-snug max-w-md"
+										onClick={() => setOpen(r)}
+									>
+										{preview(r.marketContext, "")}
+									</td>
+									<td className="px-5 py-3 text-right whitespace-nowrap">
+										<button
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												setOpen(r);
+											}}
+											className="text-sm font-medium text-gray-900 hover:underline"
+										>
+											View full
+										</button>
+									</td>
+								</tr>
+							);
+						})}
 					</tbody>
 				</table>
 			</div>

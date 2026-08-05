@@ -1,10 +1,11 @@
 import type { PageObjectResponse } from "@notionhq/client";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { asBoolean, asDate, asInt, asString, readPrimaryTitle, readProp } from "@/lib/notion/extract";
+import { asBoolean, asDate, asString, readPrimaryTitle, readProp } from "@/lib/notion/extract";
 import { notionDbId } from "@/lib/notion/client";
 import { runInTransactionBatches } from "@/lib/notion/batchTransaction";
 import { queryAllPages } from "@/lib/notion/queryAll";
+import { toJsonBlocks } from "@/lib/notion/jsonBlocks";
 
 const US_LONG_MONTH_TO_INDEX: Record<string, number> = {
 	January: 0,
@@ -41,6 +42,28 @@ function parseEmbeddedUsLongDate(title: string): Date | null {
 	return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/** Split Notion flagged-tickers text into a clean string[]. */
+function parseFlaggedTickers(raw: string | null): string[] {
+	if (!raw?.trim()) return [];
+	const byComma = raw
+		.split(/[,;]+/)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+	if (byComma.length > 1) return byComma;
+
+	const single = byComma[0] ?? raw.trim();
+	// Bare tickers separated only by spaces: "OKLO LUNR ISRG"
+	if (/^[A-Z][A-Z0-9.]{0,5}(?:\s+[A-Z][A-Z0-9.]{0,5})+$/.test(single)) {
+		return single.split(/\s+/);
+	}
+	// "TICKER (notes) TICKER (notes)" — split before the next ticker+(
+	const withNotes = single
+		.split(/(?=\s+[A-Z]{1,6}(?:\.[A-Z]{1,2})?\s*\()/)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+	return withNotes.length > 0 ? withNotes : [single];
+}
+
 function mapPage(page: PageObjectResponse): Prisma.DailyLogUncheckedCreateInput | null {
 	const title = readPrimaryTitle(page) ?? asString(readProp(page, "Name"));
 	if (!title?.trim()) return null;
@@ -52,15 +75,14 @@ function mapPage(page: PageObjectResponse): Prisma.DailyLogUncheckedCreateInput 
 		notionId: page.id,
 		title,
 		logDate,
-		actionTaken: asString(readProp(page, "Action Taken")),
+		actionTaken: toJsonBlocks(asString(readProp(page, "Action Taken"))),
 		alertEmailSent: asBoolean(readProp(page, "Alert Email Sent")),
-		flaggedTickers: asString(readProp(page, "Flagged Tickers")),
-		flagsCount: asInt(readProp(page, "Flags Count")),
-		marketContext: asString(readProp(page, "Market Context")),
-		notes: asString(readProp(page, "Notes")),
-		portfolioMove: asString(readProp(page, "Portfolio Move")),
-		topNews: asString(readProp(page, "Top News")),
-		watchlistMove: asString(readProp(page, "Watchlist Move")),
+		flaggedTickers: parseFlaggedTickers(asString(readProp(page, "Flagged Tickers"))),
+		marketContext: toJsonBlocks(asString(readProp(page, "Market Context"))),
+		notes: toJsonBlocks(asString(readProp(page, "Notes"))),
+		portfolioMove: toJsonBlocks(asString(readProp(page, "Portfolio Move"))),
+		topNews: toJsonBlocks(asString(readProp(page, "Top News"))),
+		watchlistMove: toJsonBlocks(asString(readProp(page, "Watchlist Move"))),
 	};
 }
 
@@ -74,9 +96,11 @@ export async function syncDailyLogs(): Promise<{ count: number }> {
 
 	if (rows.length > 0) {
 		await runInTransactionBatches(
-			rows.map((r) =>
-				prisma.dailyLog.upsert({ where: { notionId: r.notionId }, create: r, update: r }),
-			),
+			rows.map((r) => {
+				const { notionId, ...update } = r;
+				if (!notionId) throw new Error("DailyLog sync row missing notionId");
+				return prisma.dailyLog.upsert({ where: { notionId }, create: r, update });
+			}),
 		);
 	}
 

@@ -1,28 +1,39 @@
 import { getSyncStatus, getTrends } from "@/lib/stocks/db";
 import type { TrendRow } from "@/lib/stocks/db";
+import { TrendStage } from "@/generated/prisma/client";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import { ExpandableText } from "@/app/_components/ExpandableText";
+import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
+import { asReportBlocks, hasReportBlocks } from "@/lib/content/blocks";
 import { decToNum, fmtPct } from "@/lib/stocks/format";
+import {
+  TREND_STAGE_LABEL,
+  themeLabel,
+  trendVerdictLabel,
+  weekMomentumLabel,
+} from "@/lib/stocks/labels";
 
 export const revalidate = 900;
 
-const STAGES: Array<{ match: (s: string | null) => boolean; label: string }> = [
-  { match: (s) => !!s && s.includes("Emerging"), label: "Emerging" },
-  { match: (s) => !!s && s.includes("Building"), label: "Building" },
-  { match: (s) => !!s && s.includes("Hot"), label: "Hot" },
-  { match: (s) => !!s && s.includes("Peaked"), label: "Peaked" },
-  { match: (s) => !!s && s.includes("Faded"), label: "Faded" },
-  { match: (s) => !!s && s.includes("Paused"), label: "Paused" },
+const STAGES: TrendStage[] = [
+  TrendStage.EMERGING,
+  TrendStage.BUILDING,
+  TrendStage.HOT,
+  TrendStage.PEAKED,
+  TrendStage.FADED,
+  TrendStage.PAUSED,
 ];
 
 function bucketize(rows: TrendRow[]) {
   const buckets: Record<string, TrendRow[]> = {};
-  for (const s of STAGES) buckets[s.label] = [];
-  buckets["Other"] = [];
+  for (const s of STAGES) buckets[s] = [];
+  buckets["OTHER"] = [];
   for (const r of rows) {
-    const s = STAGES.find((s) => s.match(r.lifecycleStage));
-    if (s) buckets[s.label].push(r);
-    else buckets["Other"].push(r);
+    if (r.lifecycleStage && buckets[r.lifecycleStage]) {
+      buckets[r.lifecycleStage]!.push(r);
+    } else {
+      buckets["OTHER"]!.push(r);
+    }
   }
   return buckets;
 }
@@ -38,7 +49,11 @@ function TrendCard({ t }: { t: TrendRow }) {
           </div>
         )}
       </div>
-      {t.themeSector && <div className="text-xs text-gray-500">{t.themeSector}</div>}
+      {t.theme ? (
+        <div className="text-xs text-gray-500">{themeLabel(t.theme)}</div>
+      ) : t.themeSectorRaw ? (
+        <div className="text-xs text-gray-400">{t.themeSectorRaw}</div>
+      ) : null}
       {t.representativeTickers && (
         <div className="text-xs text-gray-700">{t.representativeTickers}</div>
       )}
@@ -46,13 +61,13 @@ function TrendCard({ t }: { t: TrendRow }) {
         {t.weekMomentum && (
           <div>
             <div className="text-gray-500">Week</div>
-            <div>{t.weekMomentum}</div>
+            <div>{weekMomentumLabel(t.weekMomentum)}</div>
           </div>
         )}
         {t.verdict && (
           <div>
             <div className="text-gray-500">Verdict</div>
-            <div>{t.verdict}</div>
+            <div>{trendVerdictLabel(t.verdict)}</div>
           </div>
         )}
         {decToNum(t.perf1m) !== null && (
@@ -82,20 +97,16 @@ function TrendCard({ t }: { t: TrendRow }) {
           />
         </div>
       )}
-      {t.notes && (
-        <div className="text-xs text-gray-600">
+      {hasReportBlocks(t.notes) && (
+        <div className="text-xs text-gray-600 space-y-1">
           <strong>Notes:</strong>
-          <ExpandableText text={t.notes} lines={2} textClassName="whitespace-pre-wrap" />
+          <ReportBlocks blocks={asReportBlocks(t.notes)} className="space-y-1" />
         </div>
       )}
-      {t.retrospective && (
-        <div className="text-xs text-gray-600">
+      {hasReportBlocks(t.retrospective) && (
+        <div className="text-xs text-gray-600 space-y-1">
           <strong>Retrospective:</strong>
-          <ExpandableText
-            text={t.retrospective}
-            lines={2}
-            textClassName="whitespace-pre-wrap"
-          />
+          <ReportBlocks blocks={asReportBlocks(t.retrospective)} className="space-y-1" />
         </div>
       )}
     </div>
@@ -105,7 +116,10 @@ function TrendCard({ t }: { t: TrendRow }) {
 export default async function TrendsPage() {
   const [rows, status] = await Promise.all([getTrends(), getSyncStatus()]);
   const buckets = bucketize(rows);
-  const visibleStages = [...STAGES.map((s) => s.label), "Other"].filter((l) => buckets[l].length > 0);
+  const visibleKeys = [
+    ...STAGES.filter((s) => buckets[s]!.length > 0),
+    ...(buckets["OTHER"]!.length > 0 ? (["OTHER"] as const) : []),
+  ];
 
   return (
     <div className="space-y-6">
@@ -118,33 +132,33 @@ export default async function TrendsPage() {
 
       {rows.length === 0 ? (
         <div className="card px-5 py-8 text-center text-gray-500">No trends logged yet.</div>
-      ) : visibleStages.length === 1 ? (
-        // Only one stage populated — cards laid out in a normal grid so the
-        // section uses the full width instead of one tall narrow column.
+      ) : visibleKeys.length === 1 ? (
         <section className="space-y-2">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-700">
-              {visibleStages[0]}
+              {visibleKeys[0] === "OTHER" ? "Other" : TREND_STAGE_LABEL[visibleKeys[0]]}
             </h2>
-            <span className="text-xs text-gray-500">{buckets[visibleStages[0]].length}</span>
+            <span className="text-xs text-gray-500">{buckets[visibleKeys[0]]!.length}</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {buckets[visibleStages[0]].map((t) => (
-              <TrendCard key={t.notionId} t={t} />
+            {buckets[visibleKeys[0]]!.map((t) => (
+              <TrendCard key={t.id} t={t} />
             ))}
           </div>
         </section>
       ) : (
-        <div className={`grid gap-3 ${stageGridClass(visibleStages.length)}`}>
-          {visibleStages.map((label) => (
-            <div key={label} className="space-y-2">
+        <div className={`grid gap-3 ${stageGridClass(visibleKeys.length)}`}>
+          {visibleKeys.map((key) => (
+            <div key={key} className="space-y-2">
               <div className="flex items-center gap-2">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-700">{label}</h2>
-                <span className="text-xs text-gray-500">{buckets[label].length}</span>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-700">
+                  {key === "OTHER" ? "Other" : TREND_STAGE_LABEL[key]}
+                </h2>
+                <span className="text-xs text-gray-500">{buckets[key]!.length}</span>
               </div>
               <div className="space-y-2">
-                {buckets[label].map((t) => (
-                  <TrendCard key={t.notionId} t={t} />
+                {buckets[key]!.map((t) => (
+                  <TrendCard key={t.id} t={t} />
                 ))}
               </div>
             </div>
@@ -155,20 +169,10 @@ export default async function TrendsPage() {
   );
 }
 
-// All Tailwind classes are spelled out as full literals so the JIT picks them
-// up. Keep them in sync if you add new column counts.
 function stageGridClass(count: number): string {
-  switch (count) {
-    case 2:
-      return "grid-cols-1 sm:grid-cols-2";
-    case 3:
-      return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
-    case 4:
-      return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4";
-    case 5:
-      return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
-    case 6:
-    default:
-      return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6";
-  }
+  if (count === 2) return "grid-cols-1 sm:grid-cols-2";
+  if (count === 3) return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
+  if (count === 4) return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4";
+  if (count === 5) return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
+  return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6";
 }

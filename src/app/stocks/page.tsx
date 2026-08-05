@@ -14,25 +14,33 @@ import {
   pnl,
   positionPnl,
 } from "@/lib/stocks/format";
-import { computePortfolioTotals } from "@/lib/stocks/portfolioTotals";
+import { computePortfolioTotals, resolvePositionShares } from "@/lib/stocks/portfolioTotals";
 import {
   assignPortfolioValueColors,
   CASH_DONUT_COLOR,
   getPortfolioHoldingColor,
   PORTFOLIO_TICKER_PALETTE,
 } from "@/lib/stocks/chartColors";
+import { TradeStatus, type RiskLevel, type Theme } from "@/generated/prisma/client";
+import {
+  positionActionLabel,
+  RISK_LEVEL_COLOR,
+  RISK_LEVEL_LABEL,
+  THEME_COLOR,
+  THEME_LABEL,
+} from "@/lib/stocks/labels";
 
 export const revalidate = 900;
 
-const RISK_COLORS: Record<string, string> = {
-  Low: "#10b981",
-  "Low-Medium": "#22c55e",
-  Medium: "#eab308",
-  "Medium-High": "#f97316",
-  High: "#ef4444",
-  "Very High": "#b91c1c",
-  Unknown: "#9ca3af",
-};
+const RISK_ORDER: RiskLevel[] = [
+  "LOW",
+  "LOW_MEDIUM",
+  "MEDIUM",
+  "MEDIUM_HIGH",
+  "HIGH",
+  "VERY_HIGH",
+];
+
 
 export default async function StocksOverview() {
   const [portfolio, watchlist, trades, status, snapshotHistory] = await Promise.all([
@@ -55,9 +63,9 @@ export default async function StocksOverview() {
 
   type Row = {
     ticker: string;
-    action: string | null;
-    riskLevel: string | null;
-    sectorTag: string | null;
+    action: (typeof portfolio)[number]["action"];
+    riskLevel: (typeof portfolio)[number]["riskLevel"];
+    theme: Theme | null;
     shares: number | null;
     pnlDollar: number | null;
     pnlPct: number | null;
@@ -71,7 +79,7 @@ export default async function StocksOverview() {
         ticker: p.ticker,
         action: p.action,
         riskLevel: p.riskLevel,
-        sectorTag: p.sectorTag,
+        theme: p.theme,
         shares: null,
         pnlDollar: null,
         pnlPct: null,
@@ -80,14 +88,14 @@ export default async function StocksOverview() {
     }
     const cur = decToNum(p.currentPrice);
     const cost = decToNum(p.myAvgCost);
-    const shares = holdings.get(p.ticker) ?? holdings.get(p.ticker.trim().toUpperCase()) ?? null;
+    const shares = resolvePositionShares(p, holdings);
     const r = positionPnl(cur, cost, shares);
     const per = pnl(cur, cost);
     return {
       ticker: p.ticker,
       action: p.action,
       riskLevel: p.riskLevel,
-      sectorTag: p.sectorTag,
+      theme: p.theme,
       shares,
       pnlDollar: r.dollar,
       pnlPct: per.pct,
@@ -100,7 +108,7 @@ export default async function StocksOverview() {
     .sort((a, b) => Math.abs(b.pnlPct ?? 0) - Math.abs(a.pnlPct ?? 0))
     .slice(0, 5);
 
-  const openTrades = trades.filter((t) => t.status?.includes("Open")).length;
+  const openTrades = trades.filter((t) => t.status === TradeStatus.OPEN).length;
 
   type ValueSlice = {
     label: string;
@@ -142,40 +150,63 @@ export default async function StocksOverview() {
     if (isCashTicker(r.ticker)) {
       riskTotals.set("Cash", (riskTotals.get("Cash") ?? 0) + r.marketValue);
     } else {
-      const key = r.riskLevel ?? "Unknown";
+      const key = r.riskLevel ? RISK_LEVEL_LABEL[r.riskLevel] : "Unknown";
       riskTotals.set(key, (riskTotals.get(key) ?? 0) + r.marketValue);
     }
   }
-  const RISK_ORDER = ["Low", "Low-Medium", "Medium", "Medium-High", "High", "Very High", "Unknown"];
   function riskSliceOrder(label: string): number {
-    if (label === "Cash") return RISK_ORDER.length + 1;
-    const i = RISK_ORDER.indexOf(label);
-    return i === -1 ? RISK_ORDER.length : i;
+    if (label === "Cash") return RISK_ORDER.length + 2;
+    if (label === "Unknown") return RISK_ORDER.length;
+    const level = RISK_ORDER.find((r) => RISK_LEVEL_LABEL[r] === label);
+    if (!level) return RISK_ORDER.length + 1;
+    return RISK_ORDER.indexOf(level);
   }
   const riskSegments: DonutSegment[] = Array.from(riskTotals.entries())
     .sort((a, b) => riskSliceOrder(a[0]) - riskSliceOrder(b[0]))
-    .map(([label, value]) => ({
-      label,
-      value,
-      color: label === "Cash" ? CASH_DONUT_COLOR : (RISK_COLORS[label] ?? "#9ca3af"),
-    }));
+    .map(([label, value]) => {
+      const level = RISK_ORDER.find((r) => RISK_LEVEL_LABEL[r] === label);
+      return {
+        label,
+        value,
+        color:
+          label === "Cash"
+            ? CASH_DONUT_COLOR
+            : level
+              ? RISK_LEVEL_COLOR[level]
+              : "#9ca3af",
+      };
+    });
 
   const sectorTotals = new Map<string, number>();
+  const sectorThemeByLabel = new Map<string, Theme | null>();
   for (const r of rows) {
     if (r.marketValue === null || r.marketValue <= 0) continue;
     const label = isCashTicker(r.ticker)
       ? "Cash"
-      : (r.sectorTag?.trim() || "Unspecified");
+      : r.theme
+        ? THEME_LABEL[r.theme]
+        : "Unspecified";
     sectorTotals.set(label, (sectorTotals.get(label) ?? 0) + r.marketValue);
+    if (!sectorThemeByLabel.has(label)) {
+      sectorThemeByLabel.set(label, isCashTicker(r.ticker) ? null : r.theme);
+    }
   }
   let sectorPaletteIdx = 0;
   const sectorSegments: DonutSegment[] = Array.from(sectorTotals.entries())
     .sort((a, b) => b[1] - a[1])
-    .map(([label, value]) => ({
-      label,
-      value,
-      color: label === "Cash" ? CASH_DONUT_COLOR : PORTFOLIO_TICKER_PALETTE[sectorPaletteIdx++ % PORTFOLIO_TICKER_PALETTE.length],
-    }));
+    .map(([label, value]) => {
+      const theme = sectorThemeByLabel.get(label);
+      return {
+        label,
+        value,
+        color:
+          label === "Cash"
+            ? CASH_DONUT_COLOR
+            : theme
+              ? THEME_COLOR[theme]
+              : PORTFOLIO_TICKER_PALETTE[sectorPaletteIdx++ % PORTFOLIO_TICKER_PALETTE.length],
+      };
+    });
 
   return (
     <div className="space-y-6">
@@ -269,8 +300,8 @@ export default async function StocksOverview() {
 
       <section className="card p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-medium">Allocation by sector</h2>
-          <span className="text-xs text-gray-500">Sector tag · % of total</span>
+          <h2 className="font-medium">Allocation by theme</h2>
+          <span className="text-xs text-gray-500">Theme · % of total</span>
         </div>
         <DonutChart
           segments={sectorSegments}
@@ -308,7 +339,9 @@ export default async function StocksOverview() {
                   <td className="px-5 py-3 font-medium">{m.ticker}</td>
                   <td className="px-5 py-3">
                     {m.action ? (
-                      <span className="badge bg-gray-100 text-gray-700">{m.action}</span>
+                      <span className="badge bg-gray-100 text-gray-700">
+                        {positionActionLabel(m.action)}
+                      </span>
                     ) : (
                       <span className="text-gray-400">—</span>
                     )}

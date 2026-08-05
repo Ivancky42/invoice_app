@@ -1,18 +1,23 @@
 import { getSyncStatus, getTrades } from "@/lib/stocks/db";
 import type { TradeRow } from "@/lib/stocks/db";
+import { TradeStatus } from "@/generated/prisma/client";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
-import { decToNum, fmtMoney, fmtNum, fmtPct } from "@/lib/stocks/format";
+import { asReportBlocks, blocksToPlainText, hasReportBlocks } from "@/lib/content/blocks";
+import {
+  decToNum,
+  fmtMoney,
+  fmtNum,
+  fmtPct,
+  tradeTypeBadgeClass,
+} from "@/lib/stocks/format";
+import { tradeStatusLabel, tradeTypeLabel } from "@/lib/stocks/labels";
 
 export const revalidate = 900;
 
-function tradeBadge(type: string | null) {
-  if (!type) return "bg-gray-100 text-gray-600";
-  if (type.includes("BUY")) return "bg-emerald-100 text-emerald-800";
-  if (type.includes("SELL")) return "bg-red-100 text-red-700";
-  if (type.includes("ADD")) return "bg-emerald-50 text-emerald-700";
-  if (type.includes("TRIM")) return "bg-amber-100 text-amber-800";
-  if (type.includes("STOP")) return "bg-red-50 text-red-700";
-  return "bg-gray-100 text-gray-700";
+function notesPreview(notes: TradeRow["notes"]): string {
+  if (!hasReportBlocks(notes)) return "—";
+  const plain = blocksToPlainText(asReportBlocks(notes));
+  return plain || "—";
 }
 
 function TradeTable({ rows }: { rows: TradeRow[] }) {
@@ -37,14 +42,16 @@ function TradeTable({ rows }: { rows: TradeRow[] }) {
             const pnlD = decToNum(t.pnlDollar);
             const pnlP = decToNum(t.pnlPct);
             return (
-              <tr key={t.notionId} className="hover:bg-gray-50">
+              <tr key={t.id} className="hover:bg-gray-50">
                 <td className="px-4 py-3 whitespace-nowrap">
                   {t.date ? t.date.toISOString().slice(0, 10) : "—"}
                 </td>
                 <td className="px-4 py-3 font-medium">{t.ticker ?? "—"}</td>
                 <td className="px-4 py-3">
                   {t.type ? (
-                    <span className={`badge ${tradeBadge(t.type)}`}>{t.type}</span>
+                    <span className={`badge ${tradeTypeBadgeClass(t.type)}`}>
+                      {tradeTypeLabel(t.type)}
+                    </span>
                   ) : (
                     "—"
                   )}
@@ -64,9 +71,9 @@ function TradeTable({ rows }: { rows: TradeRow[] }) {
                     <span className="text-gray-400">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3">{t.status ?? "—"}</td>
-                <td className="px-4 py-3 text-xs text-gray-600 max-w-[20rem] truncate" title={t.notes ?? undefined}>
-                  {t.notes ?? "—"}
+                <td className="px-4 py-3">{tradeStatusLabel(t.status)}</td>
+                <td className="px-4 py-3 text-xs text-gray-600 max-w-[20rem] truncate" title={notesPreview(t.notes)}>
+                  {notesPreview(t.notes)}
                 </td>
               </tr>
             );
@@ -79,8 +86,10 @@ function TradeTable({ rows }: { rows: TradeRow[] }) {
 
 export default async function TradesPage() {
   const [rows, status] = await Promise.all([getTrades(), getSyncStatus()]);
-  const open = rows.filter((t) => t.status?.includes("Open") || t.status?.includes("Partial"));
-  const closed = rows.filter((t) => t.status?.includes("Closed"));
+  const open = rows.filter(
+    (t) => t.status === TradeStatus.OPEN || t.status === TradeStatus.PARTIAL,
+  );
+  const closed = rows.filter((t) => t.status === TradeStatus.CLOSED);
   const other = rows.filter((t) => !open.includes(t) && !closed.includes(t));
 
   let realized = 0;
