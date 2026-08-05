@@ -1,6 +1,10 @@
-import { createMcpHandler } from "mcp-handler";
-import { requireAgentToken } from "@/lib/agent/auth";
+import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { registerAgentMcpTools } from "@/lib/agent/mcp-tools";
+import {
+  getAppOrigin,
+  mcpResourceUrl,
+  verifyMcpBearer,
+} from "@/lib/agent/mcp-oauth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -12,7 +16,7 @@ const mcpHandler = createMcpHandler(
   {
     serverInfo: {
       name: "stock-hq",
-      version: "0.4.3",
+      version: "0.5.0",
     },
   },
   {
@@ -22,10 +26,24 @@ const mcpHandler = createMcpHandler(
   },
 );
 
+/**
+ * OAuth JWT (Claude Custom Connector) or legacy Bearer AGENT_TOKEN (Desktop mcp-remote).
+ * resourceUrl is computed per request so WWW-Authenticate points at the public host.
+ */
 async function handle(req: Request): Promise<Response> {
-  const unauthorized = requireAgentToken(req);
-  if (unauthorized) return unauthorized;
-  return mcpHandler(req);
+  const origin = getAppOrigin(req);
+  const resource = mcpResourceUrl(origin);
+  const authHandler = withMcpAuth(
+    mcpHandler,
+    async (_req, bearerToken) => verifyMcpBearer(bearerToken, resource),
+    {
+      required: true,
+      resourceMetadataPath: "/.well-known/oauth-protected-resource",
+      requiredScopes: ["mcp:tools"],
+      resourceUrl: resource,
+    },
+  );
+  return authHandler(req);
 }
 
 export { handle as GET, handle as POST, handle as DELETE };

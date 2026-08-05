@@ -86,24 +86,57 @@ Phase **4c** exposes a Streamable HTTP MCP endpoint at:
 
 **`/api/mcp/mcp`** (route: `src/app/api/mcp/[transport]/route.ts`, transport = `mcp`)
 
-Auth: `Authorization: Bearer $AGENT_TOKEN` (same as `/api/agent/*`). Site PIN gate is bypassed for `/api/mcp`.
+Auth:
 
-**Client config:**
+| Client | How |
+|--------|-----|
+| **Claude Custom Connector / Cowork (cloud)** | OAuth 2.1 on this app — DCR + consent with `AGENT_TOKEN` |
+| **Desktop `mcp-remote` / curl / REST** | `Authorization: Bearer $AGENT_TOKEN` (unchanged) |
+
+Site PIN gate is bypassed for `/api/mcp`, `/api/oauth`, and `/.well-known/*`.
+
+#### Claude Custom Connector (Cowork schedules)
+
+1. Claude → **Settings → Connectors → Add custom connector**
+2. **Name:** `Stock HQ`
+3. **Remote MCP server URL:** `https://<your-app>.vercel.app/api/mcp/mcp`
+4. **Advanced:** leave OAuth Client ID and Client Secret **empty** (Dynamic Client Registration)
+5. **Add** → **Connect** → browser opens Stock HQ consent → paste `AGENT_TOKEN` → **Approve**
+6. Confirm tools appear; attach the connector to Cowork routines
+
+OAuth endpoints (self-hosted on the same app):
+
+- `GET /.well-known/oauth-authorization-server`
+- `GET /.well-known/oauth-protected-resource` (+ path variant under `/api/mcp/mcp`)
+- `POST /api/oauth/register`
+- `GET|POST /api/oauth/authorize` (consent; redirects with **302**)
+- `POST /api/oauth/token`
+
+Set `APP_URL` to the public origin (e.g. `https://invoice-app-beige-six.vercel.app`) so metadata URLs are correct.
+
+#### Desktop / local stdio bridge
 
 ```json
 {
   "mcpServers": {
     "stock-hq": {
-      "url": "https://<your-app>.vercel.app/api/mcp/mcp",
-      "headers": {
-        "Authorization": "Bearer ${AGENT_TOKEN}"
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://<your-app>.vercel.app/api/mcp/mcp",
+        "--header",
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <AGENT_TOKEN>"
       }
     }
   }
 }
 ```
 
-Or, if the client only supports stdio bridges, use a small local proxy that forwards to that URL with the Bearer header.
+Local Desktop config does **not** reach Cowork cloud schedules — use the Custom Connector for routines.
 
 **Verify tools appear:**
 
