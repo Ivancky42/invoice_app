@@ -20,6 +20,12 @@ Baseline rules for all Cowork routines (daily / weekly / earnings / monthly).
 - Never fabricate a price. Prices come from the price sync only.
 - Stamp `rulesVersion` from context onto every write so runs are attributable to the git SHA of `/prompts`.
 
+## Hard limits agents must not touch
+
+- **Never call `patch_config`.** It can rewrite `LIMITS` and thresholds the routines are evaluated against. Config changes are Ivan-only.
+- **Ideas `currentPrice` is unreliable** unless `priceReliable: true` (requires `leadTicker`). Do not quote idea prices in analysis or logs when unreliable — use portfolio/watchlist marks or omit.
+- **Stale earnings guard:** if `earningsStale: true` or `earningsDate` is in the past, treat earnings as **unknown**. Do not act on `daysToEarnings` / imminent signals — re-confirm the next date before sizing or exits.
+
 ## Escalation
 
 - Soft limit warnings (`warnings[]` on 200) are informational; hard caps are 409.

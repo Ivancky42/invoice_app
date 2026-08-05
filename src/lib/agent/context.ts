@@ -14,7 +14,10 @@ import {
 } from "@/lib/stocks/db";
 import {
   computePortfolioTotals,
+  exCspxNavFromTotals,
+  positionWeightPctExCspx,
   resolvePositionShares,
+  snapshotDateGMT8,
 } from "@/lib/stocks/portfolioTotals";
 import {
   decToNum,
@@ -22,8 +25,13 @@ import {
   isCashTicker,
 } from "@/lib/stocks/format";
 import { listStockEnums } from "@/lib/agent/enums";
+import {
+  earningsRiskFromDays,
+  type DerivedEarningsRisk,
+} from "@/lib/stocks/derived";
 import type { Portfolio, Watchlist, Trade, Trend, Idea } from "@/generated/prisma/client";
 import type { Decimal } from "@/generated/prisma/internal/prismaNamespace";
+import type { EarningsRiskThresholds } from "@/lib/stocks/derived";
 
 export const AGENT_ROUTINES = ["daily", "weekly", "earnings", "monthly"] as const;
 export type AgentRoutine = (typeof AGENT_ROUTINES)[number];
@@ -61,11 +69,52 @@ function jsonText(value: unknown): unknown {
   return value ?? null;
 }
 
+function earningsFields(
+  earningsDate: Date | null | undefined,
+  storedDays: number | null | undefined,
+  thresholds: EarningsRiskThresholds,
+): {
+  earningsDate: string | null;
+  daysToEarnings: number | null;
+  earningsRisk: DerivedEarningsRisk | null;
+  earningsStale: boolean;
+} {
+  const isoDate = iso(earningsDate);
+  if (!earningsDate) {
+    return {
+      earningsDate: null,
+      daysToEarnings: null,
+      earningsRisk: null,
+      earningsStale: false,
+    };
+  }
+  const today = snapshotDateGMT8();
+  const earnDay = snapshotDateGMT8(earningsDate);
+  const days = Math.round((earnDay.getTime() - today.getTime()) / 86_400_000);
+  if (days < 0) {
+    return {
+      earningsDate: isoDate,
+      daysToEarnings: null,
+      earningsRisk: null,
+      earningsStale: true,
+    };
+  }
+  const daysToEarnings = storedDays ?? days;
+  return {
+    earningsDate: isoDate,
+    daysToEarnings,
+    earningsRisk: earningsRiskFromDays(daysToEarnings, thresholds),
+    earningsStale: false,
+  };
+}
+
 export type SyncRunSummary = {
   source: string;
   lastRunAt: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
+  /** Present on notion when Phase 5 freeze is active — lastSuccessAt is historical only. */
+  frozen?: boolean;
 };
 
 async function lastRunSummary(): Promise<{
@@ -86,9 +135,27 @@ async function lastRunSummary(): Promise<{
       lastError: row.lastError,
     };
   };
+  const notionFrozen = process.env.NOTION_SYNC_ENABLED !== "true";
+  const notion = map("notion");
   return {
     prices: map("prices"),
-    notion: map("notion"),
+    notion: notion
+      ? {
+          ...notion,
+          frozen: notionFrozen,
+          lastError: notionFrozen
+            ? "notion sync frozen — lastSuccessAt is historical; cron removed"
+            : notion.lastError,
+        }
+      : notionFrozen
+        ? {
+            source: "notion",
+            lastRunAt: null,
+            lastSuccessAt: null,
+            lastError: "notion sync frozen — cron removed",
+            frozen: true,
+          }
+        : null,
   };
 }
 
@@ -130,7 +197,13 @@ export function serializePortfolioRow(
   };
 }
 
-export function serializeWatchlistRow(w: Watchlist) {
+export function serializeWatchlistRow(
+  w: Watchlist,
+  opts?: { earningsRiskThresholds?: EarningsRiskThresholds },
+) {
+  const earn = opts?.earningsRiskThresholds
+    ? earningsFields(w.earningsDate, w.daysToEarnings, opts.earningsRiskThresholds)
+    : null;
   return {
     id: w.id,
     ticker: w.ticker,
@@ -145,9 +218,12 @@ export function serializeWatchlistRow(w: Watchlist) {
     analystRating: w.analystRating,
     socialScore: w.socialScore,
     socialPlatformBuzz: w.socialPlatformBuzz,
-    earningsDate: iso(w.earningsDate),
-    daysToEarnings: w.daysToEarnings,
-    earningsRisk: w.earningsRisk,
+    earningsDate: earn ? earn.earningsDate : iso(w.earningsDate),
+    daysToEarnings: earn ? earn.daysToEarnings : w.daysToEarnings,
+    earningsRisk: earn ? earn.earningsRisk : null,
+    earningsStale: earn ? earn.earningsStale : false,
+    /** Legacy Notion emoji string — prefer earningsRisk (derived). */
+    earningsRiskRaw: w.earningsRisk,
     entryZone: w.entryZone,
     stopLoss: num(w.stopLoss),
     keyCatalyst: w.keyCatalyst,
@@ -215,13 +291,16 @@ export function serializeTrendRow(t: Trend, detail = true) {
 }
 
 export function serializeIdeaRow(i: Idea) {
+  const priceReliable = Boolean(i.leadTicker?.trim());
   return {
     id: i.id,
     stockSector: i.stockSector,
     leadTicker: i.leadTicker,
     company: i.company,
     theme: i.theme,
-    currentPrice: num(i.currentPrice),
+    // Only trust currentPrice when leadTicker is set (sector rows often had junk quotes).
+    currentPrice: priceReliable ? num(i.currentPrice) : null,
+    priceReliable,
     analystTarget: num(i.analystTarget),
     upsidePct: num(i.upsidePct),
     riskLevel: i.riskLevel,
@@ -244,7 +323,7 @@ export async function listPortfolioPositions() {
   const [portfolio, trades] = await Promise.all([getPortfolio(), getTrades()]);
   const holdings = holdingsByTicker(trades);
   const totals = computePortfolioTotals(portfolio, trades);
-  const nav = totals.totalValue;
+  const exCspxNav = exCspxNavFromTotals(totals);
 
   return portfolio
     .filter((p) => !isCashTicker(p.ticker))
@@ -253,8 +332,7 @@ export async function listPortfolioPositions() {
       const cur = decToNum(p.currentPrice);
       const marketValue =
         shares !== null && cur !== null ? shares * cur : null;
-      const weightPct =
-        marketValue !== null && nav > 0 ? (marketValue / nav) * 100 : null;
+      const weightPct = positionWeightPctExCspx(marketValue, p.ticker, exCspxNav);
       return serializePortfolioRow(p, {
         sharesOverride: shares,
         weightPct,
@@ -264,8 +342,13 @@ export async function listPortfolioPositions() {
 }
 
 export async function listWatchlistItems() {
-  const rows = await getWatchlist();
-  return rows.map(serializeWatchlistRow);
+  const [rows, thresholds] = await Promise.all([
+    getWatchlist(),
+    getAgentRuntimeConfig().then((c) => c.earningsRiskThresholds),
+  ]);
+  return rows.map((w) =>
+    serializeWatchlistRow(w, { earningsRiskThresholds: thresholds }),
+  );
 }
 
 export async function listTradeItems() {
@@ -327,7 +410,7 @@ export async function buildAgentContext(routine: AgentRoutine) {
 
   const holdings = holdingsByTicker(trades);
   const totals = computePortfolioTotals(portfolio, trades);
-  const nav = totals.totalValue;
+  const exCspxNav = exCspxNavFromTotals(totals);
 
   const positions = portfolio
     .filter((p) => !isCashTicker(p.ticker))
@@ -336,8 +419,12 @@ export async function buildAgentContext(routine: AgentRoutine) {
       const cur = decToNum(p.currentPrice);
       const marketValue =
         shares !== null && cur !== null ? shares * cur : null;
-      const weightPct =
-        marketValue !== null && nav > 0 ? (marketValue / nav) * 100 : null;
+      const weightPct = positionWeightPctExCspx(marketValue, p.ticker, exCspxNav);
+      const earn = earningsFields(
+        p.earningsDate,
+        p.daysToEarnings,
+        earningsRiskThresholds,
+      );
       return {
         ticker: p.ticker,
         company: p.company,
@@ -350,9 +437,11 @@ export async function buildAgentContext(routine: AgentRoutine) {
         sleeve: p.sleeve,
         stopLoss: decToNum(p.stopLoss),
         theme: p.theme,
-        averageDownsUsed: p.addsUsed,
-        earningsDate: iso(p.earningsDate),
-        daysToEarnings: p.daysToEarnings,
+        averageDownsUsed: p.addsUsed ?? 0,
+        earningsDate: earn.earningsDate,
+        daysToEarnings: earn.daysToEarnings,
+        earningsRisk: earn.earningsRisk,
+        earningsStale: earn.earningsStale,
         riskLevel: p.riskLevel,
         conviction: p.conviction,
         entryZone: p.entryZone,
@@ -370,11 +459,14 @@ export async function buildAgentContext(routine: AgentRoutine) {
       totalValue: totals.totalValue,
       equitiesValue: totals.equitiesValue,
       cashValue: totals.cashValue,
+      exCspxNav,
       unrealizedPnl: totals.unrealizedPnl,
       hasPnl: totals.hasPnl,
     },
     positions,
-    watchlist: watchlist.map(serializeWatchlistRow),
+    watchlist: watchlist.map((w) =>
+      serializeWatchlistRow(w, { earningsRiskThresholds }),
+    ),
     trends: trends.map((t) => serializeTrendRow(t, trendDetail)),
     ideas: ideas.map(serializeIdeaRow),
     limits,

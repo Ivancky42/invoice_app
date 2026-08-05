@@ -111,13 +111,14 @@ async function main() {
   const ideas = await prisma.idea.findMany();
   for (const row of ideas) {
     const raw = row.themeRaw;
-    const theme = normalizeTheme(raw);
-    if (raw && !theme) {
-      noteUnmatched(
-        unmatched,
-        isDumpingGround(raw) ? "Idea.themeRaw (dumping-ground → null)" : "Idea.themeRaw",
-        raw,
-      );
+    const theme =
+      normalizeTheme(raw) ??
+      normalizeTheme(row.stockSector) ??
+      null;
+    if (raw && !normalizeTheme(raw) && !isDumpingGround(raw) && !theme) {
+      noteUnmatched(unmatched, "Idea.themeRaw", raw);
+    } else if (!theme && row.stockSector && !normalizeTheme(row.stockSector)) {
+      noteUnmatched(unmatched, "Idea.stockSector (theme infer)", row.stockSector);
     }
     if (row.theme === theme) continue;
     wouldUpdate++;

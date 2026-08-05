@@ -251,6 +251,13 @@ export const THEME_LABEL: Record<Theme, string> = {
   FINTECH_PAYMENTS: "FinTech / Payments",
   DEFENSE_DRONES: "Defense / Drones",
   MEME_SPECIAL_SIT: "Meme / Special Sit",
+  BIOTECH_GLP1: "Biotech / GLP-1",
+  ENERGY_COMMODITIES: "Energy / Commodities",
+  MARITIME_SHIPBUILDING: "Maritime / Shipbuilding",
+  QUANTUM: "Quantum",
+  PREDICTION_MARKETS: "Prediction Markets",
+  MACRO: "Macro",
+  CRITICAL_MINERALS: "Critical Minerals",
 };
 
 export const THEME_CLASS: Record<Theme, string> = {
@@ -264,6 +271,13 @@ export const THEME_CLASS: Record<Theme, string> = {
   FINTECH_PAYMENTS: "bg-emerald-50 text-emerald-800",
   DEFENSE_DRONES: "bg-stone-100 text-stone-800",
   MEME_SPECIAL_SIT: "bg-fuchsia-50 text-fuchsia-800",
+  BIOTECH_GLP1: "bg-rose-50 text-rose-800",
+  ENERGY_COMMODITIES: "bg-lime-50 text-lime-800",
+  MARITIME_SHIPBUILDING: "bg-cyan-50 text-cyan-800",
+  QUANTUM: "bg-blue-50 text-blue-800",
+  PREDICTION_MARKETS: "bg-yellow-50 text-yellow-800",
+  MACRO: "bg-slate-100 text-slate-800",
+  CRITICAL_MINERALS: "bg-zinc-100 text-zinc-800",
 };
 
 /** Donut / chart hex colours keyed by Theme. */
@@ -278,6 +292,13 @@ export const THEME_COLOR: Record<Theme, string> = {
   FINTECH_PAYMENTS: "#059669",
   DEFENSE_DRONES: "#57534e",
   MEME_SPECIAL_SIT: "#c026d3",
+  BIOTECH_GLP1: "#e11d48",
+  ENERGY_COMMODITIES: "#65a30d",
+  MARITIME_SHIPBUILDING: "#0891b2",
+  QUANTUM: "#2563eb",
+  PREDICTION_MARKETS: "#ca8a04",
+  MACRO: "#475569",
+  CRITICAL_MINERALS: "#71717a",
 };
 
 export const DERIVED_SENTIMENT_LABEL: Record<DerivedSentiment, string> = {

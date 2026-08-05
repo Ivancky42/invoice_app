@@ -223,6 +223,52 @@ export const THEME_ALIASES: Record<string, Theme> = {
   "healthcare / insurance / managed care": "HEALTHCARE",
   "humanoid robotics / physical ai": "HUMANOID_ROBOTS",
   "nuclear / power / energy": "NUCLEAR_POWER",
+  "nuclear / power / energy fuel supply chain": "NUCLEAR_POWER",
+  "ai infrastructure / cybersecurity software": "AI_INFRASTRUCTURE",
+  "ai infrastructure / semiconductors custom asic switching optical interconnect":
+    "AI_INFRASTRUCTURE",
+  "ai infrastructure / semiconductors storage layer": "AI_INFRASTRUCTURE",
+  "ai infrastructure / semiconductors memory layer": "AI_INFRASTRUCTURE",
+  "fintech / payments / digital assets": "FINTECH_PAYMENTS",
+  "fintech / brokerage / regulated event contracts": "PREDICTION_MARKETS",
+  // --- option A: new Theme values ---
+  "biotech / glp-1": "BIOTECH_GLP1",
+  "biotech/glp-1": "BIOTECH_GLP1",
+  biotech: "BIOTECH_GLP1",
+  "glp-1": "BIOTECH_GLP1",
+  glp1: "BIOTECH_GLP1",
+  "biotech / pharma / cardiometabolic": "BIOTECH_GLP1",
+  "biotech / cns / psychedelics": "BIOTECH_GLP1",
+  psychedelics: "BIOTECH_GLP1",
+  "energy / commodities": "ENERGY_COMMODITIES",
+  "energy/commodities": "ENERGY_COMMODITIES",
+  energy: "ENERGY_COMMODITIES",
+  commodities: "ENERGY_COMMODITIES",
+  "energy / power infrastructure grid equipment transmission electrification":
+    "ENERGY_COMMODITIES",
+  "grid equipment": "ENERGY_COMMODITIES",
+  electrification: "ENERGY_COMMODITIES",
+  "maritime / shipbuilding": "MARITIME_SHIPBUILDING",
+  "maritime/shipbuilding": "MARITIME_SHIPBUILDING",
+  maritime: "MARITIME_SHIPBUILDING",
+  shipbuilding: "MARITIME_SHIPBUILDING",
+  "defense / maritime industrial base": "MARITIME_SHIPBUILDING",
+  "us naval / maritime shipbuilding revival ships act": "MARITIME_SHIPBUILDING",
+  quantum: "QUANTUM",
+  "quantum computing": "QUANTUM",
+  "quantum computing / deep tech": "QUANTUM",
+  "prediction markets": "PREDICTION_MARKETS",
+  "event contracts": "PREDICTION_MARKETS",
+  "prediction markets / event-contract trading": "PREDICTION_MARKETS",
+  macro: "MACRO",
+  "macro / trade policy": "MACRO",
+  "macro / trade policy / auto / consumer electronics": "MACRO",
+  "value/defensive sector rotation": "MACRO",
+  "critical minerals": "CRITICAL_MINERALS",
+  "rare earths": "CRITICAL_MINERALS",
+  "critical minerals / defense supply chain": "CRITICAL_MINERALS",
+  "critical minerals / energy commodities": "CRITICAL_MINERALS",
+  "mp / rexc rare earths ex-china supply chain": "CRITICAL_MINERALS",
 };
 
 export function normalizePositionAction(raw: string | null | undefined): PositionAction | null {
@@ -282,5 +328,43 @@ export function normalizeIdeaStage(raw: string | null | undefined): IdeaStage | 
 }
 
 export function normalizeTheme(raw: string | null | undefined): Theme | null {
-  return lookup(THEME_ALIASES, raw);
+  const direct = lookup(THEME_ALIASES, raw);
+  if (direct) return direct;
+
+  // Keyword fallback for long Idea/Trend titles that never matched an exact alias.
+  const key = normalizeKey(raw);
+  if (!key) return null;
+  if (/\bnuclear\b|\bhaleu\b|\benrichment\b/.test(key)) return "NUCLEAR_POWER";
+  if (/\bquantum\b/.test(key)) return "QUANTUM";
+  if (/\bmaritime\b|\bshipbuilding\b|\bnaval\b|\bships act\b/.test(key)) {
+    return "MARITIME_SHIPBUILDING";
+  }
+  if (/\bprediction market|\bevent.?contract\b/.test(key)) return "PREDICTION_MARKETS";
+  if (/\brare earth|\bcritical mineral|\bantimony|\btungsten|\bmetallization\b|\brealloys\b/.test(key)) {
+    return "CRITICAL_MINERALS";
+  }
+  if (/\bpsychedelic|\bglp-?\s*1\b|\bbiotech|\bcardiometabolic|\bpcsk9\b/.test(key)) {
+    return "BIOTECH_GLP1";
+  }
+  if (
+    !/\bnuclear\b/.test(key) &&
+    /\bgrid equipment|\belectrification|\bcommodit|\benergy \/ power infrastructure|\benergy \/ commodities\b/.test(
+      key,
+    )
+  ) {
+    return "ENERGY_COMMODITIES";
+  }
+  if (/\bmacro\b|\bsector rotation\b|\btrade policy\b/.test(key)) return "MACRO";
+  if (/\bhumanoid\b/.test(key)) return "HUMANOID_ROBOTS";
+  if (/\bspacex\b|\bsatellite\b|\bcommercial launch\b/.test(key)) return "SPACE";
+  if (/\bdron\b|\bdefense\b|\blaser air defense\b/.test(key)) return "DEFENSE_DRONES";
+  if (/\bstablecoin\b|\bfintech\b|\bbrokerage\b/.test(key)) return "FINTECH_PAYMENTS";
+  if (/\bcrypto\b|\bdigital asset\b/.test(key)) return "CRYPTO";
+  if (/\bai infrastructure\b|\bsemiconductor\b|\bneocloud\b|\bcybersecurity\b|\binterconnect\b|\bmass storage\b|\bcustom silicon\b|\binp optical\b|\bhbm\b|\bd ram\b|\bai memory\b/.test(key)) {
+    return "AI_INFRASTRUCTURE";
+  }
+  if (/\bhealthcare\b|\bmanaged care\b/.test(key)) return "HEALTHCARE";
+  if (/\btrump accounts\b|\bretail-account\b/.test(key)) return "FINTECH_PAYMENTS";
+  // Lone tickers with no sector prose — leave null (agent sets theme on write).
+  return null;
 }

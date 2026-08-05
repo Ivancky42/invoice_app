@@ -46,36 +46,71 @@ function stockSymbol(raw: string | null | undefined): string | null {
   return u;
 }
 
+const IDEA_TICKER_STOPWORDS = new Set([
+  "AI",
+  "ETF",
+  "USA",
+  "USD",
+  "IPO",
+  "CEO",
+  "THE",
+  "AND",
+  "FOR",
+  "POST",
+  "PURE",
+  "TECH",
+  "GRID",
+  "GOVT",
+  "WAVE",
+  "ACT",
+  "TIER",
+  "CNS",
+  "HBM",
+  "DRAM",
+  "HDD",
+  "TAM",
+]);
+
+function looksLikeEquityTicker(raw: string | null | undefined): string | null {
+  const sym = stockSymbol(raw);
+  if (!sym) return null;
+  // Prefer real symbols: 1–5 letters (optional class suffix), not English fillers.
+  if (!/^[A-Z]{1,5}(?:\.[A-Z]+)?$/.test(sym)) return null;
+  if (IDEA_TICKER_STOPWORDS.has(sym)) return null;
+  return sym;
+}
+
 /**
- * Ideas `stockSector` is often "Stock / Sector" — try RHS of slash, compact
- * full token, and ALLCAPS ticker fragments (same heuristics as the old Notion push).
+ * Prefer an explicit leadTicker; otherwise only accept stockSector when it is
+ * clearly a single ticker (exact symbol, "TICKER — …", or first paren ticker).
+ * Never scrape random ALLCAPS words from prose sector titles.
  */
-function ideaSymbolCandidates(raw: string | null | undefined): string[] {
-  const s = raw?.trim();
-  if (!s) return [];
-  const upper = s.toUpperCase();
-  const candidates: string[] = [];
-  const slashParts = s.split("/").map((x) => x.trim());
-  const rhs = slashParts[slashParts.length - 1];
-  if (rhs) {
-    const fromRhs = rhs.replace(/\([^)]*\)/g, "").trim();
-    const compact = fromRhs.replace(/\s+/g, "").toUpperCase();
-    if (/^[A-Z0-9.]{1,12}$/.test(compact) && !isPriceSyncExcludedTicker(compact)) {
-      candidates.push(compact);
-    }
+export function resolveIdeaQuoteSymbol(
+  leadTicker: string | null | undefined,
+  stockSector: string | null | undefined,
+): string | null {
+  const fromLead = looksLikeEquityTicker(leadTicker);
+  if (fromLead) return fromLead;
+
+  const s = stockSector?.trim();
+  if (!s) return null;
+
+  if (/^[A-Za-z][A-Za-z0-9.]{0,11}$/.test(s)) {
+    return looksLikeEquityTicker(s);
   }
-  const compactAll = s.replace(/\s+/g, "");
-  if (
-    /^[A-Z0-9.]{1,12}$/.test(compactAll) &&
-    !isPriceSyncExcludedTicker(compactAll.toUpperCase())
-  ) {
-    candidates.push(compactAll.toUpperCase());
+
+  const head = s.match(/^([A-Za-z]{1,5})\s*[—–\-]/);
+  if (head?.[1]) {
+    const sym = looksLikeEquityTicker(head[1]);
+    if (sym) return sym;
   }
-  for (const m of upper.matchAll(/\b([A-Z]{1,5}(?:\.[A-Z]+)?)\b/g)) {
-    const sym = m[1]!;
-    if (!isPriceSyncExcludedTicker(sym)) candidates.push(sym);
+
+  const paren = s.match(/\(\s*([A-Za-z]{1,5})(?:\s*\/|\s*,|\s*\))/);
+  if (paren?.[1]) {
+    return looksLikeEquityTicker(paren[1]);
   }
-  return [...new Set(candidates)];
+
+  return null;
 }
 
 async function resolveFinnhubPrice(
@@ -140,10 +175,33 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
   }
 
   const [portfolioRows, watchlistRows, ideaRows] = await Promise.all([
-    prisma.portfolio.findMany({ select: { id: true, notionId: true, ticker: true } }),
-    prisma.watchlist.findMany({ select: { id: true, notionId: true, ticker: true } }),
-    prisma.idea.findMany({ select: { id: true, notionId: true, stockSector: true } }),
+    prisma.portfolio.findMany({
+      select: {
+        id: true,
+        notionId: true,
+        ticker: true,
+        earningsDate: true,
+      },
+    }),
+    prisma.watchlist.findMany({
+      select: { id: true, notionId: true, ticker: true, earningsDate: true },
+    }),
+    prisma.idea.findMany({
+      select: { id: true, notionId: true, stockSector: true, leadTicker: true },
+    }),
   ]);
+
+  const todayGmt8 = snapshotDateGMT8();
+
+  function daysToEarningsFrom(date: Date | null | undefined): number | null {
+    if (!date) return null;
+    const earnDay = snapshotDateGMT8(date);
+    const diffMs = earnDay.getTime() - todayGmt8.getTime();
+    const days = Math.round(diffMs / 86_400_000);
+    // Past earnings are unknown until re-confirmed — do not keep stale "imminent".
+    if (days < 0) return null;
+    return days;
+  }
 
   for (const row of portfolioRows) {
     const rawTicker = row.ticker;
@@ -225,7 +283,11 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
     try {
       await prisma.portfolio.update({
         where: { id: row.id },
-        data: { currentPrice: price, lastPriceUpdate: priceUpdateDay },
+        data: {
+          currentPrice: price,
+          lastPriceUpdate: priceUpdateDay,
+          daysToEarnings: daysToEarningsFrom(row.earningsDate),
+        },
       });
       updated += 1;
       details.push({
@@ -331,7 +393,10 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
     try {
       await prisma.watchlist.update({
         where: { id: row.id },
-        data: { currentPrice: price },
+        data: {
+          currentPrice: price,
+          daysToEarnings: daysToEarningsFrom(row.earningsDate),
+        },
       });
       updated += 1;
       details.push({
@@ -358,8 +423,17 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
   }
 
   for (const row of ideaRows) {
-    const candidates = ideaSymbolCandidates(row.stockSector);
-    if (candidates.length === 0) {
+    const symbol = resolveIdeaQuoteSymbol(row.leadTicker, row.stockSector);
+    if (!symbol) {
+      // Clear junk prices left by the old ALLCAPS scraper; leave leadTicker alone if set.
+      try {
+        await prisma.idea.update({
+          where: { id: row.id },
+          data: { currentPrice: null },
+        });
+      } catch {
+        /* ignore */
+      }
       skipped += 1;
       details.push({
         table: "ideas",
@@ -367,19 +441,19 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
         tickerHint: row.stockSector,
         symbolUsed: null,
         ok: true,
-        error: "No quotable symbol after exclusions (skipped)",
+        error: "No reliable leadTicker — price cleared, not quoted",
       });
       continue;
     }
 
-    const resolved = await resolveFinnhubPrice(candidates, apiKey, quoteCache);
+    const resolved = await resolveFinnhubPrice([symbol], apiKey, quoteCache);
     if (resolved.price === null) {
       failed += 1;
       details.push({
         table: "ideas",
         id: row.notionId ?? row.id,
         tickerHint: row.stockSector,
-        symbolUsed: resolved.symbolUsed,
+        symbolUsed: symbol,
         ok: false,
         error: "No Finnhub quote",
       });
@@ -389,14 +463,20 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
     try {
       await prisma.idea.update({
         where: { id: row.id },
-        data: { currentPrice: resolved.price },
+        data: {
+          currentPrice: resolved.price,
+          // Persist inferred lead when missing so future syncs stay deterministic.
+          ...(row.leadTicker?.trim()
+            ? {}
+            : { leadTicker: symbol }),
+        },
       });
       updated += 1;
       details.push({
         table: "ideas",
         id: row.notionId ?? row.id,
         tickerHint: row.stockSector,
-        symbolUsed: resolved.symbolUsed,
+        symbolUsed: symbol,
         ok: true,
         price: resolved.price,
       });
@@ -408,7 +488,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
         table: "ideas",
         id: row.notionId ?? row.id,
         tickerHint: row.stockSector,
-        symbolUsed: resolved.symbolUsed,
+        symbolUsed: symbol,
         ok: false,
         error: msg,
       });

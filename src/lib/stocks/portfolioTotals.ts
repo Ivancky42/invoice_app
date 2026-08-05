@@ -3,6 +3,7 @@ import {
 	decToNum,
 	holdingsByTicker,
 	isCashTicker,
+	isCspxTicker,
 	notionCashBalanceUsd,
 	positionPnl,
 } from "@/lib/stocks/format";
@@ -132,6 +133,31 @@ export function computePortfolioTotals(
 		hasPnl,
 		breakdown,
 	};
+}
+
+/**
+ * Cap denominator matching logTrade single-position checks:
+ * total NAV (cash + equities) minus CSPX market value.
+ */
+export function exCspxNavFromTotals(
+	totals: PortfolioTotals,
+): number {
+	const cspx = totals.breakdown
+		.filter((s) => s.key === "CSPX" || s.key.toUpperCase() === "CSPX")
+		.reduce((sum, s) => sum + s.value, 0);
+	return totals.totalValue - cspx;
+}
+
+/** Position weight % against ex-CSPX NAV (null for CSPX itself or missing mark). */
+export function positionWeightPctExCspx(
+	marketValue: number | null,
+	ticker: string,
+	exCspxNav: number,
+): number | null {
+	if (marketValue === null) return null;
+	if (isCspxTicker(ticker)) return null;
+	if (exCspxNav <= 0) return null;
+	return (marketValue / exCspxNav) * 100;
 }
 
 /** GMT+8 calendar date at UTC noon — stable key for one snapshot per day. */

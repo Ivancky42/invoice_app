@@ -219,6 +219,20 @@ enum Theme {
   FINTECH_PAYMENTS
   DEFENSE_DRONES
   MEME_SPECIAL_SIT
+  /// Biotech / GLP-1 / psychedelics / cardiometabolic
+  BIOTECH_GLP1
+  /// Energy / commodities / grid / electrification (non-nuclear)
+  ENERGY_COMMODITIES
+  /// Naval / maritime / shipbuilding
+  MARITIME_SHIPBUILDING
+  /// Quantum computing / deep tech
+  QUANTUM
+  /// Prediction markets / event contracts
+  PREDICTION_MARKETS
+  /// Macro / trade policy / broad rotation
+  MACRO
+  /// Critical minerals / rare earths / defense metals (ex-China supply)
+  CRITICAL_MINERALS
 }
 
 model Portfolio {
