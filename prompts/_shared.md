@@ -124,6 +124,20 @@ Classify each as exactly one of:
 
 Rules:
 - Stop-loss and take-profit levels are **decision triggers, not automatic commands**.
+- **Breached-stop resolution (non-negotiable for MOMENTUM_CATALYST / SPECULATIVE):**
+  if `currentPrice` closed through `stopLoss`, the pending action must be resolved the
+  same Daily run — either (a) keep `EXIT`/`REDUCE` as `STILL_VALID` and escalate for
+  execution, or (b) formally **RESET STOP** via `patch_portfolio` with a written reason
+  and new level. A breached stop that is neither executed nor re-set is not a stop —
+  flag `STOP_IN_LIMBO`. Soft-stale after 5 sessions (`STALE_PENDING`); hard hygiene
+  failure after 10. `QUALITY_CORE` stays advisory (§6) but must still be reclassified
+  (HOLD / RESET STOP / REDUCE), never ignored.
+- **Pending EXIT/REDUCE into earnings:** if a stop-out or reduce is `STILL_VALID` and
+  `daysToEarnings` ≤ 2 (or earnings is tomorrow / today), the Daily/Earnings routine
+  must choose explicitly: (1) **execute before the print**, or (2) **defer past the
+  print** with reason, adaptive state, and a RESET STOP or WAIT — never leave an
+  unexecuted EXIT colliding with a binary event by silence. Lesson #1 covers adds;
+  this rule covers pending exits.
 - Analyst targets are one signal only. Never recommend on target alone. Weigh momentum,
   technical structure, sector trend, catalyst quality, news, valuation/risk-reward, and
   Strategy Lessons. If targets conflict with price action, explain the conflict and prefer
@@ -181,9 +195,33 @@ VST = `MOMENTUM_CATALYST`; OKLO, GLXY, BULL = `SPECULATIVE`. New holdings defaul
   the 7 momentum criteria. Holding through earnings is the default. QUALITY REBOUND adds
   (§12.12) are the natural add mechanism.
 - **`MOMENTUM_CATALYST`** — full §§10–12 as written: stops, zones, 7-criteria re-buy test,
-  extended-winner scans.
-- **`SPECULATIVE`** — test-starter cap at all times; hard stops per §10; adds only on fired
-  thesis milestones (§12.7); first candidates for capital recycling.
+  extended-winner scans. Initial stop typically ~12–20% below constructive entry; trail /
+  ratchet after +30% from cost (see Stop policy below).
+- **`SPECULATIVE`** — **hard** test-starter ceiling on the name at all times
+  (`limits.tierBands.TEST_STARTER`, default 2–3% ex-CSPX); `log_trade` rejects size-
+  increasing BUY/ADD that would leave the name above that band. Hard stops; adds only on
+  fired thesis milestones (§12.7); first candidates for capital recycling.
+
+**Sleeve aggregate cap:** `limits.speculativeSleevePct` (default **15%** of ex-CSPX NAV)
+caps the sum of all `SPECULATIVE` weights. `log_trade` rejects size-increasing fills that
+breach it. Context exposes `nav.sleeveExposure` (fractions). If live Speculative exposure
+is already over the cap, Daily/Weekly must prioritise trims / recycling — no new Spec
+adds, no adds that grow an already-oversize Spec name.
+
+### Stop policy (placement + ratchet)
+
+Stops are sleeve-aware decision triggers. On every Daily/Weekly touch of a name, evaluate
+`stopDistancePct` = `(stopLoss − currentPrice) / currentPrice` from context:
+
+| Sleeve | Initial stop (new / reset) | Ratchet / hygiene |
+|---|---|---|
+| `SPECULATIVE` | ~10–18% below entry / structure | Prefer tighter; if stop >20% below spot while thesis intact, RESET toward structure or trail |
+| `MOMENTUM_CATALYST` | ~12–20% below constructive entry | After ≥+30% from cost, trail (shadow 15%-below-rolling-high is the pilot default) or raise stop so distance is not a cost-era formality; flag `STALE_STOP` if >25% below spot |
+| `QUALITY_CORE` | Wider advisory ok | Breach → review / RESET STOP / REDUCE narrative, not auto-EXIT |
+
+Never leave inverted risk (Spec stop wider than Momentum on similar vol) without an explicit
+reason in notes. Shadow-test trailing outcomes inform the official stop — they do not
+replace writing `stopLoss`.
 
 ## 7. Position sizing (§12.5)
 
@@ -193,17 +231,34 @@ has `weightPct: null` and is exempt from the single-name cap.
 
 | Band | Size | When |
 |---|---|---|
-| Test starter | 2–3% | Mandatory ceiling for EARLY ENTRY, Very High risk, pre-revenue, dilution-risk, or thesis-weakened names |
-| Confirmation add | ~5–6% | After the thesis metric confirms |
+| Test starter | 2–3% | Mandatory ceiling for EARLY ENTRY, Very High risk, pre-revenue, dilution-risk, thesis-weakened names, **all SPECULATIVE**, and **conviction ≤2** |
+| Confirmation add | ~5–6% | After the thesis metric confirms; conviction ≥3 |
 | Conviction | up to 8% | Conviction 5, thesis intact |
 
-Hard caps from `context.limits`: single position 15% ex-CSPX; theme cluster 30%; cash
-floor ≥5% unless deploying into a conviction-5, in-zone, catalyst-dated setup.
+Hard caps from `context.limits`: single position 15% ex-CSPX; theme cluster 30%;
+**Speculative sleeve** `speculativeSleevePct` (default 15% ex-CSPX); cash floor ≥5% unless
+deploying into a conviction-5, in-zone, catalyst-dated setup.
+
+**Conviction ↔ size:** a conviction-1/2 name must not sit above the test-starter band.
+If it already does, Daily must recommend REDUCE toward the band (capital recycling) —
+do not ADD. Soft `conviction_size_mismatch` warning fires on `log_trade` when an increase
+would leave conv≤2 above test-starter.
+
+**Theme required:** every non-CSPX holding needs a `theme`. Null theme escapes the 30%
+cluster cap — Weekly must assign one. `log_trade` rejects non-CSPX BUY/ADD without a
+theme. CSPX stays theme-null by design and is excluded from theme weights; do **not**
+invent look-through AI exposure into the theme cap — note look-through separately in
+narrative if relevant.
+
+**Unknown earnings date blocks adds:** if `earningsStale: true` or `earningsDate` is null
+on an operating company (not CSPX/cash), treat the Lesson #1 window as **unknowable** —
+block BUY / ADD / AVERAGE_DOWN / EARLY ENTRY / QUALITY REBOUND adds until the next date is
+written. HOLD / EXIT / REDUCE still allowed. Absence of a date is not "safe."
 
 Every BUY / EARLY ENTRY / ADD signal must state: suggested dollar amount **and** share
-count at stored price, resulting position weight, resulting theme weight, and remaining
-cash. A signal breaching a cap must say so and either resize or invoke the capital-
-recycling rule (§12.6).
+count at stored price, resulting position weight, resulting theme weight, resulting
+sleeve weight (`nav.sleeveExposure`), and remaining cash. A signal breaching a cap must
+say so and either resize or invoke the capital-recycling rule (§12.6).
 
 Use `averageDownsUsed` from context (backfilled / maintained by `log_trade`). Theme must be
 set for theme-cap grouping — if still null on a row, set it when you touch the position
@@ -217,7 +272,8 @@ Adds on existing holdings are first-class signals, evaluated every Daily run.
 `STRENGTHENING` (never `WEAKENING`/`BROKEN`); the next add trigger fired or a clear dated
 catalyst ahead; not within 7–10 days pre-earnings (small Test add exception); adds used
 < 2 (**hard cap — max 2 average-downs per name, ever**); constructive tape, not a falling
-knife. Label Test / Confirmation / Conviction add and size per §7.
+knife. Label Test / Confirmation / Conviction add and size per §7. This cap also covers
+QUALITY REBOUND fills below cost — see §9.
 
 **Add above cost (pyramiding into strength)** is allowed and encouraged on `STRENGTHENING`
 thesis + in add zone + conviction ≥4 — the preferred way to build winners (GEV/VST
@@ -246,13 +302,35 @@ standard BUYs.
 **QUALITY REBOUND (§12.12, pilot)** — all required: consistently profitable with net cash;
 wide moat / dominant share; latest results beat on **both** revenue and EPS (never on a
 miss); single-day drop ≥10% attributable to guide-tone / multiple compression, not thesis
-damage. Plus an honest re-ignition engine note — analyst-raise wave, index inclusion, live
-sector narrative? Engine present (TER-Apr pattern) → full template. Engine absent (ISRG
-pattern) → slower flatter base, halve the first tranche.
-Entry is staged thirds, never a lump: 1/3 on a §12.11 stabilization signal; 1/3 on a close
-above the gap midpoint; 1/3 after the next scheduled catalyst confirms. Total capped at
-test-starter band during the pilot. Max 1 new initiation per month. Pre-register the
-quality checklist above, not the 7 momentum criteria.
+damage. If `beatRate` is null, verify the dual beat from the print (web/notes) before
+clearing the gate — do not skip it. Write the verified beat summary into the DR /
+`append_page_notes` and patch `beatRate` when known.
+
+**Re-ignition engine (mandatory, every QR signal):** state explicitly
+`ENGINE_PRESENT` or `ENGINE_ABSENT` with one-line evidence (analyst-raise wave, index
+inclusion, live sector narrative?).
+- `ENGINE_PRESENT` (TER-Apr pattern) → full template sizing.
+- `ENGINE_ABSENT` (the rule's ISRG pattern: flat/cut targets, no raise wave) → slower
+  flatter base; **halve tranche 1 only**. Never size a full T1 on an absent engine.
+  Record the halved share count and dollar amount in the DR.
+
+**Staging vs average-down cap (§12.7):** QR adds **below** `myAvgCost` **do** consume
+`averageDownsUsed` (same hard lifetime cap of 2 — `log_trade` enforces it). They are
+**not** exempt the way pyramiding-above-cost is. Therefore:
+- Ideal "thirds" template applies in full only when future tranches are expected **at or
+  above** cost, or when `averageDownsUsed` headroom allows.
+- When the name is **below cost** at plan time: schedule **at most two** below-cost QR
+  adds — prefer T1 = §12.11 stabilization, T2 = gap-midpoint close. The catalyst/"next
+  print" gate becomes **HOLD / reassess**, not a third ADD, unless by then either
+  (a) `averageDownsUsed < 2` still, or (b) price ≥ `myAvgCost` (pyramiding — does not
+  consume the cap). Never publish a three-ADD below-cost plan.
+- Every QR ADD signal must state: engine state, tranche index (T1/T2/T3), whether this
+  fill is below cost, `averageDownsUsed` before/after if executed, and remaining AD
+  headroom.
+
+Total QR size capped at test-starter band during the pilot. Max 1 new QR initiation per
+month. Pre-register the quality checklist + engine state + tranche plan (not the 7
+momentum criteria).
 
 ## 10. Criteria pre-registration (§12.4)
 
@@ -340,9 +418,9 @@ nothing maps, and name the theme in the narrative.
 - **Portfolio patchable fields:** `action`, `stopLoss`, `sleeve`, `conviction` (1–5),
   `thesis`/`notes`/`pageNotes` (ReportBlock[]), `entryZone`, `addZone`, `nextAddTrigger`,
   `keyRisk`, `theme`, `riskLevel`, `marketCapBucket`, `analystRating`, `analystTarget`
-  (USD; server recomputes `upsidePct`), `earningsDate` (`YYYY-MM-DD`; clears
-  `daysToEarnings` when past/null — system recomputes days). Not writable: `shares`,
-  `currentPrice`, `myAvgCost`, `upsidePct` (derived).
+  (USD; server recomputes `upsidePct`), `beatRate`, `impliedMove`, `earningsDate`
+  (`YYYY-MM-DD`; clears `daysToEarnings` when past/null — system recomputes days). Not
+  writable: `shares`, `currentPrice`, `myAvgCost`, `upsidePct` (derived), `socialScore`.
 - **Watchlist upsertable:** includes `priority`, `action` (`WatchlistAction`),
   `marketCapBucket`, `analystRating`, `analystTarget`, `bullTarget`, `earningsDate`,
   zones, thesis/`actionNotes`/`pageNotes`. No `conviction` column on watchlist — put
@@ -354,17 +432,17 @@ nothing maps, and name the theme in the narrative.
   consensus). Do **not** escalate REDUCE/EXIT on negative upside alone when notes show a
   newer PT cluster — fix the target first, then reassess. Target-cross / "above analyst
   target" logic must use the refreshed field.
-- **Stop hygiene:** `stopLoss` is a decision trigger that must stay meaningful. On
-  `MOMENTUM_CATALYST` / `SPECULATIVE` winners ≳30% above cost, if stop is ≳25% below spot,
-  flag `STALE_STOP` and recommend RESET STOP / TRAIL STOP with a concrete new level via
-  `patch_portfolio` (do not leave cost-era stops as decoration while the shadow trail does
-  the real work). On `QUALITY_CORE`, stale stops are advisory review triggers only.
+- **Stop hygiene:** follow §6 Stop policy. On `MOMENTUM_CATALYST` / `SPECULATIVE` winners
+  ≳30% above cost, if stop is ≳25% below spot, flag `STALE_STOP` and RESET/TRAIL via
+  `patch_portfolio`. Breached stops: resolve per §4 (`STOP_IN_LIMBO` if neither executed
+  nor re-set). On `QUALITY_CORE`, stale/breached stops are advisory review triggers only.
 - **Stale earnings:** if `earningsStale: true`, `earningsDate` is null, or `earningsDate`
   is in the past, treat earnings as unknown, re-confirm via web search, then write the
   **next** `earningsDate` via `patch_portfolio` / `upsert_watchlist`. After a print, roll
   forward to the next confirmed date — do **not** clear to null and leave the earnings
   routine blind. Null only when search cannot find a next date (say so in notes). Do not
-  act on a stale `daysToEarnings`.
+  act on a stale `daysToEarnings`. **Unknown date blocks adds** (§7) — it does not pass
+  Lesson #1 by silence.
 - **Zone / cost text:** `entryZone` / `addZone` are price ranges, not avg-cost labels. If
   zone text cites an avg cost that disagrees with `myAvgCost`, rewrite the zone (or drop
   the cost clause). Never invent avg cost in zone fields — cost lives on `myAvgCost`.

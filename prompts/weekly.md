@@ -72,9 +72,13 @@ guessing.** Do **not** write `shares` via patch — shares come only from `log_t
 
 Also every week, for each holding/watchlist name you touch:
 - Refresh `analystTarget` when recent PTs disagree with the stored target (`_shared` §14).
-- RESET / TRAIL `stopLoss` when `STALE_STOP` applies; write the new level.
+- RESET / TRAIL `stopLoss` when `STALE_STOP` / stop policy (§6) applies; write the new level.
+- Resolve `STOP_IN_LIMBO` breached stops (execute path or formal RESET).
 - Roll null/past `earningsDate` to the next confirmed date.
 - Fix stale `entryZone` / `addZone` text (wrong avg-cost clauses, obsolete ranges).
+- Assign null `theme` / `sleeve` (RDDT and any orphans) — theme-null escapes the cluster cap.
+- If `nav.sleeveExposure.SPECULATIVE` > `limits.speculativeSleevePct`, lead with a recycle
+  plan before any new Spec risk.
 
 RDDT has no sleeve assigned and was opened without a pre-registered scorecard (§10
 breach) — assign its sleeve and note the lower-confidence flag.

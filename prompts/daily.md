@@ -40,7 +40,7 @@ unresolved actions from the Notion era. Skip on all later runs once DR rows exis
 | Ticker | Issue | Notes |
 |---|---|---|
 | OKLO | EXIT test-starter — close below $46 on 2026-07-18 | Downgraded to `STALE_PENDING` in notes (§11.8); still open |
-| ISRG | QUALITY REBOUND tranche-1 ADD | §12.11 fired 2026-07-27; §12.12 gap-midpoint 2026-08-03; `QUALITY_CORE` |
+| ISRG | QUALITY REBOUND T1 ADD | §12.11 Jul 27; gap-midpoint Aug 3; `QUALITY_CORE`. Size with `ENGINE_ABSENT` → **halve T1**. Below cost → QR consumes AD cap (max 2); no third below-cost ADD. |
 | BULL | REDUCE — capital recycling (2026-08-02 weekly) | ~14% book vs 2–3% Speculative cap; not executed |
 
 Run `npx tsx scripts/seed-decision-reviews.ts` once if the table is still empty (idempotent).
@@ -96,6 +96,11 @@ For every portfolio and watchlist ticker in `trackedTickers`:
   looks stale vs `(target − price) / price` (`_shared` §14). Raise `STALE_STOP` /
   RESET STOP when stop is decorative on a Momentum/Spec winner.
   Fix `entryZone` / `addZone` text that cites a wrong avg cost.
+  Patch `keyRisk` / `beatRate` when null on a name you are actively sizing (esp. QUALITY
+  REBOUND).
+  On any QUALITY REBOUND ADD: require `ENGINE_PRESENT`/`ENGINE_ABSENT`, apply T1 halving
+  when absent, and refuse a third below-cost ADD when `averageDownsUsed` would exceed 2
+  (`_shared` §9).
   Cross-check `averageDownsUsed` against `list_trades` (`type=ADD` where
   `pricePerShare` < `myAvgCost`) when the field looks wrong. Do **not** write `shares` /
   `currentPrice` / `myAvgCost` / `upsidePct`.
@@ -106,6 +111,22 @@ For every portfolio and watchlist ticker in `trackedTickers`:
   `REDUCE` | `EXIT` | `WATCH`) — map freeform language per `_shared` §2.
 - Update watchlist `priority` and/or `action` (`WatchlistAction`) per `_shared` §13.
 - Append today's dated note via `append_page_notes` (`_shared` §12).
+
+## 2b. Portfolio construction scan (shape of the book)
+
+After the per-ticker pass, read `nav.sleeveExposure` + `limits` and flag (table in
+`actionTaken` or `notes`):
+
+- Speculative sleeve vs `limits.speculativeSleevePct` — if over, name trim candidates
+  (lowest conviction / breached stop first); block Spec adds.
+- Any `SPECULATIVE` or conviction≤2 name above test-starter band → REDUCE toward band.
+- Null `theme` on non-CSPX → assign or flag (theme cap escape).
+- Null `sleeve` → assign from `_shared` §6 mapping.
+- `STOP_IN_LIMBO` / breached stops unresolved; pending EXIT/REDUCE with `daysToEarnings`≤2.
+- `earningsStale` / null date on names where an ADD is contemplated → block add, fix date.
+- `STALE_STOP` distances per §6 stop policy; RESET where required.
+
+This scan is about **book shape**, not single-trade quality — do not skip it on quiet days.
 
 ## 3. Daily Radar (§12.1)
 

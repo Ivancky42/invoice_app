@@ -127,6 +127,10 @@ export const patchPortfolioInputSchema = z.object({
    * from this + stored `currentPrice`. Do not write `upsidePct` directly.
    */
   analystTarget: z.number().positive().nullable().optional(),
+  /** Earnings beat history summary, e.g. "4/4" or "Rev+EPS beat Q2'26". */
+  beatRate: z.string().max(200).nullable().optional(),
+  /** Expected move into earnings, e.g. "±5%" — informational. */
+  impliedMove: z.string().max(100).nullable().optional(),
   /** YYYY-MM-DD; recomputes daysToEarnings. Null clears both. */
   earningsDate: dateYmd.nullable().optional(),
   // Explicitly omit currentPrice / shares / myAvgCost / upsidePct — marks + derived %.
@@ -287,6 +291,7 @@ const limitsPatchSchema = z
   .object({
     singlePositionPct: z.number().min(0).max(1).optional(),
     themePct: z.number().min(0).max(1).optional(),
+    speculativeSleevePct: z.number().min(0).max(1).optional(),
     cashFloorPct: z.number().min(0).max(1).optional(),
     maxAverageDowns: z.number().int().min(0).max(20).optional(),
     tierBands: z

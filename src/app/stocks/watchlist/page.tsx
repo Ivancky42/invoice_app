@@ -11,6 +11,7 @@ import { NotesModalField } from "@/app/stocks/_components/NotesModalField";
 import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
 import { asReportBlocks, blocksToPlainText, hasReportBlocks } from "@/lib/content/blocks";
 import {
+  computeUpsidePct,
   decToNum,
   fmtDayUtc,
   fmtMoney,
@@ -99,8 +100,9 @@ function WatchlistCard({
   const demoted = isDemoted(w);
   const price = decToNum(w.currentPrice);
   const target = decToNum(w.analystTarget);
+  const bull = decToNum(w.bullTarget);
   const stop = decToNum(w.stopLoss);
-  const upside = decToNum(w.upsidePct);
+  const upside = computeUpsidePct(price, target) ?? decToNum(w.upsidePct);
 
   const noteTexts = [
     hasReportBlocks(w.pageNotes) ? blocksToPlainText(asReportBlocks(w.pageNotes)) : null,
@@ -160,6 +162,11 @@ function WatchlistCard({
             <div>
               <div className="text-[10px] uppercase tracking-wide text-gray-400">Target</div>
               <div className="text-sm font-medium tabular-nums text-gray-800">{fmtMoney(target)}</div>
+              {bull !== null ? (
+                <div className="text-[10px] text-gray-400 tabular-nums">
+                  bull {fmtMoney(bull)}
+                </div>
+              ) : null}
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-wide text-gray-400">Stop</div>

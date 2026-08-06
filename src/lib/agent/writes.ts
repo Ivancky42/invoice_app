@@ -232,6 +232,8 @@ export async function patchPortfolio(tickerRaw: string, input: PatchPortfolioInp
       input.analystTarget,
     );
   }
+  if (input.beatRate !== undefined) data.beatRate = input.beatRate;
+  if (input.impliedMove !== undefined) data.impliedMove = input.impliedMove;
   if (input.earningsDate !== undefined) {
     if (input.earningsDate === null) {
       data.earningsDate = null;
@@ -687,6 +689,8 @@ function mergeLimits(
   return {
     singlePositionPct: patch.singlePositionPct ?? current.singlePositionPct,
     themePct: patch.themePct ?? current.themePct,
+    speculativeSleevePct:
+      patch.speculativeSleevePct ?? current.speculativeSleevePct,
     cashFloorPct: patch.cashFloorPct ?? current.cashFloorPct,
     maxAverageDowns: patch.maxAverageDowns ?? current.maxAverageDowns,
     tierBands: {

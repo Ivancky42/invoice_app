@@ -326,7 +326,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Patch portfolio",
       description:
-        "Patch portfolio metadata (action, stopLoss, sleeve, conviction, thesis/pageNotes, entryZone, addZone, nextAddTrigger, keyRisk, theme, riskLevel, marketCapBucket, analystRating, analystTarget, earningsDate). Writing analystTarget recomputes upsidePct from stored currentPrice. Does NOT write currentPrice/shares/avg/upsidePct. For append-only daily notes use append_page_notes.",
+        "Patch portfolio metadata (action, stopLoss, sleeve, conviction, thesis/pageNotes, entryZone, addZone, nextAddTrigger, keyRisk, theme, riskLevel, marketCapBucket, analystRating, analystTarget, beatRate, impliedMove, earningsDate). Writing analystTarget recomputes upsidePct from stored currentPrice. Does NOT write currentPrice/shares/avg/upsidePct/socialScore. For append-only daily notes use append_page_notes.",
       inputSchema: {
         ticker: z.string().min(1).describe("Ticker symbol"),
         ...patchPortfolioInputSchema.shape,

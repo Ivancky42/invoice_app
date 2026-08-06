@@ -30,6 +30,8 @@ export type TierBands = {
 export type LimitsConfig = {
   singlePositionPct: number;
   themePct: number;
+  /** Max aggregate weight of SPECULATIVE sleeve vs ex-CSPX NAV. */
+  speculativeSleevePct: number;
   cashFloorPct: number;
   maxAverageDowns: number;
   tierBands: TierBands;
@@ -50,6 +52,7 @@ export type TrackedTickersConfig = {
 export const DEFAULT_LIMITS: LimitsConfig = {
   singlePositionPct: 0.15,
   themePct: 0.3,
+  speculativeSleevePct: 0.15,
   cashFloorPct: 0.05,
   maxAverageDowns: 2,
   tierBands: {
@@ -94,6 +97,10 @@ function parseLimits(value: unknown): LimitsConfig | null {
   return {
     singlePositionPct: asNumber(o.singlePositionPct, DEFAULT_LIMITS.singlePositionPct),
     themePct: asNumber(o.themePct, DEFAULT_LIMITS.themePct),
+    speculativeSleevePct: asNumber(
+      o.speculativeSleevePct,
+      DEFAULT_LIMITS.speculativeSleevePct,
+    ),
     cashFloorPct: asNumber(o.cashFloorPct, DEFAULT_LIMITS.cashFloorPct),
     maxAverageDowns: asNumber(o.maxAverageDowns, DEFAULT_LIMITS.maxAverageDowns),
     tierBands: {

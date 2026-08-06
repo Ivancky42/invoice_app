@@ -37,6 +37,9 @@ For each portfolio or watchlist ticker with confirmed earnings within 14 days:
   Decision Layer (`_shared` §4) **before** repeating it. Classify into one of the seven
   states. Source pendings from `list_decision_reviews` (seed legacy pendings per `daily` §0
   if the table is empty).
+- **Pending EXIT/REDUCE into the print:** if stop-out or reduce is still open and
+  DTE ≤ 2, force the §4 choice — execute before print **or** defer past print with RESET
+  STOP / WAIT and written reason. Never leave OKLO-style limbo into a binary event.
 - Backfill portfolio `sleeve` (and other null enums you can determine) **before** applying
   sleeve rules — canonical mapping in `_shared` §6.
 - Apply sleeve rules (`_shared` §6): on `QUALITY_CORE` names, holding through earnings is
@@ -45,7 +48,8 @@ For each portfolio or watchlist ticker with confirmed earnings within 14 days:
   DO_NOT_AVERAGE_DOWN. Persist portfolio `action` only as legal `PositionAction`
   (`_shared` §2). **Default to HOLD/WAIT when confirmation is pending.**
 - **Do not recommend meaningful averaging down within 7–10 days before earnings** unless
-  explicitly labelled a small Test add (Lesson #1, binding).
+  explicitly labelled a small Test add (Lesson #1, binding). If `earningsDate` is unknown
+  / stale, block adds entirely (`_shared` §7).
 - No EARLY ENTRY signal within 7 days pre-earnings (`_shared` §9).
 - Identify the key thesis metric to watch, and what would validate, evolve, or break the
   thesis.
@@ -66,9 +70,11 @@ For any ticker that reported since the last run:
 - Refresh `analystTarget` if the print moved Street targets (`_shared` §14).
 - Check **QUALITY REBOUND** eligibility (`_shared` §9) if all of: consistently profitable
   with net cash; wide moat; beat on **both** revenue and EPS; single-day drop ≥10% from
-  guide-tone or multiple compression, not thesis damage. If eligible, note the re-ignition
-  engine assessment and hand the staged-thirds entry template to the Weekly. Max 1 new
-  initiation per month.
+  guide-tone or multiple compression, not thesis damage. If eligible: write
+  `ENGINE_PRESENT` / `ENGINE_ABSENT` with evidence; size T1 halved when absent; state the
+  tranche plan vs remaining `averageDownsUsed` headroom (below-cost QR fills consume the
+  AD cap — max two below-cost adds); patch `beatRate` when verified; hand the staged plan
+  to Daily / Weekly. Max 1 new QR initiation per month.
 - If a knife-day zone entry occurred, apply the §4 stabilization definition rather than
   an open-ended WAIT.
 

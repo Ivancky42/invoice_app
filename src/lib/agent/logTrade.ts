@@ -112,6 +112,10 @@ function parseLimits(value: unknown): LimitsConfig {
   return {
     singlePositionPct: asNumber(o.singlePositionPct, DEFAULT_LIMITS.singlePositionPct),
     themePct: asNumber(o.themePct, DEFAULT_LIMITS.themePct),
+    speculativeSleevePct: asNumber(
+      o.speculativeSleevePct,
+      DEFAULT_LIMITS.speculativeSleevePct,
+    ),
     cashFloorPct: asNumber(o.cashFloorPct, DEFAULT_LIMITS.cashFloorPct),
     maxAverageDowns: asNumber(o.maxAverageDowns, DEFAULT_LIMITS.maxAverageDowns),
     tierBands: {
@@ -218,6 +222,7 @@ type EquitySlice = {
   shares: number;
   value: number;
   theme: Portfolio["theme"];
+  sleeve: Portfolio["sleeve"];
   isCspx: boolean;
 };
 
@@ -227,7 +232,11 @@ function buildEquitySlices(
   newShares: number,
   tradePrice: number,
   holdings: Map<string, number>,
-  opts?: { requireMarks?: boolean; newTheme?: Theme | null },
+  opts?: {
+    requireMarks?: boolean;
+    newTheme?: Theme | null;
+    newSleeve?: Portfolio["sleeve"];
+  },
 ): EquitySlice[] {
   const slices: EquitySlice[] = [];
   const missingMark: string[] = [];
@@ -246,14 +255,16 @@ function buildEquitySlices(
       missingMark.push(ticker);
       continue;
     }
+    const isTrade = ticker === tradeTicker;
     slices.push({
       ticker,
       shares,
       value: shares * px,
-      theme: p.theme,
+      theme: isTrade && opts?.newTheme !== undefined ? opts.newTheme : p.theme,
+      sleeve: isTrade && opts?.newSleeve !== undefined ? opts.newSleeve : p.sleeve,
       isCspx: isCspxTicker(ticker),
     });
-    if (ticker === tradeTicker) sawTradeTicker = true;
+    if (isTrade) sawTradeTicker = true;
   }
 
   if (!sawTradeTicker && newShares > SHARES_EPS) {
@@ -263,6 +274,7 @@ function buildEquitySlices(
       shares: newShares,
       value: newShares * tradePrice,
       theme: opts?.newTheme ?? null,
+      sleeve: opts?.newSleeve ?? null,
       isCspx: isCspxTicker(tradeTicker),
     });
   }
@@ -494,8 +506,20 @@ export async function logTrade(
         newAddsUsed = 0;
       }
 
-      // Theme for the traded name: existing row, else optional input on new BUY.
+      // Theme / sleeve for the traded name: existing row, else optional input on new BUY.
       const tradeTheme = position?.theme ?? input.theme ?? null;
+      const tradeSleeve = position?.sleeve ?? null;
+      const increasing =
+        input.type === "BUY" || input.type === "ADD";
+
+      // Non-CSPX increases must have a theme so theme_cap cannot be escaped.
+      if (increasing && !isCspxTicker(ticker) && !tradeTheme) {
+        throw new InvariantViolation("theme_required", {
+          ticker,
+          message:
+            "Non-CSPX BUY/ADD requires a Theme (set on portfolio row or pass theme on new BUY)",
+        });
+      }
 
       // Post-trade equity slices for NAV / caps
       const slices = buildEquitySlices(
@@ -504,9 +528,11 @@ export async function logTrade(
         newShares,
         price,
         holdings,
-        { requireMarks: true, newTheme: tradeTheme },
-      ).map((s) =>
-        s.ticker === ticker ? { ...s, theme: tradeTheme ?? s.theme } : s,
+        {
+          requireMarks: true,
+          newTheme: tradeTheme,
+          newSleeve: tradeSleeve,
+        },
       );
       const equitiesValue = slices.reduce((sum, s) => sum + s.value, 0);
       const nav = newCashUsd + equitiesValue;
@@ -541,6 +567,22 @@ export async function logTrade(
             nonCspxNav,
           });
         }
+
+        // SPECULATIVE: hard test-starter ceiling on size-increasing fills.
+        if (
+          increasing &&
+          tradeSleeve === "SPECULATIVE" &&
+          weight > limits.tierBands.TEST_STARTER[1] + 1e-9
+        ) {
+          throw new InvariantViolation("speculative_position_cap", {
+            ticker,
+            weight,
+            maxWeight: limits.tierBands.TEST_STARTER[1],
+            sleeve: tradeSleeve,
+            message:
+              "SPECULATIVE names are capped at test-starter band; trim before adding",
+          });
+        }
       }
 
       if (tradeTheme && newShares > SHARES_EPS && nav > MONEY_EPS) {
@@ -559,7 +601,29 @@ export async function logTrade(
         }
       }
 
-      // 8. Soft tier-band warnings (same ex-CSPX denominator as hard caps)
+      // SPECULATIVE sleeve aggregate vs ex-CSPX NAV (size-increasing fills only).
+      if (
+        increasing &&
+        tradeSleeve === "SPECULATIVE" &&
+        nonCspxNav > MONEY_EPS
+      ) {
+        const specValue = slices
+          .filter((s) => s.sleeve === "SPECULATIVE")
+          .reduce((sum, s) => sum + s.value, 0);
+        const specWeight = specValue / nonCspxNav;
+        if (specWeight > limits.speculativeSleevePct + 1e-9) {
+          throw new InvariantViolation("speculative_sleeve_cap", {
+            sleeveWeight: specWeight,
+            speculativeSleevePct: limits.speculativeSleevePct,
+            specValue,
+            nonCspxNav,
+            message:
+              "SPECULATIVE sleeve aggregate exceeds limit; recycle before adding",
+          });
+        }
+      }
+
+      // 8. Soft tier-band / conviction warnings (same ex-CSPX denominator as hard caps)
       const warnings: string[] = [];
       if (
         !isCspxTicker(ticker) &&
@@ -570,6 +634,17 @@ export async function logTrade(
         if (!weightInBands(weight, limits)) {
           warnings.push(
             `position_weight_outside_tier_bands: ${(weight * 100).toFixed(2)}% not in TEST_STARTER/CONFIRMATION/CONVICTION bands`,
+          );
+        }
+        const conv = position?.conviction;
+        if (
+          increasing &&
+          conv != null &&
+          conv <= 2 &&
+          weight > limits.tierBands.TEST_STARTER[1] + 1e-9
+        ) {
+          warnings.push(
+            `conviction_size_mismatch: conviction ${conv} but weight ${(weight * 100).toFixed(2)}% exceeds test-starter band`,
           );
         }
       }

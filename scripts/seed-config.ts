@@ -27,6 +27,7 @@ const KEYS = {
 const LIMITS = {
   singlePositionPct: 0.15,
   themePct: 0.3,
+  speculativeSleevePct: 0.15,
   cashFloorPct: 0.05,
   maxAverageDowns: 2,
   tierBands: {

@@ -16,6 +16,7 @@ import {
 } from "@/lib/content/blocks";
 import {
   actionBadgeClass,
+  computeUpsidePct,
   decToNum,
   fmtDayUtc,
   fmtMoney,
@@ -103,6 +104,9 @@ function PortfolioCard({
   const cashRow = isCashTicker(p.ticker);
   const cur = decToNum(p.currentPrice);
   const cost = decToNum(p.myAvgCost);
+  const target = decToNum(p.analystTarget);
+  const upside =
+    computeUpsidePct(cur, target) ?? decToNum(p.upsidePct);
   const cashBal = cashRow ? notionCashBalanceUsd(p.currentPrice, p.myAvgCost) : 0;
   const per = cashRow ? { pct: null as number | null } : pnl(cur, cost);
   const pos = cashRow
@@ -201,6 +205,12 @@ function PortfolioCard({
                 </div>
               </div>
               <div>
+                <div className="text-[10px] uppercase tracking-wide text-gray-400">Target</div>
+                <div className="text-sm font-medium tabular-nums text-gray-800">
+                  {fmtMoney(target)}
+                </div>
+              </div>
+              <div>
                 <div className="text-[10px] uppercase tracking-wide text-gray-400">Stop</div>
                 <div className="text-sm font-medium tabular-nums text-gray-800">
                   {fmtMoney(decToNum(p.stopLoss))}
@@ -249,9 +259,9 @@ function PortfolioCard({
                 Upside
               </div>
               <div
-                className={`text-sm font-medium tabular-nums ${pnlToneClass(decToNum(p.upsidePct))}`}
+                className={`text-sm font-medium tabular-nums ${pnlToneClass(upside)}`}
               >
-                {fmtPct(p.upsidePct)}
+                {fmtPct(upside)}
               </div>
             </div>
           </div>

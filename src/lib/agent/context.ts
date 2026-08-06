@@ -20,6 +20,7 @@ import {
   snapshotDateGMT8,
 } from "@/lib/stocks/portfolioTotals";
 import {
+  computeUpsidePct,
   decToNum,
   holdingsByTicker,
   isCashTicker,
@@ -165,15 +166,20 @@ export function serializePortfolioRow(
   p: Portfolio,
   opts?: { sharesOverride?: number | null; weightPct?: number | null; marketValue?: number | null },
 ) {
+  const currentPrice = num(p.currentPrice);
+  const analystTarget = num(p.analystTarget);
+  const storedUpside = num(p.upsidePct);
+  const derivedUpside = computeUpsidePct(currentPrice, analystTarget);
   return {
     id: p.id,
     ticker: p.ticker,
     company: p.company,
     shares: opts?.sharesOverride !== undefined ? opts.sharesOverride : num(p.shares),
-    currentPrice: num(p.currentPrice),
+    currentPrice,
     myAvgCost: num(p.myAvgCost),
-    analystTarget: num(p.analystTarget),
-    upsidePct: num(p.upsidePct),
+    analystTarget,
+    // Prefer live derive so agents/UI never see write-lag fossils.
+    upsidePct: derivedUpside ?? storedUpside,
     action: p.action,
     riskLevel: p.riskLevel,
     analystRating: p.analystRating,
@@ -209,6 +215,9 @@ export function serializeWatchlistRow(
   const earn = opts?.earningsRiskThresholds
     ? earningsFields(w.earningsDate, w.daysToEarnings, opts.earningsRiskThresholds)
     : null;
+  const currentPrice = num(w.currentPrice);
+  const analystTarget = num(w.analystTarget);
+  const derivedUpside = computeUpsidePct(currentPrice, analystTarget);
   return {
     id: w.id,
     ticker: w.ticker,
@@ -217,10 +226,10 @@ export function serializeWatchlistRow(
     priority: w.priority,
     action: w.action,
     demotedAt: iso(w.demotedAt),
-    currentPrice: num(w.currentPrice),
-    analystTarget: num(w.analystTarget),
+    currentPrice,
+    analystTarget,
     bullTarget: num(w.bullTarget),
-    upsidePct: num(w.upsidePct),
+    upsidePct: derivedUpside ?? num(w.upsidePct),
     riskLevel: w.riskLevel,
     analystRating: w.analystRating,
     socialScore: w.socialScore,
@@ -600,6 +609,9 @@ export async function buildAgentContext(routine: AgentRoutine) {
         p.daysToEarnings,
         earningsRiskThresholds,
       );
+      const stop = decToNum(p.stopLoss);
+      const stopDistancePct =
+        cur !== null && stop !== null && cur > 0 ? (stop - cur) / cur : null;
       return {
         ticker: p.ticker,
         company: p.company,
@@ -610,7 +622,8 @@ export async function buildAgentContext(routine: AgentRoutine) {
         weightPct,
         action: p.action,
         sleeve: p.sleeve,
-        stopLoss: decToNum(p.stopLoss),
+        stopLoss: stop,
+        stopDistancePct,
         theme: p.theme,
         averageDownsUsed: p.addsUsed ?? 0,
         earningsDate: earn.earningsDate,
@@ -624,11 +637,32 @@ export async function buildAgentContext(routine: AgentRoutine) {
         entryZone: p.entryZone,
         addZone: p.addZone,
         nextAddTrigger: p.nextAddTrigger,
-        upsidePct: decToNum(p.upsidePct),
+        analystTarget: decToNum(p.analystTarget),
+        upsidePct:
+          computeUpsidePct(cur, decToNum(p.analystTarget)) ??
+          decToNum(p.upsidePct),
         lastPriceUpdate: iso(p.lastPriceUpdate),
         pageNotes: asReportBlocks(p.pageNotes),
       };
     });
+
+  const sleeveExposure = {
+    QUALITY_CORE: 0,
+    MOMENTUM_CATALYST: 0,
+    SPECULATIVE: 0,
+    UNASSIGNED: 0,
+  };
+  if (exCspxNav > 0) {
+    for (const p of positions) {
+      if (p.ticker.toUpperCase() === "CSPX" || p.weightPct == null) continue;
+      const key = p.sleeve ?? "UNASSIGNED";
+      if (key in sleeveExposure) {
+        sleeveExposure[key as keyof typeof sleeveExposure] += p.weightPct / 100;
+      } else {
+        sleeveExposure.UNASSIGNED += p.weightPct / 100;
+      }
+    }
+  }
 
   return {
     routine,
@@ -643,6 +677,7 @@ export async function buildAgentContext(routine: AgentRoutine) {
       exCspxNav,
       unrealizedPnl: totals.unrealizedPnl,
       hasPnl: totals.hasPnl,
+      sleeveExposure,
     },
     positions,
     watchlist: watchlist.map((w) =>
