@@ -27,6 +27,7 @@ import {
   isCashTicker,
 } from "@/lib/stocks/format";
 import { listStockEnums } from "@/lib/agent/enums";
+import { ensureContentPages } from "@/lib/agent/contentPages";
 import {
   earningsRiskFromDays,
   type DerivedEarningsRisk,
@@ -426,6 +427,7 @@ export function serializeContentPage(row: ContentPage) {
 }
 
 export async function listContentPages() {
+  await ensureContentPages();
   const rows = await prisma.contentPage.findMany({ orderBy: { key: "asc" } });
   return rows.map(serializeContentPage);
 }

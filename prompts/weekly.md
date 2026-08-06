@@ -13,10 +13,8 @@ Soft-demote via `delete_watchlist` / `action=DEMOTED` per `_shared` §13. Never 
 never `patch_config`.
 
 Read `list_daily_logs` for ~30 days and `list_decision_reviews` for pattern memory.
-
-**First run after migration:** execute §3 (backfill) before §1 so sleeve-dependent thesis
-and stop logic evaluates against populated enums, not nulls. Seed legacy Decision Reviews
-per `daily` §0 if `list_decision_reviews(PENDING)` is empty.
+Backfill null `sleeve`/`theme` in §3 before sleeve-dependent judgments. Decision Review
+migration seed is complete — do not re-seed.
 
 ---
 
@@ -76,12 +74,15 @@ Also every week, for each holding/watchlist name you touch:
 - Resolve `STOP_IN_LIMBO` breached stops (execute path or formal RESET).
 - Roll null/past `earningsDate` to the next confirmed date.
 - Fix stale `entryZone` / `addZone` text (wrong avg-cost clauses, obsolete ranges).
-- Assign null `theme` / `sleeve` (RDDT and any orphans) — theme-null escapes the cluster cap.
+- Assign null `theme` when a legal value fits (`SOCIAL_PLATFORMS` for social/consumer-
+  internet platforms); leave null only when nothing maps and rely on Daily `UNCAPPED_THEME`.
+- Null `sleeve` → default `MOMENTUM_CATALYST` and confirm.
 - If `nav.sleeveExposure.SPECULATIVE` > `limits.speculativeSleevePct`, lead with a recycle
   plan before any new Spec risk.
 
-RDDT has no sleeve assigned and was opened without a pre-registered scorecard (§10
-breach) — assign its sleeve and note the lower-confidence flag.
+RDDT was opened without a pre-registered scorecard (§10 breach) — keep the
+lower-confidence / `NO_PREREGISTERED_SCORECARD` flag on related DRs. Theme is
+`SOCIAL_PLATFORMS`; sleeve should already be set (default `MOMENTUM_CATALYST` if null).
 
 Refresh `addZone` and `nextAddTrigger` on every holding this week (`patch_portfolio`).
 

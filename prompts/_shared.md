@@ -185,9 +185,10 @@ decide next.
 ## 6. Sleeves (§12.13)
 
 Every position carries `sleeve` — `QUALITY_CORE` / `MOMENTUM_CATALYST` / `SPECULATIVE`.
-Canonical mapping (backfill, do not re-derive): CSPX, ISRG = `QUALITY_CORE`; DDOG, GEV,
-VST = `MOMENTUM_CATALYST`; OKLO, GLXY, BULL = `SPECULATIVE`. New holdings default to
-`MOMENTUM_CATALYST` unless stated. RDDT is currently unassigned — Weekly to set it.
+Sleeve is stored on the position and read from `get_context`. New holdings default to
+`MOMENTUM_CATALYST` until the Weekly assigns one; never re-derive a sleeve that is already
+set. If `sleeve` is null when you touch a row, apply the default and flag it for Weekly
+confirmation.
 
 - **`QUALITY_CORE`** — price stops are **advisory review triggers only**, never auto-EXIT
   on price alone. Judged on fundamentals + valuation vs own history (moat, margins, FCF,
@@ -244,11 +245,15 @@ If it already does, Daily must recommend REDUCE toward the band (capital recycli
 do not ADD. Soft `conviction_size_mismatch` warning fires on `log_trade` when an increase
 would leave conv≤2 above test-starter.
 
-**Theme required:** every non-CSPX holding needs a `theme`. Null theme escapes the 30%
-cluster cap — Weekly must assign one. `log_trade` rejects non-CSPX BUY/ADD without a
-theme. CSPX stays theme-null by design and is excluded from theme weights; do **not**
+**Theme / cluster coverage:** prefer a legal `Theme` when one fits (see §13). Leaving
+`theme` null is permitted when nothing maps honestly — do **not** force a wrong bucket
+just to satisfy the cap. Null-theme non-CSPX holdings are **uncapped exposures**: every
+Daily construction scan must list them with weight under `UNCAPPED_THEME` so they cannot
+sit unnoticed. Prefer assigning a real theme (e.g. `SOCIAL_PLATFORMS` for RDDT) when one
+exists. CSPX stays theme-null by design and is excluded from theme weights; do **not**
 invent look-through AI exposure into the theme cap — note look-through separately in
-narrative if relevant.
+narrative if relevant. `log_trade` warns (does not hard-block) on non-CSPX BUY/ADD with
+null theme.
 
 **Unknown earnings date blocks adds:** if `earningsStale: true` or `earningsDate` is null
 on an operating company (not CSPX/cash), treat the Lesson #1 window as **unknowable** —
@@ -260,9 +265,9 @@ count at stored price, resulting position weight, resulting theme weight, result
 sleeve weight (`nav.sleeveExposure`), and remaining cash. A signal breaching a cap must
 say so and either resize or invoke the capital-recycling rule (§12.6).
 
-Use `averageDownsUsed` from context (backfilled / maintained by `log_trade`). Theme must be
-set for theme-cap grouping — if still null on a row, set it when you touch the position
-(see Theme enum in context; leave unset only when no legal value fits).
+Use `averageDownsUsed` from context (backfilled / maintained by `log_trade`). When you
+touch a row, set `theme` if a legal value fits; if none fits, leave null and ensure the
+Daily `UNCAPPED_THEME` scan will surface it.
 
 ## 8. Averaging down / pyramiding (§12.7)
 
@@ -354,13 +359,9 @@ discount it automatically.
 Use `upsert_decision_review` / `list_decision_reviews`. Stamp `idempotencyKey` on creates.
 Default `reviewStatus=PENDING`. Put the §12.4 criteria scorecard inside `reasonForDecision`.
 
-**Migration (Neon cutover):** pending actions that lived only in Notion `pageNotes` or old
-daily logs are invisible to `list_decision_reviews` until seeded. Before the first scheduled
-Daily run, if `list_decision_reviews(PENDING)` is empty but notes still show open EXIT /
-ADD / REDUCE actions, run `npx tsx scripts/seed-decision-reviews.ts` (idempotent) or
-create DR rows manually with their **original** `decisionDate` (see `daily` §0). Otherwise
-the adaptive loop quietly forgives every pre-migration pending — the opposite of what this
-log exists for.
+Decision Reviews are live in Neon (migration seed complete — do **not** re-run
+`scripts/seed-decision-reviews.ts` unless Ivan explicitly asks). Source pending actions
+from `list_decision_reviews`, not from reconstructing Notion-era notes.
 
 Decisions that warrant a DR entry: BUY, ADD, AVERAGE_DOWN, REDUCE, EXIT, WAIT before
 catalyst/earnings, AVOID, DO_NOT_AVERAGE_DOWN, stop-loss action, thesis alert, earnings
@@ -405,10 +406,11 @@ acquired). Soft-demoted rows are hidden from `get_context` / default `list_watch
 `includeDemoted=true` to see them for re-promotion.
 
 Theme enum includes: AI_INFRASTRUCTURE, NUCLEAR_POWER, HUMANOID_ROBOTS, SPACE, CRYPTO,
-RETAIL_TECH, HEALTHCARE, FINTECH_PAYMENTS, DEFENSE_DRONES, MEME_SPECIAL_SIT, BIOTECH_GLP1,
-ENERGY_COMMODITIES, MARITIME_SHIPBUILDING, QUANTUM, PREDICTION_MARKETS, MACRO,
-CRITICAL_MINERALS. Prefer a legal Theme value when one fits; leave `theme` unset only when
-nothing maps, and name the theme in the narrative.
+RETAIL_TECH, HEALTHCARE, FINTECH_PAYMENTS, DEFENSE_DRONES, MEME_SPECIAL_SIT,
+SOCIAL_PLATFORMS, BIOTECH_GLP1, ENERGY_COMMODITIES, MARITIME_SHIPBUILDING, QUANTUM,
+PREDICTION_MARKETS, MACRO, CRITICAL_MINERALS. Prefer a legal Theme value when one fits;
+leave `theme` unset only when nothing maps honestly, and surface null-theme holdings every
+Daily as `UNCAPPED_THEME` (§7).
 
 ## 14. Data quality guards
 

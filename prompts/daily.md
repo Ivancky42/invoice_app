@@ -16,38 +16,19 @@ sizing (§7), sleeves (§6), price provenance (§3), Decision Review (§11), and
 
 ---
 
-## 0. Decision Review seeding (first scheduled run only)
+## 0. Known open pendings (adaptive review — do not re-seed)
 
-**Run this block once** before §1 when `list_decision_reviews(reviewStatus=PENDING)`
-returns **[]** but portfolio/watchlist `pageNotes` or recent daily logs still record
-unresolved actions from the Notion era. Skip on all later runs once DR rows exist.
+Migration Decision Review seed is **complete**. Do **not** run
+`scripts/seed-decision-reviews.ts` or recreate seed rows. Source pendings only from
+`list_decision_reviews`.
 
-1. Read `list_portfolio`, `list_watchlist`, and `list_daily_logs` (~30 days).
-2. For each outstanding action still open (EXIT, stop breach, REDUCE, unresolved WAIT,
-   etc.), `upsert_decision_review` with:
-   - `reviewStatus=PENDING`
-   - `decisionDate` = **original trigger date** from the dated note or daily log — not
-     today's date
-   - `decisionType`, `stopLoss`, `priceAtDecision`, `positionContext`, and
-     `reasonForDecision` transcribed from the source note (include adaptive state if known)
-   - Stable `idempotencyKey`, e.g. `seed-dr-{TICKER}-{decisionType}-{YYYYMMDD}`
-3. Re-query `list_decision_reviews(PENDING)`. §1 must not proceed while legacy pendings
-   live only in notes — that silently drops them from the adaptive loop and leaves §11.8's
-   escalation cap with no history.
-
-**Known migration pendings (verify current price vs stop before §1):**
+Verify these still-open rows against current price/stop before §1:
 
 | Ticker | Issue | Notes |
 |---|---|---|
-| OKLO | EXIT test-starter — close below $46 on 2026-07-18 | Downgraded to `STALE_PENDING` in notes (§11.8); still open |
-| ISRG | QUALITY REBOUND T1 ADD | §12.11 Jul 27; gap-midpoint Aug 3; `QUALITY_CORE`. Size with `ENGINE_ABSENT` → **halve T1**. Below cost → QR consumes AD cap (max 2); no third below-cost ADD. |
-| BULL | REDUCE — capital recycling (2026-08-02 weekly) | ~14% book vs 2–3% Speculative cap; not executed |
-
-Run `npx tsx scripts/seed-decision-reviews.ts` once if the table is still empty (idempotent).
-
-Also backfill portfolio enums (§2) for any row you touch during seeding. **Run 1 is a
-backfill run**, not a normal run — sleeve-dependent judgments are unreliable until §2's
-ordering is satisfied.
+| OKLO | EXIT test-starter — close below $46 on 2026-07-18 | Apply §4 pending-EXIT-into-earnings if DTE≤2; resolve limbo |
+| ISRG | QUALITY REBOUND T1 ADD | `ENGINE_ABSENT` → **halve T1**. Below cost → QR consumes AD cap (max 2) |
+| BULL | REDUCE — capital recycling | Spec oversize vs test-starter + sleeve cap; prefer trim |
 
 ## 1. Pending action review (§10.3) — before creating anything new
 
@@ -120,8 +101,9 @@ After the per-ticker pass, read `nav.sleeveExposure` + `limits` and flag (table 
 - Speculative sleeve vs `limits.speculativeSleevePct` — if over, name trim candidates
   (lowest conviction / breached stop first); block Spec adds.
 - Any `SPECULATIVE` or conviction≤2 name above test-starter band → REDUCE toward band.
-- Null `theme` on non-CSPX → assign or flag (theme cap escape).
-- Null `sleeve` → assign from `_shared` §6 mapping.
+- Null `theme` on non-CSPX → list under `UNCAPPED_THEME` with weight (do not invent a wrong
+  bucket); assign a real theme when one fits (e.g. `SOCIAL_PLATFORMS`).
+- Null `sleeve` → apply default `MOMENTUM_CATALYST`, flag for Weekly confirmation.
 - `STOP_IN_LIMBO` / breached stops unresolved; pending EXIT/REDUCE with `daysToEarnings`≤2.
 - `earningsStale` / null date on names where an ADD is contemplated → block add, fix date.
 - `STALE_STOP` distances per §6 stop policy; RESET where required.

@@ -275,12 +275,16 @@ export function decisionReviewToDTO(row: DecisionReviewRow): DecisionReviewDTO {
 }
 
 export async function getContentPages(): Promise<ContentPageRow[]> {
+	const { ensureContentPages } = await import("@/lib/agent/contentPages");
+	await ensureContentPages();
 	return prisma.contentPage.findMany({ orderBy: { key: "asc" } });
 }
 
 export async function getContentPage(
 	key: ContentPageKey,
 ): Promise<ContentPageRow | null> {
+	const { ensureContentPages } = await import("@/lib/agent/contentPages");
+	await ensureContentPages();
 	return prisma.contentPage.findUnique({ where: { key } });
 }
 

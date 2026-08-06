@@ -216,7 +216,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get content document",
       description:
-        "Read Strategy Lessons Summary or Investment Style Profile (Neon ContentPage, ReportBlock[] body).",
+        "Read Strategy Lessons Summary or Investment Style Profile (Neon ContentPage, ReportBlock[] body). Missing rows are auto-seeded as stubs — never 404 for these keys.",
       inputSchema: getContentPageInputSchema.shape,
     },
     async (args) => {

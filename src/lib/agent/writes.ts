@@ -36,6 +36,7 @@ import type {
 import type { z } from "zod";
 import { asReportBlocks } from "@/lib/content/blocks";
 import type { WatchlistAction } from "@/generated/prisma/client";
+import { contentPageTitle, ensureContentPages } from "@/lib/agent/contentPages";
 
 type DailyLogInput = z.infer<typeof dailyLogInputSchema>;
 type StockReportInput = z.infer<typeof stockReportInputSchema>;
@@ -538,8 +539,10 @@ export async function listDecisionReviews(query: ListDecisionReviewsQuery = {}) 
 }
 
 export async function getContentPage(key: UpsertContentPageInput["key"]) {
+  await ensureContentPages();
   const row = await prisma.contentPage.findUnique({ where: { key } });
   if (!row) {
+    // Should not happen after ensure — keep 404 as a hard invariant signal.
     return {
       ok: false as const,
       status: 404 as const,
@@ -551,9 +554,7 @@ export async function getContentPage(key: UpsertContentPageInput["key"]) {
 }
 
 export async function upsertContentPage(input: UpsertContentPageInput) {
-  const title =
-    input.title?.trim() ||
-    (input.key === "STRATEGY_LESSONS" ? "Strategy Lessons Summary" : "Investment Style Profile");
+  const title = input.title?.trim() || contentPageTitle(input.key);
   const row = await prisma.contentPage.upsert({
     where: { key: input.key },
     create: {

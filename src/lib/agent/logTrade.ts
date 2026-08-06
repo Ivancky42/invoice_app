@@ -512,15 +512,6 @@ export async function logTrade(
       const increasing =
         input.type === "BUY" || input.type === "ADD";
 
-      // Non-CSPX increases must have a theme so theme_cap cannot be escaped.
-      if (increasing && !isCspxTicker(ticker) && !tradeTheme) {
-        throw new InvariantViolation("theme_required", {
-          ticker,
-          message:
-            "Non-CSPX BUY/ADD requires a Theme (set on portfolio row or pass theme on new BUY)",
-        });
-      }
-
       // Post-trade equity slices for NAV / caps
       const slices = buildEquitySlices(
         allPortfolio,
@@ -645,6 +636,11 @@ export async function logTrade(
         ) {
           warnings.push(
             `conviction_size_mismatch: conviction ${conv} but weight ${(weight * 100).toFixed(2)}% exceeds test-starter band`,
+          );
+        }
+        if (increasing && !tradeTheme) {
+          warnings.push(
+            `uncapped_theme: ${ticker} has null theme — position escapes the 30% theme cluster cap; assign a Theme or accept UNCAPPED_THEME reporting`,
           );
         }
       }

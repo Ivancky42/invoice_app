@@ -227,6 +227,8 @@ enum Theme {
   FINTECH_PAYMENTS
   DEFENSE_DRONES
   MEME_SPECIAL_SIT
+  /// Social / consumer internet platforms (Reddit, Meta, etc.)
+  SOCIAL_PLATFORMS
   /// Biotech / GLP-1 / psychedelics / cardiometabolic
   BIOTECH_GLP1
   /// Energy / commodities / grid / electrification (non-nuclear)
