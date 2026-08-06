@@ -15,11 +15,13 @@ Use `list_daily_logs` (~14 days) plus `list_decision_reviews` for pending-action
 
 ## 1. Stale-date guard — do this first
 
-`get_context` sets `earningsStale: true` and clears `daysToEarnings` when
-`earningsDate` is in the past. Treat those as **unknown**, re-confirm via web search,
-then write the corrected `earningsDate` (`YYYY-MM-DD`) via `patch_portfolio` /
-`upsert_watchlist` (system recomputes `daysToEarnings`). List corrections in the daily
-log `notes`. Do not act on a stale `daysToEarnings` before the write.
+`get_context` sets `earningsStale: true` when `earningsDate` is **null or in the past**
+(and clears `daysToEarnings` when past). Treat those as **unknown**, re-confirm via web
+search, then write the **next** confirmed `earningsDate` (`YYYY-MM-DD`) via
+`patch_portfolio` / `upsert_watchlist` (system recomputes `daysToEarnings`). List
+corrections in the daily log `notes`. Do not act on a stale `daysToEarnings` before the
+write. Do **not** clear `earningsDate` to null after a print and move on — that makes the
+next earnings pass skip the name.
 
 `earningsRisk` in context is derived from `context.thresholds.earningsRisk` (imminent /
 soon / clear). Prefer that over any legacy emoji/string label.
@@ -58,6 +60,10 @@ For any ticker that reported since the last run:
 
 - Record actual vs estimate on revenue and EPS, guidance tone, and the market reaction.
 - Reclassify thesis state.
+- **Roll `earningsDate` forward** to the next confirmed report date via
+  `patch_portfolio` / `upsert_watchlist`. If the next date is not yet published, leave a
+  note and set a calendar reminder in `notes` — never leave the field null silently.
+- Refresh `analystTarget` if the print moved Street targets (`_shared` §14).
 - Check **QUALITY REBOUND** eligibility (`_shared` §9) if all of: consistently profitable
   with net cash; wide moat; beat on **both** revenue and EPS; single-day drop ≥10% from
   guide-tone or multiple compression, not thesis damage. If eligible, note the re-ignition

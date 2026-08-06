@@ -70,6 +70,12 @@ Backfill for all existing holdings via `patch_portfolio` / `list_trades` history
 `averageDownsUsed` against `list_trades`. **Flag anything you cannot determine rather than
 guessing.** Do **not** write `shares` via patch — shares come only from `log_trade`.
 
+Also every week, for each holding/watchlist name you touch:
+- Refresh `analystTarget` when recent PTs disagree with the stored target (`_shared` §14).
+- RESET / TRAIL `stopLoss` when `STALE_STOP` applies; write the new level.
+- Roll null/past `earningsDate` to the next confirmed date.
+- Fix stale `entryZone` / `addZone` text (wrong avg-cost clauses, obsolete ranges).
+
 RDDT has no sleeve assigned and was opened without a pre-registered scorecard (§10
 breach) — assign its sleeve and note the lower-confidence flag.
 

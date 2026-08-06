@@ -122,9 +122,14 @@ export const patchPortfolioInputSchema = z.object({
   riskLevel: z.enum(enumValues(RiskLevel)).nullable().optional(),
   marketCapBucket: z.enum(enumValues(MarketCapBucket)).nullable().optional(),
   analystRating: z.enum(enumValues(AnalystRating)).nullable().optional(),
+  /**
+   * Consensus (or refreshed) analyst price target in USD. Server recomputes `upsidePct`
+   * from this + stored `currentPrice`. Do not write `upsidePct` directly.
+   */
+  analystTarget: z.number().positive().nullable().optional(),
   /** YYYY-MM-DD; recomputes daysToEarnings. Null clears both. */
   earningsDate: dateYmd.nullable().optional(),
-  // Explicitly omit currentPrice / shares / myAvgCost — agents must not write prices.
+  // Explicitly omit currentPrice / shares / myAvgCost / upsidePct — marks + derived %.
 });
 
 export const appendPageNotesInputSchema = z.object({
@@ -145,6 +150,10 @@ export const upsertWatchlistInputSchema = z.object({
   marketCapBucket: z.enum(enumValues(MarketCapBucket)).nullable().optional(),
   entryZone: z.string().max(500).nullable().optional(),
   stopLoss: z.number().positive().nullable().optional(),
+  /** Consensus analyst price target USD; server recomputes `upsidePct`. */
+  analystTarget: z.number().positive().nullable().optional(),
+  /** Optional bull-case target USD (watchlist only). */
+  bullTarget: z.number().positive().nullable().optional(),
   keyCatalyst: z.string().max(2000).nullable().optional(),
   keyRisk: z.string().max(2000).nullable().optional(),
   thesis: reportBlocksSchema.nullable().optional(),
@@ -152,7 +161,7 @@ export const upsertWatchlistInputSchema = z.object({
   pageNotes: reportBlocksSchema.nullable().optional(),
   /** YYYY-MM-DD; recomputes daysToEarnings. Null clears both. */
   earningsDate: dateYmd.nullable().optional(),
-  // No currentPrice / analystTarget — price sync owns marks.
+  // No currentPrice / upsidePct — price sync owns marks; upside is derived.
 });
 
 export const listDailyLogsQuerySchema = z.object({

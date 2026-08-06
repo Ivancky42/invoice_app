@@ -86,7 +86,8 @@ function earningsFields(
       earningsDate: null,
       daysToEarnings: null,
       earningsRisk: null,
-      earningsStale: false,
+      // Null is as bad as past — routines must re-confirm the next date.
+      earningsStale: true,
     };
   }
   const today = snapshotDateGMT8();

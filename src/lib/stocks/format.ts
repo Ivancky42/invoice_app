@@ -159,6 +159,29 @@ export function fmtMoneyFixed(n: number, digits = 2): string {
 }
 
 /**
+ * Upside to analyst target as a fraction: `(target − price) / price`.
+ * Example: price $100, target $115 → `0.15`. Null when either side is missing/invalid.
+ * Agents write `analystTarget`; price sync and target patches recompute `upsidePct`.
+ */
+export function computeUpsidePct(
+  currentPrice: number | null | undefined,
+  analystTarget: number | null | undefined,
+): number | null {
+  if (
+    currentPrice == null ||
+    analystTarget == null ||
+    !Number.isFinite(currentPrice) ||
+    !Number.isFinite(analystTarget) ||
+    currentPrice <= 0
+  ) {
+    return null;
+  }
+  const raw = (analystTarget - currentPrice) / currentPrice;
+  if (!Number.isFinite(raw)) return null;
+  return Math.round(raw * 1e6) / 1e6;
+}
+
+/**
  * Fraction → percent string (`0.154` → `15.4%`).
  * Use for upsidePct, computed PnL %, trade pnlPct.
  */

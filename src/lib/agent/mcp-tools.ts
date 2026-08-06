@@ -326,7 +326,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Patch portfolio",
       description:
-        "Patch portfolio metadata (action, stopLoss, sleeve, conviction, thesis/pageNotes, entryZone, addZone, nextAddTrigger, keyRisk, theme, riskLevel, marketCapBucket, analystRating, earningsDate). Does NOT write currentPrice/shares/avg. For append-only daily notes use append_page_notes.",
+        "Patch portfolio metadata (action, stopLoss, sleeve, conviction, thesis/pageNotes, entryZone, addZone, nextAddTrigger, keyRisk, theme, riskLevel, marketCapBucket, analystRating, analystTarget, earningsDate). Writing analystTarget recomputes upsidePct from stored currentPrice. Does NOT write currentPrice/shares/avg/upsidePct. For append-only daily notes use append_page_notes.",
       inputSchema: {
         ticker: z.string().min(1).describe("Ticker symbol"),
         ...patchPortfolioInputSchema.shape,
@@ -348,7 +348,8 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     "upsert_watchlist",
     {
       title: "Upsert watchlist",
-      description: "Upsert a watchlist row by ticker. Does not write prices.",
+      description:
+        "Upsert a watchlist row by ticker. May set analystTarget/bullTarget/stopLoss/entryZone/earningsDate; writing analystTarget recomputes upsidePct. Does not write currentPrice or upsidePct directly.",
       inputSchema: upsertWatchlistInputSchema.shape,
     },
     async (args) => {

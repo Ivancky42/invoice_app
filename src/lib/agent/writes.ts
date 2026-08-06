@@ -10,7 +10,7 @@ import {
   DEFAULT_EARNINGS_RISK,
   DEFAULT_SENTIMENT,
 } from "@/lib/stocks/derived";
-import { isCashTicker } from "@/lib/stocks/format";
+import { isCashTicker, computeUpsidePct, decToNum } from "@/lib/stocks/format";
 import { snapshotDateGMT8 } from "@/lib/stocks/portfolioTotals";
 import {
   serializeContentPage,
@@ -225,6 +225,13 @@ export async function patchPortfolio(tickerRaw: string, input: PatchPortfolioInp
   if (input.riskLevel !== undefined) data.riskLevel = input.riskLevel;
   if (input.marketCapBucket !== undefined) data.marketCapBucket = input.marketCapBucket;
   if (input.analystRating !== undefined) data.analystRating = input.analystRating;
+  if (input.analystTarget !== undefined) {
+    data.analystTarget = input.analystTarget;
+    data.upsidePct = computeUpsidePct(
+      decToNum(existing.currentPrice),
+      input.analystTarget,
+    );
+  }
   if (input.earningsDate !== undefined) {
     if (input.earningsDate === null) {
       data.earningsDate = null;
@@ -256,6 +263,8 @@ export async function upsertWatchlist(input: UpsertWatchlistInput) {
     action !== "DEMOTED" &&
     action !== "DROPPED";
 
+  const existing = await prisma.watchlist.findUnique({ where: { ticker } });
+
   const create: PrismaTypes.WatchlistUncheckedCreateInput = {
     ticker,
     company: input.company ?? undefined,
@@ -279,6 +288,17 @@ export async function upsertWatchlist(input: UpsertWatchlistInput) {
     actionNotes: jsonField(input.actionNotes) as PrismaTypes.InputJsonValue | undefined,
     pageNotes: jsonField(input.pageNotes) as PrismaTypes.InputJsonValue | undefined,
   };
+
+  if (input.analystTarget !== undefined) {
+    create.analystTarget = input.analystTarget;
+    create.upsidePct = computeUpsidePct(
+      existing ? decToNum(existing.currentPrice) : null,
+      input.analystTarget,
+    );
+  }
+  if (input.bullTarget !== undefined) {
+    create.bullTarget = input.bullTarget;
+  }
 
   if (input.earningsDate !== undefined) {
     if (input.earningsDate === null) {

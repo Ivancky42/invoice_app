@@ -50,7 +50,10 @@ Do not rely on stale config copied into a routine.
   decision can be resolved to the exact ruleset. Do **not** invent extra props on
   `patch_portfolio` / `upsert_watchlist` / `upsert_idea` / `upsert_trend` (those
   schemas omit it).
-- **Never write prices.** Prices come from the price sync only.
+- **Never write marks.** `currentPrice`, `shares`, and `myAvgCost` come from the price
+  sync / `log_trade` only. Agents **do** write `analystTarget` (consensus USD) via
+  `patch_portfolio` / `upsert_watchlist` — the server recomputes `upsidePct`. Never write
+  `upsidePct` directly.
 - **`patch_config` is not on MCP.** Cash/FX/LIMITS changes are HTTP-only for Ivan.
   Ticker-list hygiene uses `sync_tracked_tickers`.
 - Never email Ivan. All output goes to Neon.
@@ -124,7 +127,9 @@ Rules:
 - Analyst targets are one signal only. Never recommend on target alone. Weigh momentum,
   technical structure, sector trend, catalyst quality, news, valuation/risk-reward, and
   Strategy Lessons. If targets conflict with price action, explain the conflict and prefer
-  `WAIT / REASSESS`.
+  `WAIT / REASSESS`. If stored `analystTarget` / `upsidePct` disagree with recent PTs in
+  notes or with `(target − price) / price`, refresh the target first (`_shared` §14) —
+  do not escalate on a fossil upside figure.
 - Entry-zone hit is **not** automatically BUY. Evaluate constructive move vs falling knife.
   In zone but confirmation missing → WAIT. Zone entered via thesis damage, bad earnings,
   dilution, broken support, or sector weakness → AVOID.
@@ -334,19 +339,40 @@ nothing maps, and name the theme in the narrative.
   absence means "not applicable".
 - **Portfolio patchable fields:** `action`, `stopLoss`, `sleeve`, `conviction` (1–5),
   `thesis`/`notes`/`pageNotes` (ReportBlock[]), `entryZone`, `addZone`, `nextAddTrigger`,
-  `keyRisk`, `theme`, `riskLevel`, `marketCapBucket`, `analystRating`, `earningsDate`
-  (`YYYY-MM-DD`; clears `daysToEarnings` when past/null — system recomputes days).
-  Not writable: `shares`, `currentPrice`, `myAvgCost` (prices/shares via sync / `log_trade`).
+  `keyRisk`, `theme`, `riskLevel`, `marketCapBucket`, `analystRating`, `analystTarget`
+  (USD; server recomputes `upsidePct`), `earningsDate` (`YYYY-MM-DD`; clears
+  `daysToEarnings` when past/null — system recomputes days). Not writable: `shares`,
+  `currentPrice`, `myAvgCost`, `upsidePct` (derived).
 - **Watchlist upsertable:** includes `priority`, `action` (`WatchlistAction`),
-  `marketCapBucket`, `analystRating`, `earningsDate`, zones, thesis/`actionNotes`/
-  `pageNotes`. No `conviction` column on watchlist — put conviction in DR / notes.
-- **Stale earnings:** if `earningsStale: true` or `earningsDate` is in the past, treat
-  earnings as unknown, re-confirm via web search, then write the corrected `earningsDate`
-  via `patch_portfolio` / `upsert_watchlist`. Do not act on a stale `daysToEarnings`.
+  `marketCapBucket`, `analystRating`, `analystTarget`, `bullTarget`, `earningsDate`,
+  zones, thesis/`actionNotes`/`pageNotes`. No `conviction` column on watchlist — put
+  conviction in DR / notes. No direct `upsidePct` write.
+- **Analyst target hygiene:** `analystTarget` is a living consensus field, not a migration
+  fossil. When recent PTs in notes/web disagree with stored target by ≳15%, or when
+  `upsidePct` contradicts `(analystTarget − currentPrice) / currentPrice`, refresh
+  `analystTarget` via patch/upsert (prefer median of recent named PTs, else Street
+  consensus). Do **not** escalate REDUCE/EXIT on negative upside alone when notes show a
+  newer PT cluster — fix the target first, then reassess. Target-cross / "above analyst
+  target" logic must use the refreshed field.
+- **Stop hygiene:** `stopLoss` is a decision trigger that must stay meaningful. On
+  `MOMENTUM_CATALYST` / `SPECULATIVE` winners ≳30% above cost, if stop is ≳25% below spot,
+  flag `STALE_STOP` and recommend RESET STOP / TRAIL STOP with a concrete new level via
+  `patch_portfolio` (do not leave cost-era stops as decoration while the shadow trail does
+  the real work). On `QUALITY_CORE`, stale stops are advisory review triggers only.
+- **Stale earnings:** if `earningsStale: true`, `earningsDate` is null, or `earningsDate`
+  is in the past, treat earnings as unknown, re-confirm via web search, then write the
+  **next** `earningsDate` via `patch_portfolio` / `upsert_watchlist`. After a print, roll
+  forward to the next confirmed date — do **not** clear to null and leave the earnings
+  routine blind. Null only when search cannot find a next date (say so in notes). Do not
+  act on a stale `daysToEarnings`.
+- **Zone / cost text:** `entryZone` / `addZone` are price ranges, not avg-cost labels. If
+  zone text cites an avg cost that disagrees with `myAvgCost`, rewrite the zone (or drop
+  the cost clause). Never invent avg cost in zone fields — cost lives on `myAvgCost`.
 - Ideas without `leadTicker` cannot join to watchlist/portfolio and have
   `priceReliable: false`. Set `leadTicker` whenever you touch an idea (§11.4).
 - **Percent units (write correctly — UI formats from these):**
-  - **Fractions** (`0.154` = 15.4%): `upsidePct`, trade `pnlPct`, computed position P&L %.
+  - **Fractions** (`0.154` = 15.4%): `upsidePct` (system-computed), trade `pnlPct`,
+    computed position P&L %.
   - **Percentage points** (`-2.5` = -2.5%): Decision Review `return1wPct` / `return4wPct` /
     `return3mPct`, Trend `perf1m` / `perf3m`. Do not write `0.025` for a −2.5% move.
 

@@ -5,6 +5,8 @@ import {
   isCashTicker,
   isCspxTicker,
   isPriceSyncExcludedTicker,
+  computeUpsidePct,
+  decToNum,
 } from "@/lib/stocks/format";
 import { snapshotDateGMT8 } from "@/lib/stocks/portfolioTotals";
 
@@ -181,13 +183,26 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
         notionId: true,
         ticker: true,
         earningsDate: true,
+        analystTarget: true,
       },
     }),
     prisma.watchlist.findMany({
-      select: { id: true, notionId: true, ticker: true, earningsDate: true },
+      select: {
+        id: true,
+        notionId: true,
+        ticker: true,
+        earningsDate: true,
+        analystTarget: true,
+      },
     }),
     prisma.idea.findMany({
-      select: { id: true, notionId: true, stockSector: true, leadTicker: true },
+      select: {
+        id: true,
+        notionId: true,
+        stockSector: true,
+        leadTicker: true,
+        analystTarget: true,
+      },
     }),
   ]);
 
@@ -287,6 +302,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
           currentPrice: price,
           lastPriceUpdate: priceUpdateDay,
           daysToEarnings: daysToEarningsFrom(row.earningsDate),
+          upsidePct: computeUpsidePct(price, decToNum(row.analystTarget)),
         },
       });
       updated += 1;
@@ -396,6 +412,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
         data: {
           currentPrice: price,
           daysToEarnings: daysToEarningsFrom(row.earningsDate),
+          upsidePct: computeUpsidePct(price, decToNum(row.analystTarget)),
         },
       });
       updated += 1;
@@ -465,6 +482,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
         where: { id: row.id },
         data: {
           currentPrice: resolved.price,
+          upsidePct: computeUpsidePct(resolved.price, decToNum(row.analystTarget)),
           // Persist inferred lead when missing so future syncs stay deterministic.
           ...(row.leadTicker?.trim()
             ? {}

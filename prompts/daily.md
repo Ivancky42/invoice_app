@@ -89,10 +89,16 @@ For every portfolio and watchlist ticker in `trackedTickers`:
   `riskLevel`, `conviction` (1–5), `theme`, `marketCapBucket`, `analystRating`,
   `addZone`, `nextAddTrigger`; watchlist `riskLevel`, `theme`, `marketCapBucket`,
   `analystRating`. Use canonical sleeve mapping from `_shared` §6 (do not re-derive).
-  Re-confirm and write `earningsDate` when `earningsStale` or date is in the past.
+  Re-confirm and write `earningsDate` when `earningsStale`, date is null, or date is in
+  the past — roll to the **next** confirmed date (`_shared` §14), never leave null after
+  a print if the next date is knowable.
+  Refresh `analystTarget` when notes/web show a newer PT cluster or when stored upside
+  looks stale vs `(target − price) / price` (`_shared` §14). Raise `STALE_STOP` /
+  RESET STOP when stop is decorative on a Momentum/Spec winner.
+  Fix `entryZone` / `addZone` text that cites a wrong avg cost.
   Cross-check `averageDownsUsed` against `list_trades` (`type=ADD` where
   `pricePerShare` < `myAvgCost`) when the field looks wrong. Do **not** write `shares` /
-  `currentPrice` / `myAvgCost`.
+  `currentPrice` / `myAvgCost` / `upsidePct`.
 - **Then** apply sleeve rules (`_shared` §6) — a broken stop on a `QUALITY_CORE` name is a
   review trigger, **not** an exit recommendation. With `sleeve: null`, you cannot evaluate
   this correctly; backfill must precede sleeve logic.
