@@ -6,8 +6,10 @@ import {
   getPromptMarkdown,
   isAgentRoutine,
   isPromptName,
+  listDailyLogItems,
   listIdeaItems,
   listPortfolioPositions,
+  listStockReportItems,
   listTradeItems,
   listTrendItems,
   listWatchlistItems,
@@ -17,11 +19,18 @@ import {
 import { logTrade } from "@/lib/agent/logTrade";
 import {
   dailyLogInputSchema,
+  getContentPageInputSchema,
+  listDailyLogsQuerySchema,
+  listDecisionReviewsQuerySchema,
+  listReportsQuerySchema,
   logTradeInputSchema,
   patchConfigFieldsSchema,
   patchConfigInputSchema,
   patchPortfolioInputSchema,
+  appendPageNotesInputSchema,
   stockReportInputSchema,
+  upsertContentPageInputSchema,
+  upsertDecisionReviewInputSchema,
   upsertIdeaFieldsSchema,
   upsertIdeaInputSchema,
   upsertTrendInputSchema,
@@ -29,10 +38,16 @@ import {
   validationFailure,
 } from "@/lib/agent/schemas";
 import {
+  appendPageNotes,
   deleteWatchlist,
+  getContentPage,
+  listDecisionReviews,
   patchConfig,
   patchPortfolio,
+  syncTrackedTickersFromDb,
+  upsertContentPage,
   upsertDailyLog,
+  upsertDecisionReview,
   upsertIdea,
   upsertStockReport,
   upsertTrend,
@@ -141,10 +156,79 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     "list_watchlist",
     {
       title: "List watchlist",
-      description: "List watchlist rows.",
-      inputSchema: {},
+      description:
+        "List watchlist rows. Excludes DEMOTED/DROPPED by default; pass includeDemoted=true to include soft-demoted names.",
+      inputSchema: {
+        includeDemoted: z
+          .boolean()
+          .optional()
+          .describe("Include DEMOTED/DROPPED rows (default false)"),
+      },
     },
-    async () => textJson(await listWatchlistItems()),
+    async ({ includeDemoted }) =>
+      textJson(await listWatchlistItems({ includeDemoted: includeDemoted === true })),
+  );
+
+  server.registerTool(
+    "list_decision_reviews",
+    {
+      title: "List decision reviews",
+      description:
+        "List Decision Review Log rows (filter by ticker, reviewStatus, or pendingDueWithinDays).",
+      inputSchema: listDecisionReviewsQuerySchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(listDecisionReviewsQuerySchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await listDecisionReviews(parsed));
+    },
+  );
+
+  server.registerTool(
+    "list_daily_logs",
+    {
+      title: "List daily logs",
+      description:
+        "List DailyLog rows (newest first). Optional since/until YYYY-MM-DD; default limit 14 (max 90).",
+      inputSchema: listDailyLogsQuerySchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(listDailyLogsQuerySchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await listDailyLogItems(parsed));
+    },
+  );
+
+  server.registerTool(
+    "list_reports",
+    {
+      title: "List stock reports",
+      description:
+        "List StockReport rows (WEEKLY/MONTHLY). Optional reportType, since/until; default limit 8 (max 36).",
+      inputSchema: listReportsQuerySchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(listReportsQuerySchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await listStockReportItems(parsed));
+    },
+  );
+
+  server.registerTool(
+    "get_document",
+    {
+      title: "Get content document",
+      description:
+        "Read Strategy Lessons Summary or Investment Style Profile (Neon ContentPage, ReportBlock[] body).",
+      inputSchema: getContentPageInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(getContentPageInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      const result = await getContentPage(parsed.key);
+      if (!result.ok) return { ...textJson(result), isError: true as const };
+      return textJson(result);
+    },
   );
 
   server.registerTool(
@@ -245,7 +329,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Patch portfolio",
       description:
-        "Patch portfolio metadata (action, stopLoss, sleeve, conviction, thesis/pageNotes, entryZone, keyRisk, theme). Does NOT write currentPrice/shares/avg.",
+        "Patch portfolio metadata (action, stopLoss, sleeve, conviction, thesis/pageNotes, entryZone, addZone, nextAddTrigger, keyRisk, theme, riskLevel, marketCapBucket, analystRating, earningsDate). Does NOT write currentPrice/shares/avg. For append-only daily notes use append_page_notes.",
       inputSchema: {
         ticker: z.string().min(1).describe("Ticker symbol"),
         ...patchPortfolioInputSchema.shape,
@@ -278,21 +362,91 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "append_page_notes",
+    {
+      title: "Append page notes",
+      description:
+        "Append ReportBlock[] to portfolio or watchlist pageNotes (append-only ticker-note rule). Prefer this over patch_portfolio pageNotes replace.",
+      inputSchema: appendPageNotesInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(appendPageNotesInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      const result = await appendPageNotes(parsed);
+      if (!result.ok) return { ...textJson(result), isError: true as const };
+      return textJson(result);
+    },
+  );
+
+  server.registerTool(
+    "upsert_decision_review",
+    {
+      title: "Upsert decision review",
+      description:
+        "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry. Defaults reviewStatus to PENDING.",
+      inputSchema: upsertDecisionReviewInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(upsertDecisionReviewInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await upsertDecisionReview(parsed));
+    },
+  );
+
+  server.registerTool(
+    "upsert_document",
+    {
+      title: "Upsert content document",
+      description:
+        "Replace Strategy Lessons Summary or Investment Style Profile body (ReportBlock[]).",
+      inputSchema: upsertContentPageInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(upsertContentPageInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson({ ok: true, document: await upsertContentPage(parsed) });
+    },
+  );
+
+  server.registerTool(
     "delete_watchlist",
     {
-      title: "Delete watchlist",
-      description: "Delete a watchlist row by ticker.",
+      title: "Demote or delete watchlist",
+      description:
+        "Soft-demote by default (sets action=DEMOTED, keeps the row — Cowork §6). Pass hard=true to permanently delete.",
       inputSchema: {
-        ticker: z.string().min(1).describe("Ticker to remove"),
+        ticker: z.string().min(1).describe("Ticker to demote/remove"),
+        hard: z
+          .boolean()
+          .optional()
+          .describe("If true, hard-delete the row (rare; prefer soft demote)"),
+        action: z
+          .enum(["DEMOTED", "DROPPED"])
+          .optional()
+          .describe("Soft-demote action (default DEMOTED)"),
       },
     },
-    async ({ ticker }) => {
-      const result = await deleteWatchlist(ticker);
+    async ({ ticker, hard, action }) => {
+      const result = await deleteWatchlist(ticker, {
+        hard: hard === true,
+        action: action === "DROPPED" ? "DROPPED" : "DEMOTED",
+      });
       if (!result.ok) {
         return { ...textJson(result), isError: true as const };
       }
       return textJson(result);
     },
+  );
+
+  server.registerTool(
+    "sync_tracked_tickers",
+    {
+      title: "Sync tracked tickers",
+      description:
+        "Rebuild Config TRACKED_TICKERS from Portfolio + active Watchlist (excludes DEMOTED/DROPPED). Prefer this over patch_config for ticker list hygiene.",
+      inputSchema: {},
+    },
+    async () => textJson(await syncTrackedTickersFromDb()),
   );
 
   server.registerTool(
@@ -328,7 +482,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Patch config",
       description:
-        "Patch safe Config keys: cash, FX, thresholds, tracked tickers, LIMITS. Never prompts. LIMITS changes hard caps.",
+        "Patch Config. Prefer sync_tracked_tickers for ticker lists. Agents must not change LIMITS in routines — hard caps are Ivan-owned. Allowed keys: cash, FX, thresholds, TRACKED_TICKERS, LIMITS.",
       inputSchema: patchConfigFieldsSchema.shape,
     },
     async (args: Record<string, unknown>) => {

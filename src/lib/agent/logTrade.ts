@@ -24,6 +24,7 @@ import {
 import { resolvePositionShares } from "@/lib/stocks/portfolioTotals";
 import type { ReportBlock } from "@/lib/content/blocks";
 import type { LogTradeInputParsed } from "@/lib/agent/schemas";
+import { syncTrackedTickersFromDb } from "@/lib/agent/writes";
 
 const SHARES_EPS = 1e-6;
 const MONEY_EPS = 0.02;
@@ -389,7 +390,7 @@ export async function logTrade(
   }
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // 1. Idempotent replay
       const existing = await tx.trade.findUnique({
         where: { idempotencyKey: input.idempotencyKey },
@@ -751,6 +752,15 @@ export async function logTrade(
         idempotentReplay: false,
       };
     }, TX_OPTS);
+
+    if (result.ok) {
+      try {
+        await syncTrackedTickersFromDb();
+      } catch (err) {
+        console.error("[logTrade] syncTrackedTickersFromDb failed", err);
+      }
+    }
+    return result as LogTradeResult;
   } catch (err) {
     if (err instanceof InvariantViolation) {
       return {

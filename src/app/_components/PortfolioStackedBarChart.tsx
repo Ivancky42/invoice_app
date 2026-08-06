@@ -1,4 +1,4 @@
-import { fmtMoney, fmtMoneyFixed, fmtPct, fmtShortDateUtc } from "@/lib/stocks/format";
+import { fmtMoney, fmtMoneyFixed, fmtPctPoints, fmtShortDateUtc } from "@/lib/stocks/format";
 import {
 	assignPortfolioValueColors,
 	getPortfolioHoldingColor,
@@ -203,14 +203,14 @@ export function PortfolioStackedBarChart({ points, width = 640 }: Props) {
 				</span>
 				{latest.dailyReturnPct !== null ? (
 					<span className={latest.dailyReturnPct >= 0 ? "text-emerald-700" : "text-red-700"}>
-						Day {fmtPct(latest.dailyReturnPct / 100)}
+						Day {fmtPctPoints(latest.dailyReturnPct)}
 					</span>
 				) : null}
 				{periodReturn !== null && enriched.length > 1 ? (
 					<span className="text-gray-500">
 						Period{" "}
 						<span className={periodReturn >= 0 ? "text-emerald-700" : "text-red-700"}>
-							{fmtPct(periodReturn / 100)}
+							{fmtPctPoints(periodReturn)}
 						</span>
 					</span>
 				) : null}

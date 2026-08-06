@@ -8,6 +8,8 @@ import {
   fmtMoney,
   fmtNum,
   fmtPct,
+  fmtTicker,
+  pnlToneClass,
   tradeTypeBadgeClass,
 } from "@/lib/stocks/format";
 import { tradeStatusLabel, tradeTypeLabel } from "@/lib/stocks/labels";
@@ -46,7 +48,9 @@ function TradeTable({ rows }: { rows: TradeRow[] }) {
                 <td className="px-4 py-3 whitespace-nowrap">
                   {t.date ? t.date.toISOString().slice(0, 10) : "—"}
                 </td>
-                <td className="px-4 py-3 font-medium">{t.ticker ?? "—"}</td>
+                <td className="px-4 py-3 font-medium tracking-wide tabular-nums">
+                  {fmtTicker(t.ticker)}
+                </td>
                 <td className="px-4 py-3">
                   {t.type ? (
                     <span className={`badge ${tradeTypeBadgeClass(t.type)}`}>
@@ -56,16 +60,14 @@ function TradeTable({ rows }: { rows: TradeRow[] }) {
                     "—"
                   )}
                 </td>
-                <td className="px-4 py-3 text-right">{fmtMoney(decToNum(t.pricePerShare))}</td>
-                <td className="px-4 py-3 text-right">{fmtNum(decToNum(t.shares), 0)}</td>
-                <td className="px-4 py-3 text-right">{fmtMoney(decToNum(t.totalValue))}</td>
-                <td className="px-4 py-3 text-right">
+                <td className="px-4 py-3 text-right tabular-nums">{fmtMoney(decToNum(t.pricePerShare))}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{fmtNum(decToNum(t.shares), 0)}</td>
+                <td className="px-4 py-3 text-right tabular-nums">{fmtMoney(decToNum(t.totalValue))}</td>
+                <td className="px-4 py-3 text-right tabular-nums">
                   {pnlD !== null ? (
                     <>
-                      <div className={pnlD >= 0 ? "text-emerald-700" : "text-red-700"}>
-                        {fmtMoney(pnlD)}
-                      </div>
-                      <div className="text-xs text-gray-500">{fmtPct(pnlP)}</div>
+                      <div className={pnlToneClass(pnlD)}>{fmtMoney(pnlD)}</div>
+                      <div className={`text-xs ${pnlToneClass(pnlP)}`}>{fmtPct(pnlP)}</div>
                     </>
                   ) : (
                     <span className="text-gray-400">—</span>

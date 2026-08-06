@@ -1,5 +1,10 @@
 import type {
   AnalystRating,
+  DecisionPositionContext,
+  DecisionReviewStatus,
+  DecisionSignalQuality,
+  DecisionType,
+  DecisionVerdict,
   DiscoveredVia,
   IdeaStage,
   IdeaStatus,
@@ -12,10 +17,12 @@ import type {
   TradeType,
   TrendStage,
   TrendVerdict,
+  WatchlistAction,
   WatchlistPriority,
   WeekMomentum,
 } from "@/generated/prisma/client";
 import type { DerivedEarningsRisk, DerivedSentiment } from "@/lib/stocks/derived";
+import { normalizeRiskLevel } from "@/lib/stocks/normalizeStatus";
 
 /** Grey badge only for null/undefined — never for unknown enum members. */
 export const NULL_BADGE_CLASS = "bg-gray-100 text-gray-600";
@@ -76,6 +83,91 @@ export const WATCHLIST_PRIORITY_CLASS: Record<WatchlistPriority, string> = {
   WAIT_FOR_ENTRY: "bg-blue-100 text-blue-700",
   WATCH: "bg-gray-100 text-gray-700",
   SKIP_FOR_NOW: "bg-red-50 text-red-700",
+};
+
+export const WATCHLIST_ACTION_LABEL: Record<WatchlistAction, string> = {
+  BUY_SUGGESTED: "Buy suggested",
+  EARLY_ENTRY: "Early entry",
+  DEMOTED: "Demoted",
+  DROPPED: "Dropped",
+};
+
+export const WATCHLIST_ACTION_CLASS: Record<WatchlistAction, string> = {
+  BUY_SUGGESTED: "bg-emerald-100 text-emerald-800",
+  EARLY_ENTRY: "bg-amber-100 text-amber-800",
+  DEMOTED: "bg-gray-200 text-gray-600",
+  DROPPED: "bg-red-50 text-red-700",
+};
+
+export const DECISION_TYPE_LABEL: Record<DecisionType, string> = {
+  BUY: "Buy",
+  ADD: "Add",
+  AVERAGE_DOWN: "Average down",
+  HOLD: "Hold",
+  REDUCE: "Reduce",
+  EXIT: "Exit",
+  WAIT: "Wait",
+  AVOID: "Avoid",
+  DO_NOT_AVERAGE_DOWN: "Do not average down",
+};
+
+export const DECISION_TYPE_CLASS: Record<DecisionType, string> = {
+  BUY: "bg-emerald-100 text-emerald-800",
+  ADD: "bg-emerald-50 text-emerald-700",
+  AVERAGE_DOWN: "bg-amber-100 text-amber-800",
+  HOLD: "bg-gray-100 text-gray-700",
+  REDUCE: "bg-orange-100 text-orange-800",
+  EXIT: "bg-red-100 text-red-800",
+  WAIT: "bg-blue-100 text-blue-800",
+  AVOID: "bg-red-50 text-red-700",
+  DO_NOT_AVERAGE_DOWN: "bg-amber-50 text-amber-700",
+};
+
+export const DECISION_REVIEW_STATUS_LABEL: Record<DecisionReviewStatus, string> = {
+  PENDING: "Pending",
+  REVIEWED_1W: "1W reviewed",
+  REVIEWED_4W: "4W reviewed",
+  REVIEWED_3M: "3M reviewed",
+  CLOSED: "Closed",
+};
+
+export const DECISION_REVIEW_STATUS_CLASS: Record<DecisionReviewStatus, string> = {
+  PENDING: "bg-amber-100 text-amber-800",
+  REVIEWED_1W: "bg-blue-50 text-blue-700",
+  REVIEWED_4W: "bg-blue-100 text-blue-800",
+  REVIEWED_3M: "bg-indigo-100 text-indigo-800",
+  CLOSED: "bg-gray-100 text-gray-600",
+};
+
+export const DECISION_VERDICT_LABEL: Record<DecisionVerdict, string> = {
+  WIN: "Win",
+  LOSS: "Loss",
+  AVOIDED_LOSS: "Avoided loss",
+  TOO_EARLY: "Too early",
+  NEUTRAL: "Neutral",
+};
+
+export const DECISION_VERDICT_CLASS: Record<DecisionVerdict, string> = {
+  WIN: "bg-emerald-100 text-emerald-800",
+  LOSS: "bg-red-100 text-red-800",
+  AVOIDED_LOSS: "bg-emerald-50 text-emerald-700",
+  TOO_EARLY: "bg-amber-50 text-amber-700",
+  NEUTRAL: "bg-gray-100 text-gray-700",
+};
+
+export const DECISION_SIGNAL_QUALITY_LABEL: Record<DecisionSignalQuality, string> = {
+  GOOD: "Good",
+  MIXED: "Mixed",
+  POOR: "Poor",
+  TOO_EARLY: "Too early",
+};
+
+export const DECISION_POSITION_CONTEXT_LABEL: Record<DecisionPositionContext, string> = {
+  PORTFOLIO: "Portfolio",
+  WATCHLIST: "Watchlist",
+  NEW_IDEA: "New idea",
+  TREND: "Trend",
+  EARNINGS: "Earnings",
 };
 
 export const ANALYST_RATING_LABEL: Record<AnalystRating, string> = {
@@ -332,9 +424,11 @@ export function positionActionLabel(v: PositionAction | null | undefined): strin
   return POSITION_ACTION_LABEL[v];
 }
 
-export function riskLevelLabel(v: RiskLevel | null | undefined): string {
+export function riskLevelLabel(v: RiskLevel | string | null | undefined): string {
   if (v == null) return "—";
-  return RISK_LEVEL_LABEL[v];
+  if (v in RISK_LEVEL_LABEL) return RISK_LEVEL_LABEL[v as RiskLevel];
+  const n = normalizeRiskLevel(v);
+  return n ? RISK_LEVEL_LABEL[n] : v;
 }
 
 export function watchlistPriorityLabel(v: WatchlistPriority | null | undefined): string {
@@ -380,6 +474,42 @@ export function weekMomentumLabel(v: WeekMomentum | null | undefined): string {
 export function themeLabel(v: Theme | null | undefined): string {
   if (v == null) return "—";
   return THEME_LABEL[v];
+}
+
+export function sleeveLabel(v: Sleeve | null | undefined): string {
+  if (v == null) return "—";
+  return SLEEVE_LABEL[v];
+}
+
+export function decisionTypeLabel(v: DecisionType | null | undefined): string {
+  if (v == null) return "—";
+  return DECISION_TYPE_LABEL[v];
+}
+
+export function decisionReviewStatusLabel(
+  v: DecisionReviewStatus | null | undefined,
+): string {
+  if (v == null) return "—";
+  return DECISION_REVIEW_STATUS_LABEL[v];
+}
+
+export function decisionVerdictLabel(v: DecisionVerdict | null | undefined): string {
+  if (v == null) return "—";
+  return DECISION_VERDICT_LABEL[v];
+}
+
+export function decisionSignalQualityLabel(
+  v: DecisionSignalQuality | null | undefined,
+): string {
+  if (v == null) return "—";
+  return DECISION_SIGNAL_QUALITY_LABEL[v];
+}
+
+export function decisionPositionContextLabel(
+  v: DecisionPositionContext | null | undefined,
+): string {
+  if (v == null) return "—";
+  return DECISION_POSITION_CONTEXT_LABEL[v];
 }
 
 export function derivedSentimentLabel(v: DerivedSentiment | null | undefined): string {

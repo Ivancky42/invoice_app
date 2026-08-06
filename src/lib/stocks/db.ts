@@ -9,8 +9,10 @@ import type {
 	DailyLog,
 	StockReport,
 	SyncStatus,
+	DecisionReview,
+	ContentPage,
 } from "@/generated/prisma/client";
-import { StockReportType } from "@/generated/prisma/client";
+import { ContentPageKey, StockReportType } from "@/generated/prisma/client";
 import type { ReportBlock } from "@/lib/content/blocks";
 import { asReportBlocks } from "@/lib/content/blocks";
 import {
@@ -32,6 +34,8 @@ export type IdeaRow = Idea;
 export type DailyLogRow = DailyLog;
 export type StockReportRow = StockReport;
 export type SyncStatusRow = SyncStatus;
+export type DecisionReviewRow = DecisionReview;
+export type ContentPageRow = ContentPage;
 
 /** Plain shape for passing daily logs into client components (JSON-serializable). */
 export type DailyLogDTO = {
@@ -180,6 +184,43 @@ export async function getStockReports(type?: StockReportType): Promise<StockRepo
 			{ title: "desc" },
 		],
 	});
+}
+
+export async function getDecisionReviews(): Promise<DecisionReviewRow[]> {
+	return prisma.decisionReview.findMany({
+		orderBy: [
+			{ decisionDate: { sort: "desc", nulls: "last" } },
+			{ createdAt: "desc" },
+		],
+	});
+}
+
+export async function getContentPages(): Promise<ContentPageRow[]> {
+	return prisma.contentPage.findMany({ orderBy: { key: "asc" } });
+}
+
+export async function getContentPage(
+	key: ContentPageKey,
+): Promise<ContentPageRow | null> {
+	return prisma.contentPage.findUnique({ where: { key } });
+}
+
+export type ContentPageDTO = {
+	key: ContentPageKey;
+	title: string;
+	body: ReportBlock[];
+	updatedAt: string | null;
+	syncedAt: string | null;
+};
+
+export function contentPageToDTO(row: ContentPageRow): ContentPageDTO {
+	return {
+		key: row.key,
+		title: row.title,
+		body: asReportBlocks(row.body),
+		updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
+		syncedAt: row.syncedAt ? row.syncedAt.toISOString() : null,
+	};
 }
 
 export async function getLatestStockReport(

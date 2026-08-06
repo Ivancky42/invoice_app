@@ -28,14 +28,33 @@ function createClient(): PrismaClient {
   return new PrismaClient({ adapter });
 }
 
+/** True when cached client matches the generated schema (survives `prisma generate` + HMR). */
+function isCurrentClient(client: PrismaClient | undefined): client is PrismaClient {
+  if (!client) return false;
+  // Probe the newest models — an older singleton may still expose older delegates.
+  return (
+    typeof (client as { decisionReview?: unknown }).decisionReview !== "undefined" &&
+    typeof (client as { contentPage?: unknown }).contentPage !== "undefined"
+  );
+}
+
 function getClient(): PrismaClient {
   const cached = globalForPrisma.prisma;
-  // Dev HMR can keep an old PrismaClient instance after `prisma generate`.
-  if (cached?.clientProfile) return cached;
+  if (isCurrentClient(cached)) return cached;
 
   const client = createClient();
   if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = client;
   return client;
 }
 
-export const prisma = getClient();
+/**
+ * Lazy proxy so module reloads / HMR never freeze a pre-generate PrismaClient
+ * on `export const prisma = getClient()`.
+ */
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getClient();
+    const value = Reflect.get(client, prop, client);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});

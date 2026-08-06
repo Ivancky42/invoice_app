@@ -8,10 +8,12 @@ import {
   decToNum,
   fmtMoney,
   fmtPct,
+  fmtTicker,
   holdingsByTicker,
   isCashTicker,
   notionCashBalanceUsd,
   pnl,
+  pnlToneClass,
   positionPnl,
 } from "@/lib/stocks/format";
 import { computePortfolioTotals, resolvePositionShares } from "@/lib/stocks/portfolioTotals";
@@ -223,7 +225,7 @@ export default async function StocksOverview() {
 
       <StocksDailyBriefCard />
 
-      <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <Link href="/stocks/portfolio" className="card p-4 hover:shadow-sm transition">
           <div className="text-xs text-gray-500">Holdings</div>
           <div className="text-2xl font-semibold mt-1">{portfolio.length}</div>
@@ -235,6 +237,10 @@ export default async function StocksOverview() {
         <Link href="/stocks/trades" className="card p-4 hover:shadow-sm transition">
           <div className="text-xs text-gray-500">Open trades</div>
           <div className="text-2xl font-semibold mt-1">{openTrades}</div>
+        </Link>
+        <Link href="/stocks/decisions" className="card p-4 hover:shadow-sm transition">
+          <div className="text-xs text-gray-500">Decisions</div>
+          <div className="text-sm font-medium mt-2 text-gray-700">Review log →</div>
         </Link>
         <div className="card p-4">
           <div className="text-xs text-gray-500">Unrealized P&L (portfolio)</div>
@@ -336,7 +342,9 @@ export default async function StocksOverview() {
               )}
               {movers.map((m) => (
                 <tr key={m.ticker} className="hover:bg-gray-50">
-                  <td className="px-5 py-3 font-medium">{m.ticker}</td>
+                  <td className="px-5 py-3 font-medium tracking-wide tabular-nums">
+                    {isCashTicker(m.ticker) ? "Cash" : fmtTicker(m.ticker)}
+                  </td>
                   <td className="px-5 py-3">
                     {m.action ? (
                       <span className="badge bg-gray-100 text-gray-700">
@@ -349,18 +357,10 @@ export default async function StocksOverview() {
                   <td className="px-5 py-3 text-right tabular-nums">
                     {m.shares !== null ? m.shares.toLocaleString() : "—"}
                   </td>
-                  <td
-                    className={`px-5 py-3 text-right tabular-nums ${
-                      (m.pnlPct ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"
-                    }`}
-                  >
+                  <td className={`px-5 py-3 text-right tabular-nums ${pnlToneClass(m.pnlPct)}`}>
                     {fmtPct(m.pnlPct)}
                   </td>
-                  <td
-                    className={`px-5 py-3 text-right tabular-nums ${
-                      (m.pnlDollar ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"
-                    }`}
-                  >
+                  <td className={`px-5 py-3 text-right tabular-nums ${pnlToneClass(m.pnlDollar)}`}>
                     {m.pnlDollar !== null ? fmtMoney(m.pnlDollar) : "—"}
                   </td>
                 </tr>

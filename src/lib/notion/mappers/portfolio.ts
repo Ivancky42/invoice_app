@@ -48,6 +48,8 @@ function mapPage(page: PageObjectResponse): Prisma.PortfolioUncheckedCreateInput
     daysToEarnings: asInt(readProp(page, "Days to Earnings")),
     stopLoss: asNumber(readProp(page, "Stop Loss")) ?? null,
     entryZone: asString(readProp(page, "Entry Zone")),
+    addZone: asString(readProp(page, "Add Zone")),
+    nextAddTrigger: asString(readProp(page, "Next Add Trigger")),
     thesis: toJsonBlocks(asString(readProp(page, "Thesis"))),
     sectorTagRaw,
     theme: normalizeTheme(sectorTagRaw),

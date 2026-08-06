@@ -1,6 +1,12 @@
 import { z } from "zod";
 import {
   AnalystRating,
+  ContentPageKey,
+  DecisionPositionContext,
+  DecisionReviewStatus,
+  DecisionSignalQuality,
+  DecisionType,
+  DecisionVerdict,
   DiscoveredVia,
   IdeaStage,
   IdeaStatus,
@@ -14,6 +20,7 @@ import {
   TradeType,
   TrendStage,
   TrendVerdict,
+  WatchlistAction,
   WatchlistPriority,
   WeekMomentum,
 } from "@/generated/prisma/enums";
@@ -108,10 +115,23 @@ export const patchPortfolioInputSchema = z.object({
   pageNotes: reportBlocksSchema.nullable().optional(),
   notes: reportBlocksSchema.nullable().optional(),
   entryZone: z.string().max(500).nullable().optional(),
+  addZone: z.string().max(500).nullable().optional(),
+  nextAddTrigger: z.string().max(2000).nullable().optional(),
   keyRisk: z.string().max(2000).nullable().optional(),
   theme: z.enum(enumValues(Theme)).nullable().optional(),
   riskLevel: z.enum(enumValues(RiskLevel)).nullable().optional(),
+  marketCapBucket: z.enum(enumValues(MarketCapBucket)).nullable().optional(),
+  analystRating: z.enum(enumValues(AnalystRating)).nullable().optional(),
+  /** YYYY-MM-DD; recomputes daysToEarnings. Null clears both. */
+  earningsDate: dateYmd.nullable().optional(),
   // Explicitly omit currentPrice / shares / myAvgCost — agents must not write prices.
+});
+
+export const appendPageNotesInputSchema = z.object({
+  target: z.enum(["portfolio", "watchlist"]),
+  ticker: z.string().min(1).max(32),
+  blocks: reportBlocksSchema.min(1),
+  rulesVersion: z.string().max(64).nullable().optional(),
 });
 
 export const upsertWatchlistInputSchema = z.object({
@@ -119,6 +139,7 @@ export const upsertWatchlistInputSchema = z.object({
   company: z.string().max(200).nullable().optional(),
   theme: z.enum(enumValues(Theme)).nullable().optional(),
   priority: z.enum(enumValues(WatchlistPriority)).nullable().optional(),
+  action: z.enum(enumValues(WatchlistAction)).nullable().optional(),
   riskLevel: z.enum(enumValues(RiskLevel)).nullable().optional(),
   analystRating: z.enum(enumValues(AnalystRating)).nullable().optional(),
   marketCapBucket: z.enum(enumValues(MarketCapBucket)).nullable().optional(),
@@ -129,7 +150,79 @@ export const upsertWatchlistInputSchema = z.object({
   thesis: reportBlocksSchema.nullable().optional(),
   actionNotes: reportBlocksSchema.nullable().optional(),
   pageNotes: reportBlocksSchema.nullable().optional(),
+  /** YYYY-MM-DD; recomputes daysToEarnings. Null clears both. */
+  earningsDate: dateYmd.nullable().optional(),
   // No currentPrice / analystTarget — price sync owns marks.
+});
+
+export const listDailyLogsQuerySchema = z.object({
+  since: dateYmd.optional(),
+  until: dateYmd.optional(),
+  limit: z.coerce.number().int().min(1).max(90).optional(),
+});
+
+export const listReportsQuerySchema = z.object({
+  reportType: z.enum(enumValues(StockReportType)).optional(),
+  since: dateYmd.optional(),
+  until: dateYmd.optional(),
+  limit: z.coerce.number().int().min(1).max(36).optional(),
+});
+
+export const upsertDecisionReviewInputSchema = z.object({
+  idempotencyKey: z.string().min(1).max(200).optional(),
+  title: z.string().min(1).max(500),
+  ticker: z.string().min(1).max(32).nullable().optional(),
+  decisionDate: dateYmd.nullable().optional(),
+  decisionType: z.enum(enumValues(DecisionType)).nullable().optional(),
+  positionContext: z.enum(enumValues(DecisionPositionContext)).nullable().optional(),
+  priceAtDecision: z.number().positive().nullable().optional(),
+  entryZone: z.string().max(500).nullable().optional(),
+  stopLoss: z.number().positive().nullable().optional(),
+  target: z.number().positive().nullable().optional(),
+  convictionScore: z.number().int().min(1).max(5).nullable().optional(),
+  catalyst: z.string().max(2000).nullable().optional(),
+  catalystDate: dateYmd.nullable().optional(),
+  originalThesis: z.string().max(8000).nullable().optional(),
+  expectedOutcome: z.string().max(4000).nullable().optional(),
+  keyMetricToWatch: z.string().max(2000).nullable().optional(),
+  reasonForDecision: z.string().max(16000).nullable().optional(),
+  riskInvalidation: z.string().max(4000).nullable().optional(),
+  sourceSignal: z.array(z.string().max(200)).optional(),
+  antiPatternTags: z.array(z.string().max(200)).optional(),
+  criteriaThatWorked: z.array(z.string().max(200)).optional(),
+  criteriaThatFailed: z.array(z.string().max(200)).optional(),
+  reviewStatus: z.enum(enumValues(DecisionReviewStatus)).nullable().optional(),
+  outcome1w: z.string().max(4000).nullable().optional(),
+  outcome4w: z.string().max(4000).nullable().optional(),
+  outcome3m: z.string().max(4000).nullable().optional(),
+  return1wPct: z.number().nullable().optional(), // percentage points (−2.5 = −2.5%), not fraction
+  return4wPct: z.number().nullable().optional(),
+  return3mPct: z.number().nullable().optional(),
+  finalVerdict: z.enum(enumValues(DecisionVerdict)).nullable().optional(),
+  signalQuality: z.enum(enumValues(DecisionSignalQuality)).nullable().optional(),
+  executionQuality: z.enum(enumValues(DecisionSignalQuality)).nullable().optional(),
+  lessonLearned: z.string().max(8000).nullable().optional(),
+  updateStrategy: z.boolean().nullable().optional(),
+  rulesVersion: z.string().max(64).nullable().optional(),
+});
+
+export const listDecisionReviewsQuerySchema = z.object({
+  ticker: z.string().min(1).max(32).optional(),
+  reviewStatus: z.enum(enumValues(DecisionReviewStatus)).optional(),
+  /** Include only Pending rows whose decisionDate is within this many days (lookahead). */
+  pendingDueWithinDays: z.coerce.number().int().min(1).max(365).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+export const upsertContentPageInputSchema = z.object({
+  key: z.enum(enumValues(ContentPageKey)),
+  title: z.string().min(1).max(300).optional(),
+  body: reportBlocksSchema,
+  rulesVersion: z.string().max(64).nullable().optional(),
+});
+
+export const getContentPageInputSchema = z.object({
+  key: z.enum(enumValues(ContentPageKey)),
 });
 
 export const upsertTrendInputSchema = z.object({
@@ -145,7 +238,7 @@ export const upsertTrendInputSchema = z.object({
   fundamentalBacking: z.number().int().nullable().optional(),
   discoveredVia: z.enum(enumValues(DiscoveredVia)).nullable().optional(),
   weekMomentum: z.enum(enumValues(WeekMomentum)).nullable().optional(),
-  perf1m: z.number().nullable().optional(),
+  perf1m: z.number().nullable().optional(), // percentage points, not fraction
   perf3m: z.number().nullable().optional(),
   verdict: z.enum(enumValues(TrendVerdict)).nullable().optional(),
   similarToPastTrend: z.string().max(500).nullable().optional(),
@@ -251,6 +344,7 @@ export const LEGAL_ENUM_VALUES: Record<string, string[]> = {
   Theme: Object.values(Theme),
   RiskLevel: Object.values(RiskLevel),
   WatchlistPriority: Object.values(WatchlistPriority),
+  WatchlistAction: Object.values(WatchlistAction),
   AnalystRating: Object.values(AnalystRating),
   MarketCapBucket: Object.values(MarketCapBucket),
   TrendStage: Object.values(TrendStage),
@@ -260,6 +354,12 @@ export const LEGAL_ENUM_VALUES: Record<string, string[]> = {
   IdeaStatus: Object.values(IdeaStatus),
   IdeaStage: Object.values(IdeaStage),
   StockReportType: Object.values(StockReportType),
+  DecisionType: Object.values(DecisionType),
+  DecisionReviewStatus: Object.values(DecisionReviewStatus),
+  DecisionVerdict: Object.values(DecisionVerdict),
+  DecisionSignalQuality: Object.values(DecisionSignalQuality),
+  DecisionPositionContext: Object.values(DecisionPositionContext),
+  ContentPageKey: Object.values(ContentPageKey),
 };
 
 /** Map zod path leaf → enum name when known. */
@@ -279,14 +379,28 @@ const PATH_TO_ENUM: Record<string, string> = {
   discoveredVia: "DiscoveredVia",
   ideaStage: "IdeaStage",
   reportType: "StockReportType",
+  decisionType: "DecisionType",
+  reviewStatus: "DecisionReviewStatus",
+  finalVerdict: "DecisionVerdict",
+  signalQuality: "DecisionSignalQuality",
+  executionQuality: "DecisionSignalQuality",
+  positionContext: "DecisionPositionContext",
+  key: "ContentPageKey",
 };
 
-/** Disambiguate `status` (TradeStatus vs IdeaStatus) using the issue's option set. */
+/** Disambiguate `status` / `action` when multiple enums share the field name. */
 function resolveEnumName(field: string, options?: string[]): string | undefined {
   if (field === "status" && options?.length) {
     const idea = new Set(LEGAL_ENUM_VALUES.IdeaStatus);
     if (options.every((o) => idea.has(o))) return "IdeaStatus";
+    const review = new Set(LEGAL_ENUM_VALUES.DecisionReviewStatus);
+    if (options.every((o) => review.has(o))) return "DecisionReviewStatus";
     return "TradeStatus";
+  }
+  if (field === "action" && options?.length) {
+    const wl = new Set(LEGAL_ENUM_VALUES.WatchlistAction);
+    if (options.every((o) => wl.has(o))) return "WatchlistAction";
+    return "PositionAction";
   }
   return PATH_TO_ENUM[field];
 }

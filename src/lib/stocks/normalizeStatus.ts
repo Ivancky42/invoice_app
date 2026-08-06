@@ -1,5 +1,10 @@
 import type {
   AnalystRating,
+  DecisionPositionContext,
+  DecisionReviewStatus,
+  DecisionSignalQuality,
+  DecisionType,
+  DecisionVerdict,
   DiscoveredVia,
   IdeaStage,
   IdeaStatus,
@@ -12,6 +17,7 @@ import type {
   TradeType,
   TrendStage,
   TrendVerdict,
+  WatchlistAction,
   WatchlistPriority,
   WeekMomentum,
 } from "@/generated/prisma/client";
@@ -65,6 +71,62 @@ export const PRIORITY_ALIASES: Record<string, WatchlistPriority> = {
   watch: "WATCH",
   "skip for now": "SKIP_FOR_NOW",
   skip: "SKIP_FOR_NOW",
+};
+
+export const WATCHLIST_ACTION_ALIASES: Record<string, WatchlistAction> = {
+  "buy suggested": "BUY_SUGGESTED",
+  "buy - suggested": "BUY_SUGGESTED",
+  "buy-suggested": "BUY_SUGGESTED",
+  "buy suggested awaiting ivan execution": "BUY_SUGGESTED",
+  "early entry": "EARLY_ENTRY",
+  "early entry speculative": "EARLY_ENTRY",
+  demoted: "DEMOTED",
+  dropped: "DROPPED",
+};
+
+export const DECISION_TYPE_ALIASES: Record<string, DecisionType> = {
+  buy: "BUY",
+  add: "ADD",
+  "average down": "AVERAGE_DOWN",
+  averagedown: "AVERAGE_DOWN",
+  hold: "HOLD",
+  reduce: "REDUCE",
+  exit: "EXIT",
+  wait: "WAIT",
+  avoid: "AVOID",
+  "do not average down": "DO_NOT_AVERAGE_DOWN",
+  "do-not-average-down": "DO_NOT_AVERAGE_DOWN",
+};
+
+export const DECISION_REVIEW_STATUS_ALIASES: Record<string, DecisionReviewStatus> = {
+  pending: "PENDING",
+  "1w reviewed": "REVIEWED_1W",
+  "4w reviewed": "REVIEWED_4W",
+  "3m reviewed": "REVIEWED_3M",
+  closed: "CLOSED",
+};
+
+export const DECISION_VERDICT_ALIASES: Record<string, DecisionVerdict> = {
+  win: "WIN",
+  loss: "LOSS",
+  "avoided loss": "AVOIDED_LOSS",
+  "too early": "TOO_EARLY",
+  neutral: "NEUTRAL",
+};
+
+export const DECISION_SIGNAL_QUALITY_ALIASES: Record<string, DecisionSignalQuality> = {
+  good: "GOOD",
+  mixed: "MIXED",
+  poor: "POOR",
+  "too early": "TOO_EARLY",
+};
+
+export const DECISION_POSITION_CONTEXT_ALIASES: Record<string, DecisionPositionContext> = {
+  portfolio: "PORTFOLIO",
+  watchlist: "WATCHLIST",
+  "new idea": "NEW_IDEA",
+  trend: "TREND",
+  earnings: "EARNINGS",
 };
 
 export const ANALYST_RATING_ALIASES: Record<string, AnalystRating> = {
@@ -281,6 +343,44 @@ export function normalizeRiskLevel(raw: string | null | undefined): RiskLevel | 
 
 export function normalizeWatchlistPriority(raw: string | null | undefined): WatchlistPriority | null {
   return lookup(PRIORITY_ALIASES, raw);
+}
+
+export function normalizeWatchlistAction(raw: string | null | undefined): WatchlistAction | null {
+  const direct = lookup(WATCHLIST_ACTION_ALIASES, raw);
+  if (direct) return direct;
+  const key = normalizeKey(raw);
+  if (!key) return null;
+  if (/\bbuy\b.*\bsuggest/.test(key)) return "BUY_SUGGESTED";
+  if (/\bearly entry\b/.test(key)) return "EARLY_ENTRY";
+  if (/\bdemot/.test(key)) return "DEMOTED";
+  if (/\bdrop/.test(key)) return "DROPPED";
+  return null;
+}
+
+export function normalizeDecisionType(raw: string | null | undefined): DecisionType | null {
+  return lookup(DECISION_TYPE_ALIASES, raw);
+}
+
+export function normalizeDecisionReviewStatus(
+  raw: string | null | undefined,
+): DecisionReviewStatus | null {
+  return lookup(DECISION_REVIEW_STATUS_ALIASES, raw);
+}
+
+export function normalizeDecisionVerdict(raw: string | null | undefined): DecisionVerdict | null {
+  return lookup(DECISION_VERDICT_ALIASES, raw);
+}
+
+export function normalizeDecisionSignalQuality(
+  raw: string | null | undefined,
+): DecisionSignalQuality | null {
+  return lookup(DECISION_SIGNAL_QUALITY_ALIASES, raw);
+}
+
+export function normalizeDecisionPositionContext(
+  raw: string | null | undefined,
+): DecisionPositionContext | null {
+  return lookup(DECISION_POSITION_CONTEXT_ALIASES, raw);
 }
 
 export function normalizeAnalystRating(raw: string | null | undefined): AnalystRating | null {

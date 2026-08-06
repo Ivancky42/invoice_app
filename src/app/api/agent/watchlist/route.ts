@@ -12,7 +12,8 @@ export const maxDuration = 30;
 export async function GET(req: NextRequest) {
   const unauthorized = requireAgentToken(req);
   if (unauthorized) return unauthorized;
-  return NextResponse.json(await listWatchlistItems());
+  const includeDemoted = new URL(req.url).searchParams.get("includeDemoted") === "true";
+  return NextResponse.json(await listWatchlistItems({ includeDemoted }));
 }
 
 export async function PUT(req: NextRequest) {

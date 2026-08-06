@@ -128,6 +128,11 @@ export function fmtMoney(n: number | null | undefined): string {
   });
 }
 
+/** Share / index prices — alias kept for call-site clarity. */
+export function fmtPrice(n: number | null | undefined): string {
+  return fmtMoney(n);
+}
+
 const UTC_MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -153,10 +158,57 @@ export function fmtMoneyFixed(n: number, digits = 2): string {
   return `${sign}$${Math.abs(n).toFixed(digits)}`;
 }
 
+/**
+ * Fraction → percent string (`0.154` → `15.4%`).
+ * Use for upsidePct, computed PnL %, trade pnlPct.
+ */
 export function fmtPct(d: Decimal | number | null | undefined): string {
   const n = typeof d === "number" ? d : decToNum(d ?? null);
   if (n === null) return "—";
   return `${(n * 100).toFixed(1)}%`;
+}
+
+/**
+ * Already-percent values (`-2.5` → `-2.5%`).
+ * Use for Decision Review return*Pct, Trend perf1m/perf3m, snapshot dailyReturnPct.
+ */
+export function fmtPctPoints(d: Decimal | number | null | undefined): string {
+  const n = typeof d === "number" ? d : decToNum(d ?? null);
+  if (n === null) return "—";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(1)}%`;
+}
+
+/** Tailwind text colour for a signed percent / dollar move. */
+export function pnlToneClass(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n) || n === 0) return "text-gray-600";
+  return n > 0 ? "text-emerald-700" : "text-red-700";
+}
+
+/** Display ticker consistently (uppercase; cash label optional). */
+export function fmtTicker(ticker: string | null | undefined): string {
+  const t = (ticker ?? "").trim().toUpperCase();
+  return t || "—";
+}
+
+/**
+ * Calendar date for Neon timestamps stored as noon UTC (= MYT trading day).
+ * Prefer this over raw toISOString for earnings / lastPriceUpdate.
+ */
+export function fmtDayUtc(d: Date | string | null | undefined): string {
+  if (d == null) return "—";
+  const iso = typeof d === "string" ? d : d.toISOString();
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "—";
+  return `${m[1]}-${m[2]}-${m[3]}`;
+}
+
+/** True when price sits in a two-ended zone string (entry or add zone). */
+export function priceInZone(
+  currentPrice: Parameters<typeof decToNum>[0],
+  zone: string | null | undefined,
+): boolean {
+  return priceInDcaZone(currentPrice, zone);
 }
 
 export function fmtNum(n: number | null | undefined, digits = 2): string {

@@ -1,5 +1,11 @@
 import {
   AnalystRating,
+  ContentPageKey,
+  DecisionPositionContext,
+  DecisionReviewStatus,
+  DecisionSignalQuality,
+  DecisionType,
+  DecisionVerdict,
   DiscoveredVia,
   IdeaStage,
   IdeaStatus,
@@ -13,6 +19,7 @@ import {
   TradeType,
   TrendStage,
   TrendVerdict,
+  WatchlistAction,
   WatchlistPriority,
   WeekMomentum,
 } from "@/generated/prisma/enums";
@@ -27,6 +34,7 @@ export function listStockEnums(): Record<string, string[]> {
     PositionAction: valuesOf(PositionAction),
     RiskLevel: valuesOf(RiskLevel),
     WatchlistPriority: valuesOf(WatchlistPriority),
+    WatchlistAction: valuesOf(WatchlistAction),
     AnalystRating: valuesOf(AnalystRating),
     MarketCapBucket: valuesOf(MarketCapBucket),
     Sleeve: valuesOf(Sleeve),
@@ -40,5 +48,11 @@ export function listStockEnums(): Record<string, string[]> {
     IdeaStage: valuesOf(IdeaStage),
     Theme: valuesOf(Theme),
     StockReportType: valuesOf(StockReportType),
+    DecisionType: valuesOf(DecisionType),
+    DecisionReviewStatus: valuesOf(DecisionReviewStatus),
+    DecisionVerdict: valuesOf(DecisionVerdict),
+    DecisionSignalQuality: valuesOf(DecisionSignalQuality),
+    DecisionPositionContext: valuesOf(DecisionPositionContext),
+    ContentPageKey: valuesOf(ContentPageKey),
   };
 }

@@ -17,7 +17,12 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: "ticker required" }, { status: 400 });
   }
 
-  const result = await deleteWatchlist(decodeURIComponent(ticker));
+  const url = new URL(req.url);
+  const hard = url.searchParams.get("hard") === "true";
+  const actionParam = url.searchParams.get("action");
+  const action = actionParam === "DROPPED" ? ("DROPPED" as const) : ("DEMOTED" as const);
+
+  const result = await deleteWatchlist(decodeURIComponent(ticker), { hard, action });
   if (!result.ok) {
     return NextResponse.json(result, { status: result.status });
   }

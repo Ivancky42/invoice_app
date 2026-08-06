@@ -85,3 +85,14 @@ export function asDate(v: unknown): Date | null {
 export function asBoolean(v: unknown): boolean | null {
   return typeof v === "boolean" ? v : null;
 }
+
+/**
+ * Reads a multi_select property as a string array (unlike readProp which joins).
+ */
+export function readMultiSelect(page: PageObjectResponse, name: string): string[] {
+  const props = page.properties as Record<string, AnyProp | undefined>;
+  const p = props[name];
+  if (!p || p.type !== "multi_select") return [];
+  const arr = (p as unknown as { multi_select: { name: string }[] }).multi_select;
+  return arr.map((s) => s.name).filter(Boolean);
+}

@@ -29,9 +29,10 @@ import {
   earningsRiskFromDays,
   type DerivedEarningsRisk,
 } from "@/lib/stocks/derived";
-import type { Portfolio, Watchlist, Trade, Trend, Idea } from "@/generated/prisma/client";
+import type { Portfolio, Watchlist, Trade, Trend, Idea, DecisionReview, ContentPage } from "@/generated/prisma/client";
 import type { Decimal } from "@/generated/prisma/internal/prismaNamespace";
 import type { EarningsRiskThresholds } from "@/lib/stocks/derived";
+import { asReportBlocks } from "@/lib/content/blocks";
 
 export const AGENT_ROUTINES = ["daily", "weekly", "earnings", "monthly"] as const;
 export type AgentRoutine = (typeof AGENT_ROUTINES)[number];
@@ -180,6 +181,8 @@ export function serializePortfolioRow(
     daysToEarnings: p.daysToEarnings,
     stopLoss: num(p.stopLoss),
     entryZone: p.entryZone,
+    addZone: p.addZone,
+    nextAddTrigger: p.nextAddTrigger,
     theme: p.theme,
     marketCapBucket: p.marketCapBucket,
     sleeve: p.sleeve,
@@ -194,6 +197,7 @@ export function serializePortfolioRow(
     marketValue: opts?.marketValue ?? null,
     thesis: jsonText(p.thesis),
     notes: jsonText(p.notes),
+    pageNotes: asReportBlocks(p.pageNotes),
   };
 }
 
@@ -210,6 +214,8 @@ export function serializeWatchlistRow(
     company: w.company,
     theme: w.theme,
     priority: w.priority,
+    action: w.action,
+    demotedAt: iso(w.demotedAt),
     currentPrice: num(w.currentPrice),
     analystTarget: num(w.analystTarget),
     bullTarget: num(w.bullTarget),
@@ -234,6 +240,7 @@ export function serializeWatchlistRow(
     marketCapBucket: w.marketCapBucket,
     thesis: jsonText(w.thesis),
     actionNotes: jsonText(w.actionNotes),
+    pageNotes: asReportBlocks(w.pageNotes),
   };
 }
 
@@ -341,14 +348,75 @@ export async function listPortfolioPositions() {
     });
 }
 
-export async function listWatchlistItems() {
+export async function listWatchlistItems(opts?: { includeDemoted?: boolean }) {
   const [rows, thresholds] = await Promise.all([
     getWatchlist(),
     getAgentRuntimeConfig().then((c) => c.earningsRiskThresholds),
   ]);
-  return rows.map((w) =>
+  const filtered = opts?.includeDemoted
+    ? rows
+    : rows.filter((w) => w.action !== "DEMOTED" && w.action !== "DROPPED");
+  return filtered.map((w) =>
     serializeWatchlistRow(w, { earningsRiskThresholds: thresholds }),
   );
+}
+
+export function serializeDecisionReviewRow(r: DecisionReview) {
+  return {
+    id: r.id,
+    notionId: r.notionId,
+    idempotencyKey: r.idempotencyKey,
+    title: r.title,
+    ticker: r.ticker,
+    decisionDate: iso(r.decisionDate),
+    decisionType: r.decisionType,
+    positionContext: r.positionContext,
+    priceAtDecision: num(r.priceAtDecision),
+    entryZone: r.entryZone,
+    stopLoss: num(r.stopLoss),
+    target: num(r.target),
+    convictionScore: r.convictionScore,
+    catalyst: r.catalyst,
+    catalystDate: iso(r.catalystDate),
+    originalThesis: r.originalThesis,
+    expectedOutcome: r.expectedOutcome,
+    keyMetricToWatch: r.keyMetricToWatch,
+    reasonForDecision: r.reasonForDecision,
+    riskInvalidation: r.riskInvalidation,
+    sourceSignal: r.sourceSignal,
+    antiPatternTags: r.antiPatternTags,
+    criteriaThatWorked: r.criteriaThatWorked,
+    criteriaThatFailed: r.criteriaThatFailed,
+    reviewStatus: r.reviewStatus,
+    outcome1w: r.outcome1w,
+    outcome4w: r.outcome4w,
+    outcome3m: r.outcome3m,
+    return1wPct: num(r.return1wPct),
+    return4wPct: num(r.return4wPct),
+    return3mPct: num(r.return3mPct),
+    finalVerdict: r.finalVerdict,
+    signalQuality: r.signalQuality,
+    executionQuality: r.executionQuality,
+    lessonLearned: r.lessonLearned,
+    updateStrategy: r.updateStrategy,
+    rulesVersion: r.rulesVersion,
+  };
+}
+
+export function serializeContentPage(row: ContentPage) {
+  return {
+    key: row.key,
+    title: row.title,
+    body: asReportBlocks(row.body),
+    notionPageId: row.notionPageId,
+    syncedAt: iso(row.syncedAt),
+    updatedAt: iso(row.updatedAt),
+  };
+}
+
+export async function listContentPages() {
+  const rows = await prisma.contentPage.findMany({ orderBy: { key: "asc" } });
+  return rows.map(serializeContentPage);
 }
 
 export async function listTradeItems() {
@@ -359,6 +427,107 @@ export async function listTradeItems() {
 export async function listIdeaItems() {
   const rows = await getIdeas();
   return rows.map(serializeIdeaRow);
+}
+
+export function serializeDailyLogRow(row: {
+  id: string;
+  title: string;
+  logDate: Date | null;
+  marketContext: unknown;
+  topNews: unknown;
+  portfolioMove: unknown;
+  watchlistMove: unknown;
+  actionTaken: unknown;
+  notes: unknown;
+  flaggedTickers: string[];
+  alertEmailSent: boolean | null;
+  rulesVersion: string | null;
+}) {
+  return {
+    id: row.id,
+    title: row.title,
+    logDate: iso(row.logDate),
+    marketContext: asReportBlocks(row.marketContext),
+    topNews: asReportBlocks(row.topNews),
+    portfolioMove: asReportBlocks(row.portfolioMove),
+    watchlistMove: asReportBlocks(row.watchlistMove),
+    actionTaken: asReportBlocks(row.actionTaken),
+    notes: asReportBlocks(row.notes),
+    flaggedTickers: row.flaggedTickers,
+    alertEmailSent: row.alertEmailSent,
+    rulesVersion: row.rulesVersion,
+  };
+}
+
+export function serializeStockReportRow(row: {
+  id: string;
+  title: string;
+  reportType: string;
+  reportDate: Date | null;
+  content: unknown;
+  rulesVersion: string | null;
+}) {
+  return {
+    id: row.id,
+    title: row.title,
+    reportType: row.reportType,
+    reportDate: iso(row.reportDate),
+    content: asReportBlocks(row.content),
+    rulesVersion: row.rulesVersion,
+  };
+}
+
+export async function listDailyLogItems(opts?: {
+  since?: string;
+  until?: string;
+  limit?: number;
+}) {
+  const limit = opts?.limit ?? 14;
+  const where: { logDate?: { gte?: Date; lte?: Date } } = {};
+  if (opts?.since || opts?.until) {
+    where.logDate = {};
+    if (opts.since) {
+      where.logDate.gte = new Date(`${opts.since}T12:00:00.000Z`);
+    }
+    if (opts.until) {
+      where.logDate.lte = new Date(`${opts.until}T12:00:00.000Z`);
+    }
+  }
+  const rows = await prisma.dailyLog.findMany({
+    where,
+    orderBy: { logDate: "desc" },
+    take: limit,
+  });
+  return rows.map(serializeDailyLogRow);
+}
+
+export async function listStockReportItems(opts?: {
+  reportType?: "WEEKLY" | "MONTHLY";
+  since?: string;
+  until?: string;
+  limit?: number;
+}) {
+  const limit = opts?.limit ?? 8;
+  const where: {
+    reportType?: "WEEKLY" | "MONTHLY";
+    reportDate?: { gte?: Date; lte?: Date };
+  } = {};
+  if (opts?.reportType) where.reportType = opts.reportType;
+  if (opts?.since || opts?.until) {
+    where.reportDate = {};
+    if (opts.since) {
+      where.reportDate.gte = new Date(`${opts.since}T12:00:00.000Z`);
+    }
+    if (opts.until) {
+      where.reportDate.lte = new Date(`${opts.until}T12:00:00.000Z`);
+    }
+  }
+  const rows = await prisma.stockReport.findMany({
+    where,
+    orderBy: { reportDate: "desc" },
+    take: limit,
+  });
+  return rows.map(serializeStockReportRow);
 }
 
 export async function listTrendItems(detail = true) {
@@ -389,7 +558,7 @@ export async function buildAgentContext(routine: AgentRoutine) {
 
   // Batched: 1 Config query (+ optional cash fallback) + 5 table reads + 1 SyncStatus.
   // Previously fanned out to ~12–13 concurrent queries (pool pressure on cold Neon).
-  const [runtime, portfolio, trades, watchlist, trends, ideas, lastRun] =
+  const [runtime, portfolio, trades, watchlistRaw, trends, ideas, lastRun, documents] =
     await Promise.all([
       getAgentRuntimeConfig(),
       getPortfolio(),
@@ -398,7 +567,12 @@ export async function buildAgentContext(routine: AgentRoutine) {
       getTrends(),
       getIdeas(),
       lastRunSummary(),
+      listContentPages(),
     ]);
+
+  const watchlist = watchlistRaw.filter(
+    (w) => w.action !== "DEMOTED" && w.action !== "DROPPED",
+  );
 
   const {
     cash,
@@ -444,8 +618,14 @@ export async function buildAgentContext(routine: AgentRoutine) {
         earningsStale: earn.earningsStale,
         riskLevel: p.riskLevel,
         conviction: p.conviction,
+        marketCapBucket: p.marketCapBucket,
+        analystRating: p.analystRating,
         entryZone: p.entryZone,
+        addZone: p.addZone,
+        nextAddTrigger: p.nextAddTrigger,
         upsidePct: decToNum(p.upsidePct),
+        lastPriceUpdate: iso(p.lastPriceUpdate),
+        pageNotes: asReportBlocks(p.pageNotes),
       };
     });
 
@@ -469,6 +649,7 @@ export async function buildAgentContext(routine: AgentRoutine) {
     ),
     trends: trends.map((t) => serializeTrendRow(t, trendDetail)),
     ideas: ideas.map(serializeIdeaRow),
+    documents,
     limits,
     thresholds: {
       sentiment: sentimentThresholds,

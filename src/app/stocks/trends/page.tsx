@@ -5,7 +5,7 @@ import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import { ExpandableText } from "@/app/_components/ExpandableText";
 import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
 import { asReportBlocks, hasReportBlocks } from "@/lib/content/blocks";
-import { decToNum, fmtPct } from "@/lib/stocks/format";
+import { decToNum, fmtPctPoints, pnlToneClass } from "@/lib/stocks/format";
 import {
   TREND_STAGE_LABEL,
   themeLabel,
@@ -73,16 +73,16 @@ function TrendCard({ t }: { t: TrendRow }) {
         {decToNum(t.perf1m) !== null && (
           <div>
             <div className="text-gray-500">1M</div>
-            <div className={(decToNum(t.perf1m) ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}>
-              {fmtPct(t.perf1m)}
+            <div className={`tabular-nums ${pnlToneClass(decToNum(t.perf1m))}`}>
+              {fmtPctPoints(t.perf1m)}
             </div>
           </div>
         )}
         {decToNum(t.perf3m) !== null && (
           <div>
             <div className="text-gray-500">3M</div>
-            <div className={(decToNum(t.perf3m) ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}>
-              {fmtPct(t.perf3m)}
+            <div className={`tabular-nums ${pnlToneClass(decToNum(t.perf3m))}`}>
+              {fmtPctPoints(t.perf3m)}
             </div>
           </div>
         )}

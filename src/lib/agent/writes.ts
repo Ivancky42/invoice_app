@@ -11,22 +11,31 @@ import {
   DEFAULT_SENTIMENT,
 } from "@/lib/stocks/derived";
 import { isCashTicker } from "@/lib/stocks/format";
+import { snapshotDateGMT8 } from "@/lib/stocks/portfolioTotals";
 import {
+  serializeContentPage,
+  serializeDecisionReviewRow,
   serializeIdeaRow,
   serializePortfolioRow,
   serializeTrendRow,
   serializeWatchlistRow,
 } from "@/lib/agent/context";
 import type {
+  appendPageNotesInputSchema,
   dailyLogInputSchema,
+  listDecisionReviewsQuerySchema,
   patchConfigInputSchema,
   patchPortfolioInputSchema,
   stockReportInputSchema,
+  upsertContentPageInputSchema,
+  upsertDecisionReviewInputSchema,
   upsertIdeaInputSchema,
   upsertTrendInputSchema,
   upsertWatchlistInputSchema,
 } from "@/lib/agent/schemas";
 import type { z } from "zod";
+import { asReportBlocks } from "@/lib/content/blocks";
+import type { WatchlistAction } from "@/generated/prisma/client";
 
 type DailyLogInput = z.infer<typeof dailyLogInputSchema>;
 type StockReportInput = z.infer<typeof stockReportInputSchema>;
@@ -35,9 +44,55 @@ type UpsertWatchlistInput = z.infer<typeof upsertWatchlistInputSchema>;
 type UpsertTrendInput = z.infer<typeof upsertTrendInputSchema>;
 type UpsertIdeaInput = z.infer<typeof upsertIdeaInputSchema>;
 type PatchConfigInput = z.infer<typeof patchConfigInputSchema>;
+type AppendPageNotesInput = z.infer<typeof appendPageNotesInputSchema>;
+type UpsertDecisionReviewInput = z.infer<typeof upsertDecisionReviewInputSchema>;
+type ListDecisionReviewsQuery = z.infer<typeof listDecisionReviewsQuerySchema>;
+type UpsertContentPageInput = z.infer<typeof upsertContentPageInputSchema>;
 
 function parseYmdNoon(ymd: string): Date {
   return new Date(`${ymd}T12:00:00.000Z`);
+}
+
+/** Calendar days until earnings (GMT+8); past dates → null (stale until re-confirmed). */
+function daysToEarningsFrom(date: Date | null): number | null {
+  if (!date) return null;
+  const today = snapshotDateGMT8();
+  const earnDay = snapshotDateGMT8(date);
+  const days = Math.round((earnDay.getTime() - today.getTime()) / 86_400_000);
+  if (days < 0) return null;
+  return days;
+}
+
+/**
+ * Rebuild TRACKED_TICKERS from Portfolio + active Watchlist rows.
+ * Soft-demoted (DEMOTED/DROPPED) watchlist names are excluded.
+ */
+export async function syncTrackedTickersFromDb() {
+  const [portfolio, watchlist] = await Promise.all([
+    prisma.portfolio.findMany({ select: { ticker: true } }),
+    prisma.watchlist.findMany({
+      where: { NOT: { action: { in: ["DEMOTED", "DROPPED"] } } },
+      select: { ticker: true },
+    }),
+  ]);
+  const portfolioTickers = [
+    ...new Set(
+      portfolio
+        .map((p) => p.ticker.trim().toUpperCase())
+        .filter((t) => t && !isCashTicker(t)),
+    ),
+  ].sort();
+  const watchlistTickers = [
+    ...new Set(watchlist.map((w) => w.ticker.trim().toUpperCase()).filter(Boolean)),
+  ].sort();
+  await setConfig(CONFIG_KEYS.TRACKED_TICKERS, {
+    portfolio: portfolioTickers,
+    watchlist: watchlistTickers,
+  });
+  return {
+    ok: true as const,
+    TRACKED_TICKERS: { portfolio: portfolioTickers, watchlist: watchlistTickers },
+  };
 }
 
 /** undefined = omit; null = JSON null; else value. */
@@ -122,10 +177,12 @@ export async function upsertStockReport(input: StockReportInput) {
       reportType: input.reportType,
       reportDate,
       content: input.content as PrismaTypes.InputJsonValue,
+      rulesVersion: input.rulesVersion ?? null,
     },
     update: {
       title,
       content: input.content as PrismaTypes.InputJsonValue,
+      rulesVersion: input.rulesVersion ?? null,
     },
   });
 
@@ -134,6 +191,7 @@ export async function upsertStockReport(input: StockReportInput) {
     title: row.title,
     reportType: row.reportType,
     reportDate: row.reportDate?.toISOString() ?? null,
+    rulesVersion: row.rulesVersion,
   };
 }
 
@@ -160,9 +218,23 @@ export async function patchPortfolio(tickerRaw: string, input: PatchPortfolioInp
   if (input.pageNotes !== undefined) data.pageNotes = jsonField(input.pageNotes);
   if (input.notes !== undefined) data.notes = jsonField(input.notes);
   if (input.entryZone !== undefined) data.entryZone = input.entryZone;
+  if (input.addZone !== undefined) data.addZone = input.addZone;
+  if (input.nextAddTrigger !== undefined) data.nextAddTrigger = input.nextAddTrigger;
   if (input.keyRisk !== undefined) data.keyRisk = input.keyRisk;
   if (input.theme !== undefined) data.theme = input.theme;
   if (input.riskLevel !== undefined) data.riskLevel = input.riskLevel;
+  if (input.marketCapBucket !== undefined) data.marketCapBucket = input.marketCapBucket;
+  if (input.analystRating !== undefined) data.analystRating = input.analystRating;
+  if (input.earningsDate !== undefined) {
+    if (input.earningsDate === null) {
+      data.earningsDate = null;
+      data.daysToEarnings = null;
+    } else {
+      const d = parseYmdNoon(input.earningsDate);
+      data.earningsDate = d;
+      data.daysToEarnings = daysToEarningsFrom(d);
+    }
+  }
 
   if (Object.keys(data).length === 0) {
     return { ok: false as const, status: 400 as const, reason: "empty_patch", ticker };
@@ -177,11 +249,25 @@ export async function patchPortfolio(tickerRaw: string, input: PatchPortfolioInp
 
 export async function upsertWatchlist(input: UpsertWatchlistInput) {
   const ticker = input.ticker.trim().toUpperCase();
+  const action = input.action;
+  const clearDemotion =
+    action !== undefined &&
+    action !== null &&
+    action !== "DEMOTED" &&
+    action !== "DROPPED";
+
   const create: PrismaTypes.WatchlistUncheckedCreateInput = {
     ticker,
     company: input.company ?? undefined,
     theme: input.theme ?? undefined,
     priority: input.priority ?? undefined,
+    action: action ?? undefined,
+    demotedAt:
+      action === "DEMOTED" || action === "DROPPED"
+        ? new Date()
+        : clearDemotion
+          ? null
+          : undefined,
     riskLevel: input.riskLevel ?? undefined,
     analystRating: input.analystRating ?? undefined,
     marketCapBucket: input.marketCapBucket ?? undefined,
@@ -194,20 +280,46 @@ export async function upsertWatchlist(input: UpsertWatchlistInput) {
     pageNotes: jsonField(input.pageNotes) as PrismaTypes.InputJsonValue | undefined,
   };
 
+  if (input.earningsDate !== undefined) {
+    if (input.earningsDate === null) {
+      create.earningsDate = null;
+      create.daysToEarnings = null;
+    } else {
+      const d = parseYmdNoon(input.earningsDate);
+      create.earningsDate = d;
+      create.daysToEarnings = daysToEarningsFrom(d);
+    }
+  }
+
   const update: PrismaTypes.WatchlistUpdateInput = {};
   assignDefined(update as Record<string, unknown>, create as Record<string, unknown>, [
     "ticker",
   ]);
+  if (action === null) {
+    update.action = null;
+    update.demotedAt = null;
+  } else if (clearDemotion) {
+    update.demotedAt = null;
+  } else if (action === "DEMOTED" || action === "DROPPED") {
+    update.demotedAt = new Date();
+  }
 
   const row = await prisma.watchlist.upsert({
     where: { ticker },
     create,
     update,
   });
+  await syncTrackedTickersFromDb();
   return serializeWatchlistRow(row);
 }
 
-export async function deleteWatchlist(tickerRaw: string) {
+/**
+ * Soft-demote by default (Cowork §6). Pass `hard: true` to permanently delete.
+ */
+export async function deleteWatchlist(
+  tickerRaw: string,
+  opts?: { hard?: boolean; action?: Extract<WatchlistAction, "DEMOTED" | "DROPPED"> },
+) {
   const ticker = tickerRaw.trim().toUpperCase();
   const existing = await prisma.watchlist.findFirst({
     where: { ticker: { equals: ticker, mode: "insensitive" } },
@@ -220,8 +332,213 @@ export async function deleteWatchlist(tickerRaw: string) {
       ticker,
     };
   }
-  await prisma.watchlist.delete({ where: { id: existing.id } });
-  return { ok: true as const, ticker };
+  if (opts?.hard) {
+    await prisma.watchlist.delete({ where: { id: existing.id } });
+    await syncTrackedTickersFromDb();
+    return { ok: true as const, ticker, hardDeleted: true as const };
+  }
+  const action = opts?.action ?? "DEMOTED";
+  const row = await prisma.watchlist.update({
+    where: { id: existing.id },
+    data: { action, demotedAt: new Date() },
+  });
+  await syncTrackedTickersFromDb();
+  return {
+    ok: true as const,
+    ticker,
+    hardDeleted: false as const,
+    watchlist: serializeWatchlistRow(row),
+  };
+}
+
+export async function appendPageNotes(input: AppendPageNotesInput) {
+  const ticker = input.ticker.trim().toUpperCase();
+  const incoming = asReportBlocks(input.blocks);
+  if (incoming.length === 0) {
+    return { ok: false as const, status: 400 as const, reason: "empty_blocks", ticker };
+  }
+
+  if (input.target === "portfolio") {
+    const existing = await prisma.portfolio.findFirst({
+      where: { ticker: { equals: ticker, mode: "insensitive" } },
+    });
+    if (!existing) {
+      return {
+        ok: false as const,
+        status: 404 as const,
+        reason: "portfolio_not_found",
+        ticker,
+      };
+    }
+    const merged = [...asReportBlocks(existing.pageNotes), ...incoming];
+    const row = await prisma.portfolio.update({
+      where: { id: existing.id },
+      data: { pageNotes: merged as PrismaTypes.InputJsonValue },
+    });
+    return {
+      ok: true as const,
+      target: "portfolio" as const,
+      ticker,
+      pageNotes: asReportBlocks(row.pageNotes),
+      appended: incoming.length,
+      totalBlocks: merged.length,
+    };
+  }
+
+  const existing = await prisma.watchlist.findFirst({
+    where: { ticker: { equals: ticker, mode: "insensitive" } },
+  });
+  if (!existing) {
+    return {
+      ok: false as const,
+      status: 404 as const,
+      reason: "watchlist_not_found",
+      ticker,
+    };
+  }
+  const merged = [...asReportBlocks(existing.pageNotes), ...incoming];
+  const row = await prisma.watchlist.update({
+    where: { id: existing.id },
+    data: { pageNotes: merged as PrismaTypes.InputJsonValue },
+  });
+  return {
+    ok: true as const,
+    target: "watchlist" as const,
+    ticker,
+    pageNotes: asReportBlocks(row.pageNotes),
+    appended: incoming.length,
+    totalBlocks: merged.length,
+  };
+}
+
+export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
+  const ticker = input.ticker?.trim().toUpperCase() || null;
+  const decisionDate =
+    input.decisionDate === undefined
+      ? undefined
+      : input.decisionDate === null
+        ? null
+        : parseYmdNoon(input.decisionDate);
+  const catalystDate =
+    input.catalystDate === undefined
+      ? undefined
+      : input.catalystDate === null
+        ? null
+        : parseYmdNoon(input.catalystDate);
+
+  const data: PrismaTypes.DecisionReviewUncheckedCreateInput = {
+    title: input.title.trim(),
+    ticker,
+    decisionDate: decisionDate ?? undefined,
+    decisionType: input.decisionType ?? undefined,
+    positionContext: input.positionContext ?? undefined,
+    priceAtDecision: input.priceAtDecision ?? undefined,
+    entryZone: input.entryZone ?? undefined,
+    stopLoss: input.stopLoss ?? undefined,
+    target: input.target ?? undefined,
+    convictionScore: input.convictionScore ?? undefined,
+    catalyst: input.catalyst ?? undefined,
+    catalystDate: catalystDate ?? undefined,
+    originalThesis: input.originalThesis ?? undefined,
+    expectedOutcome: input.expectedOutcome ?? undefined,
+    keyMetricToWatch: input.keyMetricToWatch ?? undefined,
+    reasonForDecision: input.reasonForDecision ?? undefined,
+    riskInvalidation: input.riskInvalidation ?? undefined,
+    sourceSignal: input.sourceSignal ?? undefined,
+    antiPatternTags: input.antiPatternTags ?? undefined,
+    criteriaThatWorked: input.criteriaThatWorked ?? undefined,
+    criteriaThatFailed: input.criteriaThatFailed ?? undefined,
+    reviewStatus: input.reviewStatus ?? "PENDING",
+    outcome1w: input.outcome1w ?? undefined,
+    outcome4w: input.outcome4w ?? undefined,
+    outcome3m: input.outcome3m ?? undefined,
+    return1wPct: input.return1wPct ?? undefined,
+    return4wPct: input.return4wPct ?? undefined,
+    return3mPct: input.return3mPct ?? undefined,
+    finalVerdict: input.finalVerdict ?? undefined,
+    signalQuality: input.signalQuality ?? undefined,
+    executionQuality: input.executionQuality ?? undefined,
+    lessonLearned: input.lessonLearned ?? undefined,
+    updateStrategy: input.updateStrategy ?? undefined,
+    rulesVersion: input.rulesVersion ?? undefined,
+    idempotencyKey: input.idempotencyKey?.trim() || undefined,
+  };
+
+  if (input.idempotencyKey?.trim()) {
+    const key = input.idempotencyKey.trim();
+    const existing = await prisma.decisionReview.findUnique({
+      where: { idempotencyKey: key },
+    });
+    if (existing) {
+      const { idempotencyKey: _k, ...update } = data;
+      const row = await prisma.decisionReview.update({
+        where: { id: existing.id },
+        data: update,
+      });
+      return { ok: true as const, idempotentReplay: true as const, decision: serializeDecisionReviewRow(row) };
+    }
+    const row = await prisma.decisionReview.create({ data });
+    return { ok: true as const, idempotentReplay: false as const, decision: serializeDecisionReviewRow(row) };
+  }
+
+  const row = await prisma.decisionReview.create({ data });
+  return { ok: true as const, idempotentReplay: false as const, decision: serializeDecisionReviewRow(row) };
+}
+
+export async function listDecisionReviews(query: ListDecisionReviewsQuery = {}) {
+  const limit = query.limit ?? 50;
+  const where: PrismaTypes.DecisionReviewWhereInput = {};
+  if (query.ticker) {
+    where.ticker = { equals: query.ticker.trim().toUpperCase(), mode: "insensitive" };
+  }
+  if (query.reviewStatus) {
+    where.reviewStatus = query.reviewStatus;
+  }
+  if (query.pendingDueWithinDays != null) {
+    const now = new Date();
+    const start = new Date(now);
+    start.setUTCDate(start.getUTCDate() - query.pendingDueWithinDays);
+    where.reviewStatus = "PENDING";
+    where.decisionDate = { gte: start, lte: now };
+  }
+  const rows = await prisma.decisionReview.findMany({
+    where,
+    orderBy: [{ decisionDate: "desc" }, { createdAt: "desc" }],
+    take: limit,
+  });
+  return rows.map(serializeDecisionReviewRow);
+}
+
+export async function getContentPage(key: UpsertContentPageInput["key"]) {
+  const row = await prisma.contentPage.findUnique({ where: { key } });
+  if (!row) {
+    return {
+      ok: false as const,
+      status: 404 as const,
+      reason: "content_page_not_found",
+      key,
+    };
+  }
+  return { ok: true as const, document: serializeContentPage(row) };
+}
+
+export async function upsertContentPage(input: UpsertContentPageInput) {
+  const title =
+    input.title?.trim() ||
+    (input.key === "STRATEGY_LESSONS" ? "Strategy Lessons Summary" : "Investment Style Profile");
+  const row = await prisma.contentPage.upsert({
+    where: { key: input.key },
+    create: {
+      key: input.key,
+      title,
+      body: input.body as PrismaTypes.InputJsonValue,
+    },
+    update: {
+      title,
+      body: input.body as PrismaTypes.InputJsonValue,
+    },
+  });
+  return serializeContentPage(row);
 }
 
 export async function upsertTrend(input: UpsertTrendInput) {

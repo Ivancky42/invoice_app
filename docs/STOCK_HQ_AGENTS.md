@@ -140,8 +140,8 @@ Local Desktop config does **not** reach Cowork cloud schedules — use the Custo
 
 **Verify tools appear:**
 
-- Read: `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`
-- Write (**live in 4c**): `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `upsert_watchlist`, `delete_watchlist`, `upsert_trend`, `upsert_idea`, `patch_config`
+- Read: `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`
+- Write (**live in 4c**): `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document` (`patch_config` exists but routines must not change `LIMITS`)
 
 ### 2.5 Point the four Cowork routines
 
@@ -185,8 +185,11 @@ Same zod contracts as MCP tools. Prefer MCP when the client supports tool schema
 |------------|------|--------|
 | Bundle for a routine | `GET /api/agent/context?routine=daily\|weekly\|earnings\|monthly` | Cash, NAV, positions, watchlist, trends+scores, ideas funnel, limits, enums, `rulesVersion` |
 | Prompt file | `GET /api/agent/prompts/:name` | Serves `/prompts/*.md` from git; allowlist `_shared\|daily\|weekly\|earnings\|monthly` |
-| Portfolio | `GET /api/agent/portfolio` | Positions + weightPct |
+| Portfolio | `GET /api/agent/portfolio` | Positions + weightPct + pageNotes + lastPriceUpdate |
 | Watchlist / trades / ideas / trends | `GET /api/agent/watchlist` etc. | Token-gated; no SQL |
+| Daily logs | `GET /api/agent/daily-logs?since&until&limit` | Newest first; default limit 14 |
+| Reports | `GET /api/agent/reports?reportType&since&until&limit` | WEEKLY/MONTHLY |
+| Decision reviews | `GET /api/agent/decision-reviews` | Filter by ticker / status / pending window |
 | Config | `GET /api/agent/config` | All Config keys |
 | MCP | `POST/GET /api/mcp/mcp` | Same tools as below |
 
@@ -195,13 +198,14 @@ Same zod contracts as MCP tools. Prefer MCP when the client supports tool schema
 | Capability | HTTP | Idempotency |
 |------------|------|-------------|
 | Daily log | `POST /api/agent/daily-log` | `logDate` |
-| Report | `POST /api/agent/report` | `(reportType, reportDate)` |
-| Trade | `POST /api/agent/trade` | client `idempotencyKey` |
-| Portfolio patch | `PATCH /api/agent/portfolio/:ticker` | natural |
-| Watchlist upsert/delete | `PUT /api/agent/watchlist` / `DELETE /api/agent/watchlist/:ticker` | `ticker` |
+| Report | `POST /api/agent/report` | `(reportType, reportDate)`; persists `rulesVersion` |
+| Trade | `POST /api/agent/trade` | client `idempotencyKey`; syncs TRACKED_TICKERS |
+| Portfolio patch | `PATCH /api/agent/portfolio/:ticker` | includes earningsDate, marketCapBucket, analystRating |
+| Watchlist upsert/delete | `PUT /api/agent/watchlist` / `DELETE /api/agent/watchlist/:ticker` | syncs TRACKED_TICKERS |
+| Sync tracked tickers | `POST /api/agent/tracked-tickers/sync` | rebuild from DB |
 | Trend | `PUT /api/agent/trend` | `trendName` |
 | Idea | `PUT /api/agent/idea` | `stockSector` or `leadTicker` |
-| Config | `PATCH /api/agent/config` | cash, FX, thresholds, tracked, LIMITS; **never** `/prompts` |
+| Config | `PATCH /api/agent/config` | cash, FX, thresholds, tracked, LIMITS; **routines must not change LIMITS** |
 
 `PATCH /api/agent/config` may update `LIMITS` (hard caps) — intentional and rare. Agents must not rewrite strategy prose.
 
@@ -374,8 +378,8 @@ Neon is SoT. Notion sync cron is **removed** from `vercel.json`. Only `/api/sync
 
 | Kind | Tools |
 |------|--------|
-| **Read** | `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config` |
-| **Write** | `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `upsert_watchlist`, `delete_watchlist`, `upsert_trend`, `upsert_idea`, `patch_config` |
+| **Read** | `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document` |
+| **Write** | `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote; `hard=true` to erase), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document` (`patch_config` for cash/FX only in rare ops — never LIMITS from routines) |
 
 Matching HTTP surface: `/api/agent/*` (see §3). Prices are never written by agents.
 

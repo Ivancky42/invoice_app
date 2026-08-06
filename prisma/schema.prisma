@@ -122,6 +122,14 @@ enum WatchlistPriority {
   SKIP_FOR_NOW
 }
 
+/// Agent/Watchlist action state (Cowork §6 / §12.8). Soft demotion uses DEMOTED/DROPPED — never hard-delete for demotion.
+enum WatchlistAction {
+  BUY_SUGGESTED
+  EARLY_ENTRY
+  DEMOTED
+  DROPPED
+}
+
 enum AnalystRating {
   STRONG_BUY
   BUY
@@ -258,6 +266,10 @@ model Portfolio {
   daysToEarnings   Int?
   stopLoss         Decimal?        @db.Decimal(14, 4)
   entryZone        String?
+  /// Cowork §12.7 — price range for the next add (distinct from initial entryZone).
+  addZone          String?
+  /// Cowork §12.7 — thesis milestone that justifies the next add.
+  nextAddTrigger   String?
   /// Long-form thesis as ReportBlock[].
   thesis           Json?
   theme            Theme?
@@ -291,6 +303,10 @@ model Watchlist {
   sectorRaw        String?
   priority         WatchlistPriority?
   priorityRaw      String?
+  /// Soft demotion / BUY signal / EARLY ENTRY (§6, §12.8). DEMOTED/DROPPED replace hard-delete.
+  action           WatchlistAction?
+  actionRaw        String?
+  demotedAt        DateTime?
   currentPrice     Decimal?          @db.Decimal(14, 4)
   analystTarget    Decimal?          @db.Decimal(14, 4)
   bullTarget       Decimal?          @db.Decimal(14, 4)
@@ -323,6 +339,7 @@ model Watchlist {
 
   @@index([priority])
   @@index([theme])
+  @@index([action])
 }
 
 model Trade {
@@ -459,14 +476,15 @@ enum StockReportType {
 
 /// Cached weekly / monthly report pages from Notion Stock Monitor HQ (child pages).
 model StockReport {
-  id         String          @id @default(cuid())
-  notionId   String?         @unique
-  title      String
-  reportType StockReportType
-  reportDate DateTime?
+  id           String          @id @default(cuid())
+  notionId     String?         @unique
+  title        String
+  reportType   StockReportType
+  reportDate   DateTime?
   /// Normalized block tree for rendering (paragraphs, headings, tables, lists).
-  content    Json
-  syncedAt   DateTime        @updatedAt
+  content      Json
+  rulesVersion String?
+  syncedAt     DateTime        @updatedAt
 
   @@unique([reportType, reportDate])
   @@index([reportType])
@@ -507,4 +525,120 @@ model Config {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+/// Decision Review Log (Cowork §§4, 10.5, 11.7–11.9, 12.4). Notion DB backfilled; agents write via MCP.
+enum DecisionType {
+  BUY
+  ADD
+  AVERAGE_DOWN
+  HOLD
+  REDUCE
+  EXIT
+  WAIT
+  AVOID
+  DO_NOT_AVERAGE_DOWN
+}
+
+enum DecisionReviewStatus {
+  PENDING
+  REVIEWED_1W
+  REVIEWED_4W
+  REVIEWED_3M
+  CLOSED
+}
+
+enum DecisionVerdict {
+  WIN
+  LOSS
+  AVOIDED_LOSS
+  TOO_EARLY
+  NEUTRAL
+}
+
+enum DecisionSignalQuality {
+  GOOD
+  MIXED
+  POOR
+  TOO_EARLY
+}
+
+enum DecisionPositionContext {
+  PORTFOLIO
+  WATCHLIST
+  NEW_IDEA
+  TREND
+  EARNINGS
+}
+
+model DecisionReview {
+  id                   String                    @id @default(cuid())
+  notionId             String?                   @unique
+  /// Agent idempotency for creates (distinct from Notion sync).
+  idempotencyKey       String?                   @unique
+  title                String
+  ticker               String?
+  decisionDate         DateTime?
+  decisionType         DecisionType?
+  decisionTypeRaw      String?
+  positionContext      DecisionPositionContext?
+  positionContextRaw   String?
+  priceAtDecision      Decimal?                  @db.Decimal(14, 4)
+  entryZone            String?
+  stopLoss             Decimal?                  @db.Decimal(14, 4)
+  target               Decimal?                  @db.Decimal(14, 4)
+  convictionScore      Int?
+  catalyst             String?
+  catalystDate         DateTime?
+  originalThesis       String?
+  expectedOutcome      String?
+  keyMetricToWatch     String?
+  reasonForDecision    String?
+  riskInvalidation     String?
+  sourceSignal         String[]                  @default([])
+  antiPatternTags      String[]                  @default([])
+  criteriaThatWorked   String[]                  @default([])
+  criteriaThatFailed   String[]                  @default([])
+  reviewStatus         DecisionReviewStatus?
+  reviewStatusRaw      String?
+  outcome1w            String?
+  outcome4w            String?
+  outcome3m            String?
+  return1wPct          Decimal?                  @db.Decimal(8, 4)
+  return4wPct          Decimal?                  @db.Decimal(8, 4)
+  return3mPct          Decimal?                  @db.Decimal(8, 4)
+  finalVerdict         DecisionVerdict?
+  finalVerdictRaw      String?
+  signalQuality        DecisionSignalQuality?
+  signalQualityRaw     String?
+  executionQuality     DecisionSignalQuality?
+  executionQualityRaw  String?
+  lessonLearned        String?
+  updateStrategy       Boolean?
+  rulesVersion         String?
+  syncedAt             DateTime                  @updatedAt
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+
+  @@index([ticker])
+  @@index([decisionDate])
+  @@index([reviewStatus])
+  @@index([decisionType])
+}
+
+/// Living strategy docs (Cowork Strategy Lessons Summary + Investment Style Profile).
+/// Neon SoT so monthly routines can update; seeded from Notion pages.
+enum ContentPageKey {
+  STRATEGY_LESSONS
+  INVESTMENT_STYLE
+}
+
+model ContentPage {
+  key          ContentPageKey @id
+  title        String
+  /// ReportBlock[].
+  body         Json
+  notionPageId String?
+  syncedAt     DateTime?
+  updatedAt    DateTime       @updatedAt
 }

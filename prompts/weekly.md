@@ -4,11 +4,15 @@
 
 Follow `_shared.md` in full.
 
-**Tools:** `get_context(routine="weekly")`, `get_prompt`, `list_*` → `upsert_report`
-(`reportType="WEEKLY"`), `upsert_trend`, `upsert_idea`, `patch_portfolio`,
-`upsert_watchlist`. Never `log_trade`, never `patch_config`.
+**Tools:** `get_context(routine="weekly")`, `get_prompt`, `list_portfolio`,
+`list_watchlist` (`includeDemoted=true` when needed), `list_ideas`, `list_trends`,
+`list_trades`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document` →
+`upsert_report` (`reportType="WEEKLY"`), `upsert_trend`, `upsert_idea`, `patch_portfolio`,
+`upsert_watchlist`, `append_page_notes`, `upsert_decision_review`, `sync_tracked_tickers`.
+Soft-demote via `delete_watchlist` / `action=DEMOTED` per `_shared` §13. Never `log_trade`,
+never `patch_config`.
 
-Read the last 30 days of daily logs for pattern memory.
+Read `list_daily_logs` for ~30 days and `list_decision_reviews` for pattern memory.
 
 ---
 
@@ -16,7 +20,7 @@ Read the last 30 days of daily logs for pattern memory.
 
 For every portfolio and watchlist ticker, classify thesis as exactly one of: `INTACT`,
 `STRENGTHENING`, `EVOLVING`, `WEAKENING`, `BROKEN`, `REVERSING_POSITIVE`,
-`REVERSING_NEGATIVE`.
+`REVERSING_NEGATIVE`. (Thesis labels are narrative — not Prisma enums.)
 
 Do not only compare price to a fixed level. Evaluate: price trend over recent weeks;
 reclaim or loss of key levels; volume/momentum; relative strength vs sector and market;
@@ -25,8 +29,9 @@ and upside/downside; whether prior outcomes support this action type; whether it
 a known anti-pattern.
 
 Decision framework:
-1. **Hit stop but recovered** — failed breakdown or weak rebound? → HOLD / RESET STOP /
-   REDUCE / EXIT / WAIT. (On `QUALITY_CORE` names a broken stop is a review trigger only.)
+1. **Hit stop but recovered** — failed breakdown or weak rebound? → recommend HOLD /
+   RESET STOP / REDUCE / EXIT / WAIT in narrative. Map to legal `PositionAction` per
+   `_shared` §2. (On `QUALITY_CORE` names a broken stop is a review trigger only.)
 2. **Hit take-profit but momentum accelerating** — consider partial trim, trailing stop, or
    hold. Do not sell automatically just because the target was reached.
 3. **Fell below target after a take-profit alert** — mark `MISSED_OR_EXPIRED`, reassess from
@@ -39,8 +44,9 @@ Decision framework:
 Also: conviction score is **1–5 only**, never 0–10. If converting: 9–10→5, 7–8→4, 5–6→3,
 3–4→2, 1–2→1.
 
-Recommend HOLD, ADD, WAIT, REDUCE, EXIT, TRAIL STOP, RESET STOP, or DO NOT AVERAGE DOWN.
-Keep `action`/`priority`, notes, and the report consistent.
+Recommend in narrative/DR: HOLD, ADD, WAIT, REDUCE, EXIT, TRAIL STOP, RESET STOP, or
+DO_NOT_AVERAGE_DOWN. Persist portfolio `action` only as `HOLD` | `ADD_ON_DIP` | `REDUCE` |
+`EXIT` | `WATCH`. Keep notes, DR, and the report consistent.
 
 ## 2. Sell-side discipline (§12.6)
 
@@ -53,24 +59,24 @@ at its suggested size, the signal **must** name its funding source — the lowes
 holding(s) by the latest re-rank, with a specific trim suggestion — or say explicitly
 "no funding available; signal is watch-only." No unfunded buy recommendations.
 
-## 3. Backfill pass (§12.5)
+## 3. Backfill pass (§12.5 / §8)
 
-Backfill for all existing holdings from `list_trades` history: `shares`, `conviction`
-(1–5), `sleeve`, `theme`, add zone, next add trigger, and adds-used count. **Flag anything
-you cannot determine rather than guessing.**
+Backfill for all existing holdings via `patch_portfolio` / `list_trades` history:
+`conviction` (1–5), `sleeve`, `theme`, `addZone`, `nextAddTrigger`. Cross-check
+`averageDownsUsed` against `list_trades`. **Flag anything you cannot determine rather than
+guessing.** Do **not** write `shares` via patch — shares come only from `log_trade`.
 
-RDDT has no sleeve assigned and was opened without a pre-registered scorecard (§12.4
+RDDT has no sleeve assigned and was opened without a pre-registered scorecard (§10
 breach) — assign its sleeve and note the lower-confidence flag.
 
-> Add zone and next add trigger have no Neon fields (`_shared` §8). Record them in
-> `pageNotes` under a clear heading until fields exist.
+Refresh `addZone` and `nextAddTrigger` on every holding this week (`patch_portfolio`).
 
 ## 4. Pipeline sweep (§11.1) — mandatory, every row
 
 Touch **every** idea with `status` `RESEARCHING` or `READY_FOR_WATCHLIST`. (Skip `PASS` and
 `GRADUATED`; `HOLD_OFF` gets a one-line check.) For each, either append a dated review note
-(STAY / GRADUATE / HOLD OFF / DROP + one-line reason) or write an explicit "skipped — no new
-signal" line naming the row.
+(STAY / GRADUATE / HOLD OFF / DROP + one-line reason) as ReportBlock[] on idea `notes`, or
+write an explicit "skipped — no new signal" line naming the row.
 
 Always update `lastReviewed`. Any row whose `lastReviewed` is >14 days old is a hygiene
 failure — list it under **Overdue Pipeline Reviews**.
@@ -83,8 +89,7 @@ note stating the re-open condition. Do not recommend it a third time.
 moves to the watchlist, split remaining research candidates into their **own** idea rows at
 graduation time. Never leave live candidates as note remnants inside a graduated row.
 
-**Set `leadTicker` on every row you touch** — it is null across the pipeline today and
-nothing joins without it (§11.4).
+**Set `leadTicker` on every row you touch** — nothing joins without it (§11.4).
 
 ## 5. Sector Scout — run aggressively
 
@@ -131,29 +136,31 @@ Drop anything with <2 independent signals or no traded vehicle. A single strong 
 signal may create a `RADAR` stub instead of a full row.
 
 **Step 6 — Idea rows.** For each theme passing Step 5, `upsert_idea` with theme name and
-one-sentence thesis, top 1–3 tickers, `leadTicker`, signal sources, earliest catalyst,
-why this is early, risk/invalidation, `ideaStage`, `dateFound`, `lastReviewed`.
+one-sentence thesis (`whyInteresting` as ReportBlock[]), top 1–3 tickers, `leadTicker`,
+signal sources, earliest catalyst, why this is early, risk/invalidation, `ideaStage`,
+`dateFound`, `lastReviewed`.
 
 **Step 7 — Trend log.** `upsert_trend` for each theme: update `lifecycleStage` (`EMERGING` /
 `BUILDING` / `HOT` / `PEAKED` / `FADED` / `PAUSED`) and `weekMomentum` (`ACCELERATING` /
-`STABLE` / `DECELERATING` / `REVERSED`) — note these are two separate fields now; the old
+`STABLE` / `DECELERATING` / `REVERSED`) — note these are two separate fields; the old
 single "Emerging/Accelerating/Peaking/Fading/Reversed" scale splits across both. Update the
 four score components (`socialVelocity`, `analystMomentum`, `priceClustering`,
 `fundamentalBacking`) and `signalScore`. New themes get a row at `EMERGING`.
 
 Set `discoveredVia="WEEKLY_SCAN"`. Backfill `lifecycleStage`, `weekMomentum`, and
-`discoveredVia` on existing trends — all null today.
+`discoveredVia` on existing trends when null.
 
 **Step 8 — Graduation pass.** This is the step that actually executes graduation. Test every
 `RESEARCHING` / `READY_FOR_WATCHLIST` row against the checklist in `daily.md` §6a. Theme is
 not a filter. Don't chase. Set `graduationDate` + `graduationPrice` + note the stage at
-graduation (§12.3). Leave non-qualifying ideas in the pipeline with a one-line reason — do
-not graduate marginal names to fill the list.
+graduation. Leave non-qualifying ideas in the pipeline with a one-line reason — do not
+graduate marginal names to fill the list.
 
 ## 6. Report
 
-`upsert_report(reportType="WEEKLY", reportDate=<Monday, YYYY-MM-DD>)`, content as
-`ReportBlock[]`. Stamp `rulesVersion`. Required sections:
+`upsert_report(reportType="WEEKLY", reportDate=<Monday, YYYY-MM-DD>)`, `content` as
+`ReportBlock[]` (headings + tables as JSON blocks, not markdown). Stamp `rulesVersion`.
+Required sections (as `heading_2` + table/paragraph blocks):
 
 - **Strategy Changes This Week** — Ticker | Old Strategy | New Evidence | Updated Strategy |
   Reason
@@ -161,7 +168,8 @@ not graduate marginal names to fill the list.
 - **Expired / Superseded Alerts** — Ticker | Old Alert | Why | New Status
 - **Graduation table** — Idea | Theme | Met Criteria? | Off-theme? | Graduated? | Initial
   Action | Entry Zone | Risk Flag
-- **Overdue Pipeline Reviews** (§11.1)
+- **Overdue Pipeline Reviews** (§4)
 - **Sector Scout findings** by step, including which theme Step 4b examined
 - **EARLY ENTRY block** — separate and labelled, never mixed with standard BUYs
-- **DR-equivalent decision table** (`_shared` §11)
+- **Decision Reviews this week** — summarise rows written via `upsert_decision_review`
+  (`_shared` §11)

@@ -5,13 +5,14 @@ import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import { ExpandableText } from "@/app/_components/ExpandableText";
 import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
 import { asReportBlocks, hasReportBlocks } from "@/lib/content/blocks";
-import { decToNum, fmtMoney, fmtPct, riskBadgeClass } from "@/lib/stocks/format";
+import { decToNum, fmtMoney, fmtPct, fmtTicker, pnlToneClass, riskBadgeClass } from "@/lib/stocks/format";
 import {
   IDEA_STAGE_CLASS,
   IDEA_STAGE_LABEL,
   IDEA_STATUS_CLASS,
   ideaStageLabel,
   ideaStatusLabel,
+  riskLevelLabel,
   themeLabel,
 } from "@/lib/stocks/labels";
 
@@ -114,7 +115,9 @@ export default async function IdeasPage() {
                   <div>
                     <div className="font-semibold">{i.stockSector}</div>
                     {i.leadTicker && (
-                      <div className="text-xs text-gray-500">{i.leadTicker}</div>
+                      <div className="text-xs text-gray-500 tracking-wide tabular-nums">
+                        {fmtTicker(i.leadTicker)}
+                      </div>
                     )}
                     {i.theme ? (
                       <div className="text-xs text-gray-500">{themeLabel(i.theme)}</div>
@@ -134,7 +137,9 @@ export default async function IdeasPage() {
                       </span>
                     )}
                     {i.riskLevel && (
-                      <span className={`badge ${riskBadgeClass(i.riskLevel)}`}>{i.riskLevel}</span>
+                      <span className={`badge ${riskBadgeClass(i.riskLevel)}`}>
+                        {riskLevelLabel(i.riskLevel)}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -142,15 +147,17 @@ export default async function IdeasPage() {
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <div>
                     <div className="text-xs text-gray-500">Price</div>
-                    <div>{fmtMoney(decToNum(i.currentPrice))}</div>
+                    <div className="tabular-nums">{fmtMoney(decToNum(i.currentPrice))}</div>
                   </div>
                   <div>
                     <div className="text-xs text-gray-500">Target</div>
-                    <div>{fmtMoney(decToNum(i.analystTarget))}</div>
+                    <div className="tabular-nums">{fmtMoney(decToNum(i.analystTarget))}</div>
                   </div>
                   <div>
                     <div className="text-xs text-gray-500">Upside</div>
-                    <div>{fmtPct(i.upsidePct)}</div>
+                    <div className={`tabular-nums ${pnlToneClass(decToNum(i.upsidePct))}`}>
+                      {fmtPct(i.upsidePct)}
+                    </div>
                   </div>
                 </div>
 
