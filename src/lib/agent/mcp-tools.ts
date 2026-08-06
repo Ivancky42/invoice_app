@@ -24,8 +24,6 @@ import {
   listDecisionReviewsQuerySchema,
   listReportsQuerySchema,
   logTradeInputSchema,
-  patchConfigFieldsSchema,
-  patchConfigInputSchema,
   patchPortfolioInputSchema,
   appendPageNotesInputSchema,
   stockReportInputSchema,
@@ -42,7 +40,6 @@ import {
   deleteWatchlist,
   getContentPage,
   listDecisionReviews,
-  patchConfig,
   patchPortfolio,
   syncTrackedTickersFromDb,
   upsertContentPage,
@@ -477,22 +474,8 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     },
   );
 
-  server.registerTool(
-    "patch_config",
-    {
-      title: "Patch config",
-      description:
-        "Patch Config. Prefer sync_tracked_tickers for ticker lists. Agents must not change LIMITS in routines — hard caps are Ivan-owned. Allowed keys: cash, FX, thresholds, TRACKED_TICKERS, LIMITS.",
-      inputSchema: patchConfigFieldsSchema.shape,
-    },
-    async (args: Record<string, unknown>) => {
-      const parsed = parseTool(patchConfigInputSchema, args);
-      if ("__error" in parsed) return textError(parsed.__error);
-      const result = await patchConfig(parsed);
-      const config = await getAllConfig();
-      return textJson({ ...result, config });
-    },
-  );
+  // patch_config intentionally NOT registered on MCP — routines must not rewrite LIMITS.
+  // Ivan ops: PATCH /api/agent/config with Bearer AGENT_TOKEN.
 }
 
 /** Register all Stock HQ MCP tools (reads + writes). */

@@ -49,8 +49,8 @@ Do not rely on stale config copied into a routine.
   `upsert_document`. Do **not** invent extra props on `patch_portfolio` /
   `upsert_watchlist` / `upsert_idea` / `upsert_trend` (those schemas omit it).
 - **Never write prices.** Prices come from the price sync only.
-- **Never call `patch_config`.** It can rewrite `LIMITS` — the caps you are evaluated
-  against. Config changes are Ivan's.
+- **`patch_config` is not on MCP.** Cash/FX/LIMITS changes are HTTP-only for Ivan.
+  Ticker-list hygiene uses `sync_tracked_tickers`.
 - Never email Ivan. All output goes to Neon.
 
 ### Portfolio `action` vs recommendation language
@@ -341,7 +341,7 @@ nothing maps, and name the theme in the narrative.
 ## 15. Escalation
 
 Soft warnings are informational; hard caps are `409`. Rule or limit changes are
-**recommendations in reports** — agents never edit `/prompts` and never call
-`patch_config` to change `LIMITS` (the caps they are evaluated against). Living strategy
-prose updates go through `upsert_document` (`STRATEGY_LESSONS` / `INVESTMENT_STYLE`) only
-on repeated patterns (≥3 cases). Ticker-list hygiene uses `sync_tracked_tickers`.
+**recommendations in reports** — agents never edit `/prompts`. `patch_config` is not
+exposed on MCP (HTTP-only for Ivan). Living strategy prose updates go through
+`upsert_document` (`STRATEGY_LESSONS` / `INVESTMENT_STYLE`) only on repeated patterns
+(≥3 cases). Ticker-list hygiene uses `sync_tracked_tickers`.
