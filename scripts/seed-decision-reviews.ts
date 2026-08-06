@@ -72,7 +72,7 @@ const SEEDS = [
 		sourceSignal: ["CAPITAL_RECYCLING", "WEEKLY_REPORT", "MIGRATION_SEED"],
 		antiPatternTags: [...NO_SCORECARD],
 	},
-] as const;
+];
 
 async function main() {
 	const rulesVersion = resolveRulesVersion();
