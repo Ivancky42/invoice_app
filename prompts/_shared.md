@@ -267,6 +267,13 @@ lower-confidence.
 Use `upsert_decision_review` / `list_decision_reviews`. Stamp `idempotencyKey` on creates.
 Default `reviewStatus=PENDING`. Put the §12.4 criteria scorecard inside `reasonForDecision`.
 
+**Migration (Neon cutover):** pending actions that lived only in Notion `pageNotes` or old
+daily logs are invisible to `list_decision_reviews` until seeded. Before the first scheduled
+Daily run, if `list_decision_reviews(PENDING)` is empty but notes still show open EXIT /
+stop-breach / REDUCE actions, create DR rows with their **original** `decisionDate` (see
+`daily` §0). Otherwise the adaptive loop quietly forgives every pre-migration pending —
+the opposite of what this log exists for.
+
 Decisions that warrant a DR entry: BUY, ADD, AVERAGE_DOWN, REDUCE, EXIT, WAIT before
 catalyst/earnings, AVOID, DO_NOT_AVERAGE_DOWN, stop-loss action, thesis alert, earnings
 result action, stock entering entry/add zone, and HOLD **only** when it is a deliberate

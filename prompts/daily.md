@@ -16,11 +16,43 @@ sizing (§7), sleeves (§6), price provenance (§3), Decision Review (§11), and
 
 ---
 
+## 0. Decision Review seeding (first scheduled run only)
+
+**Run this block once** before §1 when `list_decision_reviews(reviewStatus=PENDING)`
+returns **[]** but portfolio/watchlist `pageNotes` or recent daily logs still record
+unresolved actions from the Notion era. Skip on all later runs once DR rows exist.
+
+1. Read `list_portfolio`, `list_watchlist`, and `list_daily_logs` (~30 days).
+2. For each outstanding action still open (EXIT, stop breach, REDUCE, unresolved WAIT,
+   etc.), `upsert_decision_review` with:
+   - `reviewStatus=PENDING`
+   - `decisionDate` = **original trigger date** from the dated note or daily log — not
+     today's date
+   - `decisionType`, `stopLoss`, `priceAtDecision`, `positionContext`, and
+     `reasonForDecision` transcribed from the source note (include adaptive state if known)
+   - Stable `idempotencyKey`, e.g. `seed-dr-{TICKER}-{decisionType}-{YYYYMMDD}`
+3. Re-query `list_decision_reviews(PENDING)`. §1 must not proceed while legacy pendings
+   live only in notes — that silently drops them from the adaptive loop and leaves §11.8's
+   escalation cap with no history.
+
+**Known migration pendings (verify current price vs stop before §1):**
+
+| Ticker | Issue | Notes |
+|---|---|---|
+| OKLO | EXIT vs $48 stop (~$42.99) | Outstanding since early Jun 2026 |
+| GLXY | Stop breach (~$19.07 vs $20) | |
+| ISRG | Stop breach (~$375 vs $400) | `QUALITY_CORE` — broken stop is advisory only (`_shared` §6) |
+
+Also backfill portfolio enums (§2) for any row you touch during seeding. **Run 1 is a
+backfill run**, not a normal run — sleeve-dependent judgments are unreliable until §2's
+ordering is satisfied.
+
 ## 1. Pending action review (§10.3) — before creating anything new
 
 Source of pending actions: `list_decision_reviews` with `reviewStatus=PENDING` (and
 `pendingDueWithinDays` as needed), plus `list_daily_logs` for the last ~7 days when you
-need narrative context (Pending Action Review tables, repeated flags).
+need narrative context (Pending Action Review tables, repeated flags). If §0 just ran,
+include the seeded rows here.
 
 For every pending STOP LOSS / TAKE PROFIT / TRIM / ADD / BUY / EXIT action:
 
@@ -51,15 +83,20 @@ For every portfolio and watchlist ticker in `trackedTickers`:
   Run the §3 stale-sync check.
 - Check stop loss, entry/add zone, target proximity, earnings timing, thesis status,
   repeated flags.
-- Apply sleeve rules (`_shared` §6) — a broken stop on a `QUALITY_CORE` name is a review
-  trigger, **not** an exit recommendation.
+- **Backfill null enums first** — before any sleeve-dependent rule: portfolio `sleeve`,
+  `riskLevel`, `conviction` (1–5), `theme`, `marketCapBucket`, `analystRating`,
+  `addZone`, `nextAddTrigger`; watchlist `riskLevel`, `theme`, `marketCapBucket`,
+  `analystRating`. Use canonical sleeve mapping from `_shared` §6 (do not re-derive).
+  Re-confirm and write `earningsDate` when `earningsStale` or date is in the past.
+  Cross-check `averageDownsUsed` against `list_trades` (`type=ADD` where
+  `pricePerShare` < `myAvgCost`) when the field looks wrong. Do **not** write `shares` /
+  `currentPrice` / `myAvgCost`.
+- **Then** apply sleeve rules (`_shared` §6) — a broken stop on a `QUALITY_CORE` name is a
+  review trigger, **not** an exit recommendation. With `sleeve: null`, you cannot evaluate
+  this correctly; backfill must precede sleeve logic.
 - Update portfolio `action` to a legal `PositionAction` only (`HOLD` | `ADD_ON_DIP` |
   `REDUCE` | `EXIT` | `WATCH`) — map freeform language per `_shared` §2.
 - Update watchlist `priority` and/or `action` (`WatchlistAction`) per `_shared` §13.
-- Backfill null enums you can determine: portfolio `sleeve`, `riskLevel`, `conviction`
-  (1–5), `theme`, `marketCapBucket`, `analystRating`; watchlist `riskLevel`, `theme`,
-  `marketCapBucket`, `analystRating`. Re-confirm and write `earningsDate` when stale.
-  Do **not** write `shares` / `currentPrice` / `myAvgCost`.
 - Append today's dated note via `append_page_notes` (`_shared` §12).
 
 ## 3. Daily Radar (§12.1)

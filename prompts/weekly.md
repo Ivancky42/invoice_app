@@ -14,6 +14,10 @@ never `patch_config`.
 
 Read `list_daily_logs` for ~30 days and `list_decision_reviews` for pattern memory.
 
+**First run after migration:** execute §3 (backfill) before §1 so sleeve-dependent thesis
+and stop logic evaluates against populated enums, not nulls. Seed legacy Decision Reviews
+per `daily` §0 if `list_decision_reviews(PENDING)` is empty.
+
 ---
 
 ## 1. Strategy evolution review (§10.4)

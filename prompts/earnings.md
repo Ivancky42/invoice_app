@@ -33,7 +33,10 @@ For each portfolio or watchlist ticker with confirmed earnings within 14 days:
   available, key guidance expectations.
 - Review every pending stop-loss, reduce, trim, add, and buy-zone alert under the Adaptive
   Decision Layer (`_shared` §4) **before** repeating it. Classify into one of the seven
-  states. Source pendings from `list_decision_reviews`.
+  states. Source pendings from `list_decision_reviews` (seed legacy pendings per `daily` §0
+  if the table is empty).
+- Backfill portfolio `sleeve` (and other null enums you can determine) **before** applying
+  sleeve rules — canonical mapping in `_shared` §6.
 - Apply sleeve rules (`_shared` §6): on `QUALITY_CORE` names, holding through earnings is
   the default and price stops are review triggers, not exits.
 - Recommend in narrative/DR: HOLD, REDUCE, WAIT, ADD, EXIT, RESET STOP, TRAIL STOP, or
