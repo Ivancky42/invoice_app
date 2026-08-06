@@ -1,4 +1,4 @@
-/** Parse and sort dated stock notes (ISO property format + Notion page body format). */
+/** Parse and sort dated stock notes (ISO + human month headers). */
 
 export type DatedNoteEntry = { date: string; label: string; body: string };
 export type ParsedNotes = { preamble: string | null; entries: DatedNoteEntry[] };
@@ -22,15 +22,14 @@ const MONTH =
 	"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?";
 
 /** Optional markdown bold, optional weekday, month day year, optional (MYT) etc. */
-const DATE_PREFIX = new RegExp(
+const MONTH_DATE_PREFIX = new RegExp(
 	`^(?:\\*\\*)?(?:(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\\s+)?(${MONTH})\\.?\\s+(\\d{1,2}),?\\s+(\\d{4})(?:\\s*\\([A-Z]+\\))?(?:\\*\\*)?`,
 	"i",
 );
 
-const PAGE_BODY_HINT = new RegExp(
-	`^(?:\\*\\*)?(?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\\s+)?(?:${MONTH})\\b`,
-	"im",
-);
+/** ISO date at line start, optional bullet, then `:` / `—` / `|` / space. */
+const ISO_DATE_PREFIX =
+	/^(?:[-•*]\s+)?(\d{4}-\d{2}-\d{2})(?:\s*\([^)]*\))?(?=\s*(?:[:—–\-|]|\s|$))/;
 
 function monthToIso(monthName: string, day: string, year: string): string | null {
 	const month = MONTH_TO_NUM[monthName.slice(0, 3).toLowerCase()];
@@ -39,19 +38,29 @@ function monthToIso(monthName: string, day: string, year: string): string | null
 }
 
 function extractDateFromLine(line: string): { date: string; label: string } | null {
-	const m = DATE_PREFIX.exec(line.trim());
+	const trimmed = line.trim();
+
+	const iso = ISO_DATE_PREFIX.exec(trimmed);
+	if (iso) {
+		return { date: iso[1]!, label: iso[1]! };
+	}
+
+	const m = MONTH_DATE_PREFIX.exec(trimmed);
 	if (!m) return null;
-	const iso = monthToIso(m[2], m[3], m[4]);
-	if (!iso) return null;
+	const date = monthToIso(m[2]!, m[3]!, m[4]!);
+	if (!date) return null;
 	const label = m[0].replace(/^\*\*|\*\*$/g, "").trim();
-	return { date: iso, label };
+	return { date, label };
 }
 
 function lineStartsWithDate(line: string): boolean {
-	return DATE_PREFIX.test(line.trim());
+	return extractDateFromLine(line) !== null;
 }
 
-/** Split on blank lines, `---`, and single newlines before a date header. */
+/**
+ * Split on blank lines / `---`, and on a newline that starts a new dated header
+ * (ISO or month-style), so append-only history becomes one paragraph per entry.
+ */
 function splitNoteParagraphs(text: string): string[] {
 	const raw = text
 		.trim()
@@ -76,44 +85,21 @@ function splitNoteParagraphs(text: string): string[] {
 	return out;
 }
 
-/** Split notes like `…preamble…\n\n2026-05-13: …\n\n2026-05-14: …` into dated entries. */
-function parseIsoDatedNotes(text: string): ParsedNotes | null {
-	const trimmed = text.trim();
-	if (!trimmed) return null;
-
-	const chunks = trimmed.split(/\n(?=\d{4}-\d{2}-\d{2}:)/);
-	const entries: DatedNoteEntry[] = [];
-	let preamble: string | null = null;
-
-	for (const chunk of chunks) {
-		const m = /^(\d{4}-\d{2}-\d{2}):\s*([\s\S]*)$/.exec(chunk.trim());
-		if (m) {
-			const body = m[2].trim();
-			if (body) entries.push({ date: m[1], label: m[1], body });
-			continue;
-		}
-		const lead = chunk.trim();
-		if (lead && entries.length === 0) preamble = lead;
-	}
-
-	if (entries.length === 0) return null;
-
-	entries.sort((a, b) => b.date.localeCompare(a.date));
-	return { preamble, entries };
-}
-
 /**
- * Parse Notion page body notes. Synced block text has no markdown bold — headers look like:
- * `Jun 11 2026 | $227.63 | …` or `Sun Jun 14 2026 (MYT) | …` or `Mon Jun 15 2026 | …`
+ * Parse ticker notes into dated entries. Supports:
+ * - `2026-08-06 — $54.11 …`
+ * - `2026-07-12: …` / `- 2026-07-12 (Weekly): …`
+ * - `Jun 3, 2026 | $56.46 | …` / `Mon Jun 15 2026 | …`
+ * Newest date first.
  */
-function parsePageBodyNotes(text: string): ParsedNotes | null {
+export function parseStockNotes(text: string): ParsedNotes | null {
 	const trimmed = text.trim();
 	if (!trimmed) return null;
 
 	const paragraphs = splitNoteParagraphs(trimmed);
-
 	const entries: DatedNoteEntry[] = [];
 	let current: DatedNoteEntry | null = null;
+	const preambleParts: string[] = [];
 
 	for (const para of paragraphs) {
 		const firstLine = para.split("\n")[0] ?? para;
@@ -127,6 +113,8 @@ function parsePageBodyNotes(text: string): ParsedNotes | null {
 
 		if (current) {
 			current.body = `${current.body}\n\n${para}`;
+		} else {
+			preambleParts.push(para);
 		}
 	}
 
@@ -134,20 +122,99 @@ function parsePageBodyNotes(text: string): ParsedNotes | null {
 	if (entries.length === 0) return null;
 
 	entries.sort((a, b) => b.date.localeCompare(a.date));
-	return { preamble: null, entries };
+	return {
+		preamble: preambleParts.length > 0 ? preambleParts.join("\n\n") : null,
+		entries,
+	};
 }
 
-export function parseStockNotes(text: string): ParsedNotes | null {
-	const trimmed = text.trim();
-	if (!trimmed) return null;
-
-	// Page body: human-readable month headers (with or without ** from Notion markdown).
-	if (PAGE_BODY_HINT.test(trimmed)) {
-		const page = parsePageBodyNotes(trimmed);
-		if (page) return page;
+/** Merge multiple parsed note sets; newest date first. */
+export function mergeParsedNotes(
+	parts: Array<ParsedNotes | null | undefined>,
+): ParsedNotes | null {
+	const entries: DatedNoteEntry[] = [];
+	const preambles: string[] = [];
+	for (const p of parts) {
+		if (!p) continue;
+		if (p.preamble?.trim()) preambles.push(p.preamble.trim());
+		entries.push(...p.entries);
 	}
+	if (entries.length === 0) return null;
+	entries.sort((a, b) => b.date.localeCompare(a.date));
 
-	return parseIsoDatedNotes(trimmed) ?? parsePageBodyNotes(trimmed);
+	const seen = new Set<string>();
+	const unique: DatedNoteEntry[] = [];
+	for (const e of entries) {
+		const key = `${e.date}|${e.body.replace(/\s+/g, " ").slice(0, 100)}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unique.push(e);
+	}
+	return {
+		preamble: preambles.length > 0 ? preambles.join("\n\n") : null,
+		entries: unique,
+	};
+}
+
+/** Display body with the leading date header stripped when redundant. */
+export function noteEntryDisplayBody(entry: DatedNoteEntry): string {
+	const lines = entry.body.split("\n");
+	const first = (lines[0] ?? "").trim();
+	const rest = lines.slice(1).join("\n").trim();
+
+	if (
+		first === entry.label ||
+		/^\d{4}-\d{2}-\d{2}/.test(first) ||
+		first.startsWith(`${entry.label} |`) ||
+		first.startsWith(`${entry.label}|`)
+	) {
+		// Keep pipe-style content after the date: `Jun 3, 2026 | $56 …`
+		const pipeIdx = first.indexOf("|");
+		if (pipeIdx > 0) {
+			const afterPipe = first.slice(pipeIdx + 1).trim();
+			return afterPipe + (rest ? `\n${rest}` : "");
+		}
+		// ISO / em-dash: `2026-08-06 — $54.11 …`
+		const afterDate = first
+			.replace(/^(?:[-•*]\s+)?\d{4}-\d{2}-\d{2}(?:\s*\([^)]*\))?\s*(?:[:—–\-]\s*)?/, "")
+			.trim();
+		if (afterDate) return afterDate + (rest ? `\n${rest}` : "");
+		return rest || entry.body;
+	}
+	return entry.body;
+}
+
+/** One-line preview of the newest entry for card surfaces. */
+export function newestNotePreview(
+	text: string | null | undefined,
+	maxLen = 140,
+): { date: string; label: string; preview: string } | null {
+	if (!text?.trim()) return null;
+	const parsed = parseStockNotes(text);
+	return newestFromParsed(parsed, maxLen);
+}
+
+function newestFromParsed(
+	parsed: ParsedNotes | null,
+	maxLen = 140,
+): { date: string; label: string; preview: string } | null {
+	const newest = parsed?.entries[0];
+	if (!newest) return null;
+	const body = noteEntryDisplayBody(newest).replace(/\s+/g, " ").trim();
+	const preview =
+		body.length > maxLen ? `${body.slice(0, maxLen - 1).trimEnd()}…` : body;
+	return { date: newest.date, label: newest.label, preview };
+}
+
+/** Newest entry across multiple note texts / ReportBlock plain strings. */
+export function newestNoteFromTexts(
+	texts: Array<string | null | undefined>,
+	maxLen = 140,
+): { date: string; label: string; preview: string } | null {
+	const merged = mergeParsedNotes(
+		texts.filter((t): t is string => !!t?.trim()).map((t) => parseStockNotes(t)),
+	);
+	return newestFromParsed(merged, maxLen);
 }
 
 /** @internal exported for tests */

@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
 
 /**
- * Highlight price-move / pct / dollar-delta fragments in agent & synced notes.
+ * Highlight price-move / pct / dollar-delta fragments and standalone $prices in notes.
  * Agents must not invent emoji statuses, but notes still use ↑↓, unicode −, pipes, and parens.
  */
 const MOVE_TOKEN =
 	/(?:\((?:flat\s*[—–-][^)]*|[↑↓]\s*[+\-−][\d.]+%[^)]*|[+\-−]\$[\d,.]+(?:,\s*[+\-−][\d.]+%)?[^)]*|[+\-−][\d.]+%[^)]*)\)|(?:^|[\s|])(?:⚠️\s*)?[↑↓]?\s*[+\-−]\$?[\d,.]+%(?:\s+from\s+\$[\d,.]+)?(?=[\s|;,]|$))/gi;
+
+const PRICE_TOKEN = /\$[\d,]+(?:\.\d{1,4})?/g;
 
 type MoveTone = "up" | "down" | "flat";
 
@@ -37,8 +39,62 @@ function moveClassName(tone: MoveTone): string {
 const TICKER_TOKEN =
 	/\b([A-Z]{1,5}(?:_USD)?)\b(?=\s*\$|\s*\||\s*[—(⚠️↑↓+\-−]|\s+[+\-−↑↓]|\s*$)/g;
 
+function pushPriceAndTickerSpans(
+	chunk: string,
+	keyPrefix: string,
+	out: ReactNode[],
+) {
+	let last = 0;
+	const priceMatches = [...chunk.matchAll(PRICE_TOKEN)];
+	const segments: { start: number; end: number; kind: "price" | "text" }[] = [];
+	for (const pm of priceMatches) {
+		const idx = pm.index ?? 0;
+		if (idx > last) segments.push({ start: last, end: idx, kind: "text" });
+		segments.push({ start: idx, end: idx + pm[0].length, kind: "price" });
+		last = idx + pm[0].length;
+	}
+	if (last < chunk.length) segments.push({ start: last, end: chunk.length, kind: "text" });
+	if (segments.length === 0) segments.push({ start: 0, end: chunk.length, kind: "text" });
+
+	segments.forEach((seg, si) => {
+		const value = chunk.slice(seg.start, seg.end);
+		if (seg.kind === "price") {
+			out.push(
+				<span
+					key={`${keyPrefix}-p-${si}`}
+					className="font-medium tabular-nums text-gray-900"
+				>
+					{value}
+				</span>,
+			);
+			return;
+		}
+		let tLast = 0;
+		for (const tm of value.matchAll(TICKER_TOKEN)) {
+			const tIdx = tm.index ?? 0;
+			if (tIdx > tLast) {
+				out.push(
+					<span key={`${keyPrefix}-t-${si}-${tLast}`}>{value.slice(tLast, tIdx)}</span>,
+				);
+			}
+			out.push(
+				<span
+					key={`${keyPrefix}-tk-${si}-${tIdx}`}
+					className="font-semibold tracking-wide text-gray-900 tabular-nums"
+				>
+					{tm[1]}
+				</span>,
+			);
+			tLast = tIdx + tm[0].length;
+		}
+		if (tLast < value.length) {
+			out.push(<span key={`${keyPrefix}-t-${si}-end`}>{value.slice(tLast)}</span>);
+		}
+	});
+}
+
 function formatNoteText(text: string): ReactNode[] {
-	const parts: { type: "text" | "move" | "ticker"; value: string }[] = [];
+	const parts: { type: "text" | "move"; value: string }[] = [];
 	let last = 0;
 	const moveMatches = [...text.matchAll(MOVE_TOKEN)];
 
@@ -61,26 +117,7 @@ function formatNoteText(text: string): ReactNode[] {
 			);
 			return;
 		}
-		let tLast = 0;
-		const chunk = part.value;
-		for (const tm of chunk.matchAll(TICKER_TOKEN)) {
-			const tIdx = tm.index ?? 0;
-			if (tIdx > tLast) {
-				out.push(<span key={`t-${index}-${tLast}`}>{chunk.slice(tLast, tIdx)}</span>);
-			}
-			out.push(
-				<span
-					key={`tk-${index}-${tIdx}`}
-					className="font-semibold tracking-wide text-gray-900 tabular-nums"
-				>
-					{tm[1]}
-				</span>,
-			);
-			tLast = tIdx + tm[0].length;
-		}
-		if (tLast < chunk.length) {
-			out.push(<span key={`t-${index}-end`}>{chunk.slice(tLast)}</span>);
-		}
+		pushPriceAndTickerSpans(part.value, `s-${index}`, out);
 	});
 
 	return out.length > 0 ? out : [text];

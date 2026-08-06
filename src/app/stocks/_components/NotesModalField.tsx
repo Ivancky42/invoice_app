@@ -8,7 +8,12 @@ import {
 	isReportBlockArray,
 	textToBlocks,
 } from "@/lib/content/blocks";
-import { parseStockNotes, type DatedNoteEntry } from "@/lib/stocks/parseStockNotes";
+import {
+	mergeParsedNotes,
+	noteEntryDisplayBody,
+	parseStockNotes,
+	type DatedNoteEntry,
+} from "@/lib/stocks/parseStockNotes";
 import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
 import { FormattedNoteText } from "@/app/stocks/_components/FormattedNoteText";
 
@@ -21,9 +26,14 @@ function normalizeNotes(
 	return asReportBlocks(text);
 }
 
+function blockPlainText(b: ReportBlock): string {
+	if ("text" in b && typeof b.text === "string") return b.text;
+	return "";
+}
+
 /**
  * Prefer structured dated timeline when notes look like append-only ticker history.
- * Falls back to raw ReportBlocks for thesis-style prose.
+ * Merges every ReportBlock so newer agent appends are not dropped behind older bulk history.
  */
 function tryDatedTimeline(blocks: ReportBlock[]): {
 	preamble: string | null;
@@ -31,38 +41,39 @@ function tryDatedTimeline(blocks: ReportBlock[]): {
 } | null {
 	if (blocks.length === 0) return null;
 
-	// Many separate dated paragraphs (agent append_page_notes over time).
-	const perBlock: DatedNoteEntry[] = [];
-	let allDated = blocks.length > 1;
-	for (const b of blocks) {
-		if (b.type === "divider") continue;
-		const text =
-			"text" in b && typeof b.text === "string"
-				? b.text
-				: b.type === "table"
-					? ""
-					: "";
-		if (!text.trim()) {
-			allDated = false;
-			break;
-		}
-		const parsed = parseStockNotes(text);
-		if (parsed && parsed.entries.length === 1 && !parsed.preamble) {
-			perBlock.push(parsed.entries[0]!);
-		} else if (parsed && parsed.entries.length > 1) {
-			return parsed;
-		} else {
-			allDated = false;
-			break;
-		}
-	}
-	if (allDated && perBlock.length > 1) {
-		perBlock.sort((a, b) => b.date.localeCompare(a.date));
-		return { preamble: null, entries: perBlock };
-	}
+	const perBlock = blocks
+		.filter((b) => b.type !== "divider")
+		.map((b) => {
+			const text = blockPlainText(b);
+			return text.trim() ? parseStockNotes(text) : null;
+		});
+
+	const merged = mergeParsedNotes(perBlock);
+	if (merged && merged.entries.length > 0) return merged;
 
 	const flat = blocksToPlainText(blocks);
 	return parseStockNotes(flat);
+}
+
+function formatEntryLabel(entry: DatedNoteEntry): string {
+	const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(entry.date);
+	if (!m) return entry.label;
+	const months = [
+		"Jan",
+		"Feb",
+		"Mar",
+		"Apr",
+		"May",
+		"Jun",
+		"Jul",
+		"Aug",
+		"Sep",
+		"Oct",
+		"Nov",
+		"Dec",
+	];
+	const month = months[parseInt(m[2]!, 10) - 1] ?? m[2];
+	return `${month} ${parseInt(m[3]!, 10)}, ${m[1]}`;
 }
 
 function DatedNotesTimeline({
@@ -85,30 +96,11 @@ function DatedNotesTimeline({
 						key={`${e.date}-${i}`}
 						className="rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-2.5"
 					>
-						<div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1 tabular-nums">
-							{e.label}
+						<div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5 tabular-nums">
+							{formatEntryLabel(e)}
 						</div>
 						<div className="text-sm text-gray-800 leading-relaxed">
-							<FormattedNoteText
-								text={(() => {
-									const lines = e.body.split("\n");
-									const first = (lines[0] ?? "").trim();
-									if (
-										first === e.label ||
-										first.startsWith(`${e.label} |`) ||
-										first.startsWith(`${e.label}|`) ||
-										/^\d{4}-\d{2}-\d{2}:/.test(first)
-									) {
-										const rest = lines.slice(1).join("\n").trim();
-										// Keep first line if it has content after the date (pipe notes).
-										if (first.includes("|") && first.length > e.label.length + 2) {
-											return first.replace(/^[^\|]*\|\s*/, "") + (rest ? `\n${rest}` : "");
-										}
-										return rest || e.body;
-									}
-									return e.body;
-								})()}
-							/>
+							<FormattedNoteText text={noteEntryDisplayBody(e)} />
 						</div>
 					</li>
 				))}
@@ -145,6 +137,7 @@ export function NotesModalField({
 
 	const modalTitle = context ? `${context} — ${label}` : label;
 	const entryCount = timeline?.entries.length ?? 0;
+	const newest = timeline?.entries[0];
 
 	return (
 		<>
@@ -154,9 +147,9 @@ export function NotesModalField({
 				className="inline-flex items-center gap-2 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5 bg-white hover:bg-gray-50 hover:border-gray-300 transition"
 			>
 				{label}
-				{entryCount > 1 ? (
-					<span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">
-						{entryCount}
+				{entryCount > 0 ? (
+					<span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 bg-gray-100 rounded px-1.5 py-0.5 tabular-nums">
+						{entryCount > 1 ? `${entryCount}` : formatEntryLabel(newest!)}
 					</span>
 				) : null}
 			</button>
@@ -178,9 +171,11 @@ export function NotesModalField({
 						<div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-gray-100 shrink-0">
 							<div>
 								<h3 className="font-semibold text-gray-900 leading-snug pr-2">{modalTitle}</h3>
-								{entryCount > 1 ? (
+								{entryCount > 0 ? (
 									<p className="text-xs text-gray-500 mt-0.5">
-										Newest first · {entryCount} dated entries
+										Newest first
+										{entryCount > 1 ? ` · ${entryCount} dated entries` : null}
+										{newest ? ` · latest ${formatEntryLabel(newest)}` : null}
 									</p>
 								) : null}
 							</div>

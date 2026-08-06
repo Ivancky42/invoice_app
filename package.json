@@ -26,6 +26,7 @@
     "@radix-ui/react-select": "^2.3.0",
     "@react-pdf/renderer": "^4.1.5",
     "@vercel/blob": "^2.3.3",
+    "@vercel/functions": "^3.8.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.17.0",

@@ -48,7 +48,7 @@ export function Header({ pinGate }: { pinGate: boolean }) {
 
   return (
     <header className="border-b border-gray-200 bg-white">
-      <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
         <Link href="/" className="font-semibold text-gray-900">
           Command Center
         </Link>
@@ -85,7 +85,7 @@ export function Header({ pinGate }: { pinGate: boolean }) {
 
       {subLinks.length > 0 && (
         <div className="border-t border-gray-100 bg-gray-50">
-          <div className="max-w-6xl mx-auto px-6 py-2 flex items-center gap-4 text-sm overflow-x-auto">
+          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-2 flex items-center gap-4 text-sm overflow-x-auto">
             {subLinks.map((l) => {
               const path = l.href.split("?")[0];
               const isActive =

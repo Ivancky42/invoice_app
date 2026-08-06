@@ -1,4 +1,5 @@
 import { PrismaPg } from "@prisma/adapter-pg";
+import { attachDatabasePool } from "@vercel/functions";
 import { Pool } from "pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { normalizePgConnectionString } from "@/lib/pg-connection-string";
@@ -8,20 +9,26 @@ const globalForPrisma = globalThis as unknown as {
   pgPool?: Pool;
 };
 
-function createClient(): PrismaClient {
+function createPool(): Pool {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
 
-  const pool =
-    globalForPrisma.pgPool ??
-    new Pool({
-      connectionString: normalizePgConnectionString(url),
-      // Serverless: keep small; avoid waiting forever on a stuck/cold Neon connect.
-      max: 4,
-      connectionTimeoutMillis: 10_000,
-      idleTimeoutMillis: 10_000,
-      allowExitOnIdle: true,
-    });
+  const pool = new Pool({
+    connectionString: normalizePgConnectionString(url),
+    // Serverless: keep small; avoid waiting forever on a stuck/cold Neon connect.
+    max: 4,
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 10_000,
+    allowExitOnIdle: true,
+  });
+
+  // Fluid Compute: release idle clients before the isolate suspends.
+  attachDatabasePool(pool);
+  return pool;
+}
+
+function createClient(): PrismaClient {
+  const pool = globalForPrisma.pgPool ?? createPool();
   globalForPrisma.pgPool = pool;
 
   const adapter = new PrismaPg(pool);
@@ -43,7 +50,7 @@ function getClient(): PrismaClient {
   if (isCurrentClient(cached)) return cached;
 
   const client = createClient();
-  if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = client;
+  globalForPrisma.prisma = client;
   return client;
 }
 

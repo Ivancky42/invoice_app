@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { getSyncStatus } from "@/lib/stocks/db";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 
-export const dynamic = "force-dynamic";
+/** Align with stocks pages — avoid a full DB round-trip on every visit. */
+export const revalidate = 900;
 
 export default async function Home() {
   const [docCount, portfolioCount, watchlistCount, tradesCount, syncStatus] = await Promise.all([

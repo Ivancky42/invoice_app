@@ -8,15 +8,13 @@ export const metadata: Metadata = {
   description: "Personal command center: invoices and stock dashboard",
 };
 
-export const dynamic = "force-dynamic";
-
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pinGate = gateConfigured();
   return (
     <html lang="en">
       <body className="min-h-screen">
         <Header pinGate={pinGate} />
-        <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>
+        <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-8">{children}</main>
       </body>
     </html>
   );
