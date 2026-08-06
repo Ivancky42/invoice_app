@@ -75,6 +75,21 @@ export async function GET(req: NextRequest) {
   const allOk = result.ok && !snapshotThrew;
   const completedAt = new Date();
 
+  const failedDetails = result.details
+    .filter((d) => !d.ok)
+    .map((d) => ({
+      table: d.table,
+      ticker: d.tickerHint,
+      error: d.error ?? "unknown",
+    }));
+  const failedTickers = [
+    ...new Set(
+      failedDetails
+        .map((d) => d.ticker?.trim().toUpperCase())
+        .filter((t): t is string => Boolean(t)),
+    ),
+  ];
+
   await prisma.syncStatus.update({
     where: { source: SYNC_SOURCE },
     data: {
@@ -85,6 +100,8 @@ export async function GET(req: NextRequest) {
         skipped: result.skipped,
         failed: result.failed,
         portfolioSnapshot: snapshotOk === null ? null : snapshotOk ? 1 : 0,
+        failedTickers,
+        failedDetails: failedDetails.slice(0, 40),
       },
     },
   });
@@ -97,6 +114,8 @@ export async function GET(req: NextRequest) {
       ok: allOk,
       errors: allOk ? [] : errors,
       snapshotOk,
+      failedTickers,
+      failedDetails: failedDetails.slice(0, 40),
       details: limitedDetails,
       detailsTruncated: details.length > 80,
     },

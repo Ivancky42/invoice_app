@@ -34,7 +34,7 @@ import type {
   upsertWatchlistInputSchema,
 } from "@/lib/agent/schemas";
 import type { z } from "zod";
-import { asReportBlocks } from "@/lib/content/blocks";
+import { asReportBlocks, truncatePageNotes } from "@/lib/content/blocks";
 import type { WatchlistAction } from "@/generated/prisma/client";
 import { contentPageTitle, ensureContentPages } from "@/lib/agent/contentPages";
 
@@ -124,12 +124,14 @@ function assignDefined<T extends Record<string, unknown>>(
 
 export async function upsertDailyLog(input: DailyLogInput) {
   const logDate = parseYmdNoon(input.logDate);
-  const title = input.title?.trim() || input.logDate;
+  const routineType = input.routineType ?? "DAILY";
+  const title =
+    input.title?.trim() ||
+    (routineType === "EARNINGS" ? `Earnings ${input.logDate}` : input.logDate);
 
   const update: PrismaTypes.DailyLogUpdateInput = {};
   assignDefined(update as Record<string, unknown>, {
     title,
-    logDate,
     marketContext: jsonField(input.marketContext),
     topNews: jsonField(input.topNews),
     portfolioMove: jsonField(input.portfolioMove),
@@ -142,10 +144,11 @@ export async function upsertDailyLog(input: DailyLogInput) {
   });
 
   const row = await prisma.dailyLog.upsert({
-    where: { logDate },
+    where: { logDate_routineType: { logDate, routineType } },
     create: {
       title,
       logDate,
+      routineType,
       marketContext: jsonField(input.marketContext) as PrismaTypes.InputJsonValue,
       topNews: jsonField(input.topNews) as PrismaTypes.InputJsonValue,
       portfolioMove: jsonField(input.portfolioMove) as PrismaTypes.InputJsonValue,
@@ -163,6 +166,7 @@ export async function upsertDailyLog(input: DailyLogInput) {
     id: row.id,
     title: row.title,
     logDate: row.logDate?.toISOString() ?? null,
+    routineType: row.routineType,
     flaggedTickers: row.flaggedTickers,
     rulesVersion: row.rulesVersion,
   };
@@ -400,15 +404,18 @@ export async function appendPageNotes(input: AppendPageNotesInput) {
       };
     }
     const merged = [...asReportBlocks(existing.pageNotes), ...incoming];
-    const row = await prisma.portfolio.update({
+    await prisma.portfolio.update({
       where: { id: existing.id },
       data: { pageNotes: merged as PrismaTypes.InputJsonValue },
     });
+    const preview = truncatePageNotes(merged, 3);
     return {
       ok: true as const,
       target: "portfolio" as const,
       ticker,
-      pageNotes: asReportBlocks(row.pageNotes),
+      pageNotes: preview.blocks,
+      pageNotesTotal: preview.totalBlocks,
+      pageNotesTruncated: preview.truncated,
       appended: incoming.length,
       totalBlocks: merged.length,
     };
@@ -426,17 +433,67 @@ export async function appendPageNotes(input: AppendPageNotesInput) {
     };
   }
   const merged = [...asReportBlocks(existing.pageNotes), ...incoming];
-  const row = await prisma.watchlist.update({
+  await prisma.watchlist.update({
     where: { id: existing.id },
     data: { pageNotes: merged as PrismaTypes.InputJsonValue },
   });
+  const preview = truncatePageNotes(merged, 3);
   return {
     ok: true as const,
     target: "watchlist" as const,
     ticker,
-    pageNotes: asReportBlocks(row.pageNotes),
+    pageNotes: preview.blocks,
+    pageNotesTotal: preview.totalBlocks,
+    pageNotesTruncated: preview.truncated,
     appended: incoming.length,
     totalBlocks: merged.length,
+  };
+}
+
+/** Newest-first paginated pageNotes history (full DB history). */
+export async function getPageNotes(input: {
+  target: "portfolio" | "watchlist";
+  ticker: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const ticker = input.ticker.trim().toUpperCase();
+  const limit = input.limit ?? 20;
+  const offset = input.offset ?? 0;
+
+  const row =
+    input.target === "portfolio"
+      ? await prisma.portfolio.findFirst({
+          where: { ticker: { equals: ticker, mode: "insensitive" } },
+          select: { pageNotes: true, ticker: true },
+        })
+      : await prisma.watchlist.findFirst({
+          where: { ticker: { equals: ticker, mode: "insensitive" } },
+          select: { pageNotes: true, ticker: true },
+        });
+
+  if (!row) {
+    return {
+      ok: false as const,
+      status: 404 as const,
+      reason: `${input.target}_not_found` as const,
+      ticker,
+    };
+  }
+
+  const all = asReportBlocks(row.pageNotes);
+  // Newest-first: reverse chronological for agent history reads.
+  const newestFirst = [...all].reverse();
+  const slice = newestFirst.slice(offset, offset + limit);
+  return {
+    ok: true as const,
+    target: input.target,
+    ticker: row.ticker,
+    pageNotes: slice,
+    totalBlocks: all.length,
+    limit,
+    offset,
+    hasMore: offset + slice.length < all.length,
   };
 }
 

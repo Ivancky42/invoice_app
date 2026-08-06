@@ -1,6 +1,7 @@
 import {
   AnalystRating,
   ContentPageKey,
+  DailyLogRoutine,
   DecisionPositionContext,
   DecisionReviewStatus,
   DecisionSignalQuality,
@@ -54,5 +55,6 @@ export function listStockEnums(): Record<string, string[]> {
     DecisionSignalQuality: valuesOf(DecisionSignalQuality),
     DecisionPositionContext: valuesOf(DecisionPositionContext),
     ContentPageKey: valuesOf(ContentPageKey),
+    DailyLogRoutine: valuesOf(DailyLogRoutine),
   };
 }

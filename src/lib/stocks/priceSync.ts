@@ -281,6 +281,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
       const resolved = await resolveFinnhubPrice([sym], apiKey, quoteCache);
       if (resolved.price === null) {
         failed += 1;
+        errors.push(`portfolio ${sym}: No Finnhub quote`);
         details.push({
           table: "portfolio",
           id: row.notionId ?? row.id,
@@ -392,6 +393,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
       const resolved = await resolveFinnhubPrice([sym], apiKey, quoteCache);
       if (resolved.price === null) {
         failed += 1;
+        errors.push(`watchlist ${sym}: No Finnhub quote`);
         details.push({
           table: "watchlist",
           id: row.notionId ?? row.id,
@@ -411,6 +413,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
         where: { id: row.id },
         data: {
           currentPrice: price,
+          lastPriceUpdate: priceUpdateDay,
           daysToEarnings: daysToEarningsFrom(row.earningsDate),
           upsidePct: computeUpsidePct(price, decToNum(row.analystTarget)),
         },
@@ -427,7 +430,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
     } catch (e) {
       failed += 1;
       const msg = e instanceof Error ? e.message : String(e);
-      errors.push(`watchlist ${row.notionId ?? row.id}: ${msg}`);
+      errors.push(`watchlist ${rawTicker ?? row.notionId ?? row.id}: ${msg}`);
       details.push({
         table: "watchlist",
         id: row.notionId ?? row.id,
@@ -466,6 +469,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
     const resolved = await resolveFinnhubPrice([symbol], apiKey, quoteCache);
     if (resolved.price === null) {
       failed += 1;
+      errors.push(`ideas ${symbol}: No Finnhub quote`);
       details.push({
         table: "ideas",
         id: row.notionId ?? row.id,
@@ -482,6 +486,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
         where: { id: row.id },
         data: {
           currentPrice: resolved.price,
+          lastPriceUpdate: priceUpdateDay,
           upsidePct: computeUpsidePct(resolved.price, decToNum(row.analystTarget)),
           // Persist inferred lead when missing so future syncs stay deterministic.
           ...(row.leadTicker?.trim()

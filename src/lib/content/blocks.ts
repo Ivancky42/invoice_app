@@ -71,6 +71,25 @@ export function hasReportBlocks(value: unknown): boolean {
 	return asReportBlocks(value).length > 0;
 }
 
+/**
+ * Keep the newest `keep` ReportBlocks for context/list payloads.
+ * Full history remains in DB; use get_page_notes for older entries.
+ */
+export function truncatePageNotes(
+	value: unknown,
+	keep = 3,
+): { blocks: ReportBlock[]; totalBlocks: number; truncated: boolean } {
+	const all = asReportBlocks(value);
+	if (all.length <= keep) {
+		return { blocks: all, totalBlocks: all.length, truncated: false };
+	}
+	return {
+		blocks: all.slice(-keep),
+		totalBlocks: all.length,
+		truncated: true,
+	};
+}
+
 function blockToPlainText(block: ReportBlock): string {
 	switch (block.type) {
 		case "paragraph":

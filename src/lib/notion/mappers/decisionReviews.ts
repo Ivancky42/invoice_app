@@ -5,6 +5,7 @@ import {
   asBoolean,
   asDate,
   asInt,
+  asNotionPercentPoints,
   asNumber,
   asString,
   readMultiSelect,
@@ -22,6 +23,13 @@ import {
   normalizeDecisionVerdict,
 } from "@/lib/stocks/normalizeStatus";
 
+/**
+ * Map a Notion Decision Review page → Neon row.
+ *
+ * Review Status: Pending / 1W Reviewed / 4W Reviewed / 3M Reviewed / Closed
+ *   → PENDING / REVIEWED_1W / REVIEWED_4W / REVIEWED_3M / CLOSED
+ * Return *% (Notion percent format fraction) → percentage points (§14).
+ */
 function mapPage(page: PageObjectResponse): Prisma.DecisionReviewUncheckedCreateInput | null {
   const title = readPrimaryTitle(page) ?? asString(readProp(page, "Decision"));
   if (!title) return null;
@@ -63,9 +71,10 @@ function mapPage(page: PageObjectResponse): Prisma.DecisionReviewUncheckedCreate
     outcome1w: asString(readProp(page, "1W Outcome")),
     outcome4w: asString(readProp(page, "4W Outcome")),
     outcome3m: asString(readProp(page, "3M Outcome")),
-    return1wPct: asNumber(readProp(page, "Return 1W %")) ?? null,
-    return4wPct: asNumber(readProp(page, "Return 4W %")) ?? null,
-    return3mPct: asNumber(readProp(page, "Return 3M %")) ?? null,
+    // Notion percent format → percentage points (§14 / fmtPctPoints).
+    return1wPct: asNotionPercentPoints(readProp(page, "Return 1W %")),
+    return4wPct: asNotionPercentPoints(readProp(page, "Return 4W %")),
+    return3mPct: asNotionPercentPoints(readProp(page, "Return 3M %")),
     finalVerdictRaw,
     finalVerdict: normalizeDecisionVerdict(finalVerdictRaw),
     signalQualityRaw,

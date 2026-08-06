@@ -148,7 +148,7 @@ Local Desktop config does **not** reach Cowork cloud schedules — use the Custo
 
 **Verify tools appear:**
 
-- Read: `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`
+- Read: `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes`
 - Write (**live in 4c**): `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document`. **`patch_config` is HTTP-only** (`PATCH /api/agent/config`) — not registered on MCP so routines cannot rewrite `LIMITS`.
 
 ### 2.5 Point the four Cowork routines
@@ -386,7 +386,7 @@ Neon is SoT. Notion sync cron is **removed** from `vercel.json`. Only `/api/sync
 
 | Kind | Tools |
 |------|--------|
-| **Read** | `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document` |
+| **Read** | `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes` |
 | **Write** | `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote; `hard=true` to erase), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document` (`patch_config` for cash/FX only in rare ops — never LIMITS from routines) |
 
 Matching HTTP surface: `/api/agent/*` (see §3). Prices are never written by agents.

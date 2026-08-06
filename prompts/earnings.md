@@ -5,11 +5,13 @@
 Follow `_shared.md` in full.
 
 **Tools:** `get_context(routine="earnings")`, `get_prompt`, `list_portfolio`,
-`list_watchlist`, `list_trades`, `list_decision_reviews`, `list_daily_logs`, `get_document`
-→ `patch_portfolio`, `upsert_watchlist`, `upsert_daily_log`, `append_page_notes`,
-`upsert_decision_review`. Never `log_trade`, never `patch_config`.
+`list_watchlist`, `list_trades`, `list_decision_reviews`, `list_daily_logs`,
+`get_document`, `get_page_notes` → `patch_portfolio`, `upsert_watchlist`,
+`upsert_daily_log`, `append_page_notes`, `upsert_decision_review`. Never `log_trade`,
+never `patch_config`.
 
-Use `list_daily_logs` (~14 days) plus `list_decision_reviews` for pending-action memory.
+Use `list_daily_logs` (~14 days; optionally `routineType=EARNINGS` or `DAILY`) plus
+`list_decision_reviews` for pending-action memory.
 
 ---
 
@@ -38,8 +40,9 @@ For each portfolio or watchlist ticker with confirmed earnings within 14 days:
   states. Source pendings from `list_decision_reviews` (seed legacy pendings per `daily` §0
   if the table is empty).
 - **Pending EXIT/REDUCE into the print:** if stop-out or reduce is still open and
-  DTE ≤ 2, force the §4 choice — execute before print **or** defer past print with RESET
-  STOP / WAIT and written reason. Never leave OKLO-style limbo into a binary event.
+  DTE ≤ 2, force the §4 choice — **recommend execution before the print** **or** defer
+  past print with RESET STOP / WAIT and written reason. Never leave OKLO-style limbo into
+  a binary event.
 - Backfill portfolio `sleeve` (and other null enums you can determine) **before** applying
   sleeve rules — canonical mapping in `_shared` §6.
 - Apply sleeve rules (`_shared` §6): on `QUALITY_CORE` names, holding through earnings is
@@ -56,7 +59,9 @@ For each portfolio or watchlist ticker with confirmed earnings within 14 days:
 - Do not follow analyst targets blindly — check the earnings setup, market momentum,
   technical structure, valuation/risk-reward, and Strategy Lessons.
 
-Append a dated pre-earnings entry via `append_page_notes` (`_shared` §12).
+Append a dated pre-earnings entry via `append_page_notes` only when material
+(`_shared` §12) — e.g. recommendation/adaptive change, zone/stop cross, or earnings
+setup update. Quiet unchanged names stay in the earnings log only.
 
 ## 3. Post-earnings pass
 
@@ -87,8 +92,10 @@ Also summarise in `upsert_daily_log.actionTaken` as a table ReportBlock.
 
 ## 5. Output
 
-`upsert_daily_log` for today's MYT date as `logDate` (`YYYY-MM-DD`). All narrative fields
-are `ReportBlock[]`. Stamp `rulesVersion`. Required table in `actionTaken` or
+`upsert_daily_log` for today's MYT date as `logDate` (`YYYY-MM-DD`) with
+**`routineType=EARNINGS`** (required — must not overwrite the Daily row for the same
+date). All narrative fields are `ReportBlock[]`. Stamp `rulesVersion`. Include a **Run
+ledger** in `notes` (`_shared` §16). Required table in `actionTaken` or
 `portfolioMove`:
 
 Headers: `Ticker`, `DTE`, `Earnings Risk`, `Pending Action Status`, `Recommendation`,

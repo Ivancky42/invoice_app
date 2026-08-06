@@ -26,6 +26,7 @@ import {
   logTradeInputSchema,
   patchPortfolioInputSchema,
   appendPageNotesInputSchema,
+  getPageNotesInputSchema,
   stockReportInputSchema,
   upsertContentPageInputSchema,
   upsertDecisionReviewInputSchema,
@@ -39,6 +40,7 @@ import {
   appendPageNotes,
   deleteWatchlist,
   getContentPage,
+  getPageNotes,
   listDecisionReviews,
   patchPortfolio,
   syncTrackedTickersFromDb,
@@ -143,7 +145,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     "list_portfolio",
     {
       title: "List portfolio",
-      description: "List current portfolio positions with weightPct and averageDownsUsed.",
+      description: "List current portfolio positions with weightPct, averageDownsUsed, lastPriceUpdate, priceStatus. pageNotes are truncated to newest ~3 blocks (see pageNotesTruncated / get_page_notes).",
       inputSchema: {},
     },
     async () => textJson(await listPortfolioPositions()),
@@ -154,7 +156,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List watchlist",
       description:
-        "List watchlist rows. Excludes DEMOTED/DROPPED by default; pass includeDemoted=true to include soft-demoted names.",
+        "List watchlist rows with lastPriceUpdate and priceStatus. Excludes DEMOTED/DROPPED by default; pass includeDemoted=true to include soft-demoted names. pageNotes truncated to newest ~3 (use get_page_notes for history).",
       inputSchema: {
         includeDemoted: z
           .boolean()
@@ -186,7 +188,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List daily logs",
       description:
-        "List DailyLog rows (newest first). Optional since/until YYYY-MM-DD; default limit 14 (max 90).",
+        "List DailyLog rows (newest first). Optional since/until YYYY-MM-DD and routineType (DAILY|EARNINGS); default limit 14 (max 90).",
       inputSchema: listDailyLogsQuerySchema.shape,
     },
     async (args) => {
@@ -297,7 +299,8 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     "upsert_daily_log",
     {
       title: "Upsert daily log",
-      description: "Upsert DailyLog on logDate (YYYY-MM-DD). Narrative fields are ReportBlock[].",
+      description:
+        "Upsert DailyLog on (logDate, routineType). Default routineType=DAILY; Earnings must pass EARNINGS so the two do not overwrite each other. Narrative fields are ReportBlock[].",
       inputSchema: dailyLogInputSchema.shape,
     },
     async (args) => {
@@ -364,13 +367,30 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Append page notes",
       description:
-        "Append ReportBlock[] to portfolio or watchlist pageNotes (append-only ticker-note rule). Prefer this over patch_portfolio pageNotes replace.",
+        "Append ReportBlock[] to portfolio or watchlist pageNotes (append-only). Response returns only the newest ~3 blocks plus totals — use get_page_notes for older history.",
       inputSchema: appendPageNotesInputSchema.shape,
     },
     async (args) => {
       const parsed = parseTool(appendPageNotesInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       const result = await appendPageNotes(parsed);
+      if (!result.ok) return { ...textJson(result), isError: true as const };
+      return textJson(result);
+    },
+  );
+
+  server.registerTool(
+    "get_page_notes",
+    {
+      title: "Get page notes history",
+      description:
+        "Paginated pageNotes for one portfolio or watchlist ticker (newest first). Use when pageNotesTruncated=true on context/list responses. Default limit 20.",
+      inputSchema: getPageNotesInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(getPageNotesInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      const result = await getPageNotes(parsed);
       if (!result.ok) return { ...textJson(result), isError: true as const };
       return textJson(result);
     },

@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   AnalystRating,
   ContentPageKey,
+  DailyLogRoutine,
   DecisionPositionContext,
   DecisionReviewStatus,
   DecisionSignalQuality,
@@ -86,6 +87,8 @@ export type LogTradeInputParsed = z.infer<typeof logTradeInputSchema>;
 
 export const dailyLogInputSchema = z.object({
   logDate: dateYmd,
+  /** Separates Daily vs Earnings writes on the same calendar day. Default DAILY. */
+  routineType: z.enum(enumValues(DailyLogRoutine)).optional(),
   title: z.string().min(1).max(200).optional(),
   marketContext: reportBlocksSchema.nullable().optional(),
   topNews: reportBlocksSchema.nullable().optional(),
@@ -172,6 +175,16 @@ export const listDailyLogsQuerySchema = z.object({
   since: dateYmd.optional(),
   until: dateYmd.optional(),
   limit: z.coerce.number().int().min(1).max(90).optional(),
+  routineType: z.enum(enumValues(DailyLogRoutine)).optional(),
+});
+
+export const getPageNotesInputSchema = z.object({
+  target: z.enum(["portfolio", "watchlist"]),
+  ticker: z.string().min(1).max(32),
+  /** Newest-first page size (default 20, max 100). */
+  limit: z.number().int().min(1).max(100).optional(),
+  /** Skip newest N blocks (for pagination). */
+  offset: z.number().int().min(0).max(10_000).optional(),
 });
 
 export const listReportsQuerySchema = z.object({
@@ -374,6 +387,7 @@ export const LEGAL_ENUM_VALUES: Record<string, string[]> = {
   DecisionSignalQuality: Object.values(DecisionSignalQuality),
   DecisionPositionContext: Object.values(DecisionPositionContext),
   ContentPageKey: Object.values(ContentPageKey),
+  DailyLogRoutine: Object.values(DailyLogRoutine),
 };
 
 /** Map zod path leaf → enum name when known. */
@@ -400,6 +414,7 @@ const PATH_TO_ENUM: Record<string, string> = {
   executionQuality: "DecisionSignalQuality",
   positionContext: "DecisionPositionContext",
   key: "ContentPageKey",
+  routineType: "DailyLogRoutine",
 };
 
 /** Disambiguate `status` / `action` when multiple enums share the field name. */

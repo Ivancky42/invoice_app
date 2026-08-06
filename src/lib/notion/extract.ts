@@ -73,6 +73,16 @@ export function asNumber(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * Notion `number_format: percent` stores fractions (`0.025` = 2.5%).
+ * Decision Review `return*Pct` (and Trend perf when percent-formatted) store
+ * percentage points (`-2.5` = −2.5%). Convert at the Notion → Neon boundary.
+ */
+export function asNotionPercentPoints(v: unknown): number | null {
+  const n = asNumber(v);
+  return n === null ? null : n * 100;
+}
+
 export function asInt(v: unknown): number | null {
   const n = asNumber(v);
   return n === null ? null : Math.trunc(n);

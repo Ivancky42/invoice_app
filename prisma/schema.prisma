@@ -337,6 +337,8 @@ model Watchlist {
   analystCount     Int?
   marketCapBucket  MarketCapBucket?
   marketCapBucketRaw String?
+  /// Last successful price sync mark (mirrors Portfolio.lastPriceUpdate).
+  lastPriceUpdate  DateTime?
   syncedAt         DateTime          @updatedAt
 
   @@index([priority])
@@ -442,6 +444,8 @@ model Idea {
   lastReviewed     DateTime?
   graduationDate   DateTime?
   graduationPrice  Decimal?    @db.Decimal(14, 4)
+  /// Last successful price sync mark when leadTicker is quotable.
+  lastPriceUpdate  DateTime?
   syncedAt         DateTime    @updatedAt
 
   @@index([status])
@@ -449,13 +453,20 @@ model Idea {
   @@index([theme])
 }
 
+enum DailyLogRoutine {
+  DAILY
+  EARNINGS
+}
+
 /// Cached rows from Notion Daily Logs DB (journal / briefing).
 model DailyLog {
-  id               String    @id @default(cuid())
-  notionId         String?   @unique
+  id               String           @id @default(cuid())
+  notionId         String?          @unique
   /// Typically the ISO date (`Name` column), e.g. 2026-05-14
   title            String
-  logDate          DateTime? @unique
+  logDate          DateTime?
+  /// Separates Daily vs Earnings writes on the same calendar day.
+  routineType      DailyLogRoutine  @default(DAILY)
   /// Long-form sections as ReportBlock[].
   marketContext    Json?
   topNews          Json?
@@ -463,12 +474,15 @@ model DailyLog {
   watchlistMove    Json?
   actionTaken      Json?
   notes            Json?
-  flaggedTickers   String[]  @default([])
-  alertEmailSent   Boolean?  @default(false)
+  flaggedTickers   String[]         @default([])
+  alertEmailSent   Boolean?         @default(false)
   rulesVersion     String?
-  syncedAt         DateTime  @updatedAt
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  syncedAt         DateTime         @updatedAt
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([logDate, routineType])
+  @@index([logDate])
 }
 
 enum StockReportType {

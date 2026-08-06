@@ -6,6 +6,8 @@ import { syncTrends } from "@/lib/notion/mappers/trends";
 import { syncIdeas } from "@/lib/notion/mappers/ideas";
 import { syncDailyLogs } from "@/lib/notion/mappers/dailyLogs";
 import { syncStockReports } from "@/lib/notion/mappers/stockReports";
+import { syncDecisionReviews } from "@/lib/notion/mappers/decisionReviews";
+import { syncContentPages } from "@/lib/notion/mappers/contentPages";
 
 const SYNC_SOURCE = "notion";
 
@@ -60,6 +62,11 @@ export async function runNotionSync(): Promise<SyncResult> {
   steps.push(await runStep("ideas", syncIdeas));
   steps.push(await runStep("dailyLogs", syncDailyLogs));
   steps.push(await runStep("stockReports", syncStockReports));
+  steps.push(await runStep("decisionReviews", syncDecisionReviews));
+  steps.push(await runStep("contentPages", async () => {
+    const counts = await syncContentPages();
+    return { count: counts.strategyLessons + counts.investmentStyle };
+  }));
   // portfolioSnapshot: owned by /api/sync/prices (Phase 1+) — intentionally omitted.
 
   const allOk = steps.every((s) => s.ok);

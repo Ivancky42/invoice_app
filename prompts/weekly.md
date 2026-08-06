@@ -6,7 +6,8 @@ Follow `_shared.md` in full.
 
 **Tools:** `get_context(routine="weekly")`, `get_prompt`, `list_portfolio`,
 `list_watchlist` (`includeDemoted=true` when needed), `list_ideas`, `list_trends`,
-`list_trades`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document` →
+`list_trades`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`,
+`get_page_notes` →
 `upsert_report` (`reportType="WEEKLY"`), `upsert_trend`, `upsert_idea`, `patch_portfolio`,
 `upsert_watchlist`, `append_page_notes`, `upsert_decision_review`, `sync_tracked_tickers`.
 Soft-demote via `delete_watchlist` / `action=DEMOTED` per `_shared` §13. Never `log_trade`,
@@ -14,7 +15,8 @@ never `patch_config`.
 
 Read `list_daily_logs` for ~30 days and `list_decision_reviews` for pattern memory.
 Backfill null `sleeve`/`theme` in §3 before sleeve-dependent judgments. Decision Review
-migration seed is complete — do not re-seed.
+migration seed is complete — do not re-seed. Include a **Run ledger** in the weekly report
+(`_shared` §16). Append ticker notes only on material changes (`_shared` §12).
 
 ---
 

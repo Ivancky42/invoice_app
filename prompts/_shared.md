@@ -50,6 +50,9 @@ Do not rely on stale config copied into a routine.
   decision can be resolved to the exact ruleset. Do **not** invent extra props on
   `patch_portfolio` / `upsert_watchlist` / `upsert_idea` / `upsert_trend` (those
   schemas omit it).
+- **`upsert_daily_log` is keyed by `(logDate, routineType)`.** Daily passes
+  `routineType=DAILY` (or omit — default). Earnings **must** pass `routineType=EARNINGS`.
+  Same calendar day, different routines — never overwrite each other.
 - **Never write marks.** `currentPrice`, `shares`, and `myAvgCost` come from the price
   sync / `log_trade` only. Agents **do** write `analystTarget` (consensus USD) via
   `patch_portfolio` / `upsert_watchlist` — the server recomputes `upsidePct`. Never write
@@ -76,11 +79,19 @@ Do not rely on stale config copied into a routine.
 
 ### History reads
 
-Use `list_daily_logs` (`since`/`until`/`limit`, default 14, max 90) and `list_reports`
-(`reportType`, `since`/`until`/`limit`, default 8, max 36) for prior narrative memory.
+Use `list_daily_logs` (`since`/`until`/`limit`/`routineType`, default 14, max 90) and
+`list_reports` (`reportType`, `since`/`until`/`limit`, default 8, max 36) for prior
+narrative memory. Filter `routineType=DAILY` or `EARNINGS` when you need one stream only.
 Use `list_decision_reviews` for pending/scored decisions. Prefer bounded windows over
-pulling max every run. `lastPriceUpdate` and `pageNotes` are on `get_context.positions`
-and `list_portfolio` / `list_watchlist`.
+pulling max every run.
+
+`lastPriceUpdate`, `priceStatus` (`OK` | `STALE` | `SYNC_FAILED` | `UNKNOWN`), and a
+**truncated** `pageNotes` preview (newest ~3 blocks) are on `get_context.positions` /
+watchlist and on `list_portfolio` / `list_watchlist`. When `pageNotesTruncated=true`,
+fetch older history with `get_page_notes` (`target`, `ticker`, `limit`, `offset`) — never
+expect full ticker-note history in context/list payloads.
+
+`lastRun.prices.failedTickers` / `failedDetails` expose the last price-sync misses.
 
 ### Tracked tickers
 
@@ -96,9 +107,15 @@ The sync runs ~06:00 MYT ≈ 18:00 ET, ~2h after the US close. The Daily routine
 just-completed session — label them "US close (date)" with confidence, do not hedge as
 "intraday".
 
-- **Stale-sync check:** compare each position's `lastPriceUpdate` (from context or
-  `list_portfolio`) to the last completed US session (respecting holidays/weekends). Flag
-  `STALE SYNC` for that ticker and reason from the last known-good close.
+- **Stale-sync check:** compare each position/watchlist row's `lastPriceUpdate` and
+  `priceStatus` (from context or `list_portfolio` / `list_watchlist`) to the last
+  completed US session (respecting holidays/weekends). Flag `STALE SYNC` / treat
+  `priceStatus=STALE` or `SYNC_FAILED` as non-actionable marks.
+- **Block recommendations on bad marks:** do **not** issue BUY / ADD / EXIT / REDUCE /
+  RESET STOP / zone-hit recommendations that depend on `currentPrice` when
+  `priceStatus` is `SYNC_FAILED`, `STALE`, or `UNKNOWN` for that ticker. Flag the data
+  issue, reason from the last known-good close if available, and wait for a clean sync.
+  Narrative HOLD/WATCH commentary is fine; size-changing or stop-changing calls are not.
 - The system sees one price per session. Intraday wicks are invisible by design — all
   stop/zone/trigger evaluations are made on closing prices.
 - Ideas `currentPrice` is **unreliable** unless `priceReliable: true` (requires
@@ -134,9 +151,9 @@ Rules:
   (HOLD / RESET STOP / REDUCE), never ignored.
 - **Pending EXIT/REDUCE into earnings:** if a stop-out or reduce is `STILL_VALID` and
   `daysToEarnings` ≤ 2 (or earnings is tomorrow / today), the Daily/Earnings routine
-  must choose explicitly: (1) **execute before the print**, or (2) **defer past the
-  print** with reason, adaptive state, and a RESET STOP or WAIT — never leave an
-  unexecuted EXIT colliding with a binary event by silence. Lesson #1 covers adds;
+  must choose explicitly: (1) **recommend execution before the print**, or (2) **defer
+  past the print** with reason, adaptive state, and a RESET STOP or WAIT — never leave
+  an unexecuted EXIT colliding with a binary event by silence. Lesson #1 covers adds;
   this rule covers pending exits.
 - Analyst targets are one signal only. Never recommend on target alone. Weigh momentum,
   technical structure, sector trend, catalyst quality, news, valuation/risk-reward, and
@@ -150,7 +167,22 @@ Rules:
 - Mixed evidence → WAIT / REASSESS. Do not force a trade.
 - Reversal forming → state explicitly which: early reversal, confirmed reversal, failed
   rebound, or trend continuation.
-- Never say "execute now" unless `STILL_VALID` after fresh reassessment.
+- Never say "execute now" / "execute before the print" unless `STILL_VALID` after fresh
+  reassessment — and even then prefer **"recommend execution …"** so the advisory
+  boundary stays unambiguous (`_shared` §5).
+
+### Escalation cap vs Outstanding Decisions (§11.8)
+
+An alert may escalate **urgency language** at most **twice**. On the third run where it
+would repeat "recommend execution now" without Ivan confirming or materially new
+evidence, stop repeating the urgent phrasing and classify urgency as `STALE_PENDING`.
+
+**Do not drop a still-valid unresolved EXIT/REDUCE** just because the urgency cap fired.
+Keep it in a persistent **Outstanding Decisions** section of the Daily log
+(`actionTaken` or `notes`) with: ticker, original action, adaptive state, last reviewed
+date, and current recommendation (calm wording). Reassess every run; only remove when
+`RESOLVED` / `SUPERSEDED` / `MISSED_OR_EXPIRED` / `REVERSAL_CONFIRMED` with a written
+replacement.
 
 ### Stabilization definition (§12.11 — kills unfalsifiable WAIT)
 
@@ -168,11 +200,28 @@ close >~3% below the zone floor invalidates the setup (MU rule).
 
 ### Recommendation tone (§10.7)
 
-Decision-support monitor, not an execution engine. Use "Execute" only when `STILL_VALID`
-and high-confidence; "Confirm / reassess" when the signal changed; "Wait" on mixed
-evidence; "Expired"; "Superseded"; "Reset strategy". Every recommendation answers:
-(1) what changed, (2) why the old action does or doesn't still apply, (3) what Ivan should
-decide next.
+Decision-support monitor, not an execution engine. Prefer **"recommend execution"** /
+"Confirm / reassess" / "Wait" — never imply the agent placed a trade. Use urgent
+"recommend execution now" only when `STILL_VALID` and high-confidence; "Confirm /
+reassess" when the signal changed; "Wait" on mixed evidence; "Expired"; "Superseded";
+"Reset strategy". Every recommendation answers: (1) what changed, (2) why the old action
+does or doesn't still apply, (3) what Ivan should decide next.
+
+### Evidence provenance (material recommendations)
+
+Every **material** recommendation (BUY / ADD / REDUCE / EXIT / RESET STOP / EARLY ENTRY /
+new idea graduation / earnings HOLD-through) must cite:
+
+| Field | Required |
+|---|---|
+| Source name + direct URL | Yes (or "company filing / IR" with link) |
+| Publication / event date | Yes |
+| Filing/company vs analyst/social | Label which |
+| Fact vs agent inference | Explicit |
+| Price / session "as of" | `lastPriceUpdate` + session label (US close date) |
+
+Do not present inferred conclusions as filed facts. If the only source is prior notes,
+say so.
 
 ## 5. Execution boundary — non-negotiable
 
@@ -375,8 +424,22 @@ under analysis plus Pending reviews due within 7 days. Compress series; do not s
 
 `pageNotes` are **append-only**. Use `append_page_notes` (`target=portfolio|watchlist`)
 with `blocks` as `ReportBlock[]`. Do **not** replace via `patch_portfolio.pageNotes` /
-`upsert_watchlist.pageNotes` unless intentionally rewriting history. Prior `pageNotes`
-are readable on context / list serializers — still prefer append over full replace.
+`upsert_watchlist.pageNotes` unless intentionally rewriting history.
+
+Context / list serializers return only the **newest ~3** blocks plus
+`pageNotesTotal` / `pageNotesTruncated`. Use `get_page_notes` for older history.
+`append_page_notes` responses are similarly truncated — do not treat the response as the
+full note body.
+
+**When to append (material only — not every ticker every day):**
+- A recommendation or adaptive state changes
+- A threshold or zone is crossed (stop, entry/add zone, target)
+- Material news or earnings occurs
+- A data-quality correction is written (earnings date, target, stop RESET, theme, etc.)
+
+Quiet no-change days belong in `upsert_daily_log` (`portfolioMove` / `watchlistMove`),
+**not** as a fresh ticker note. Do not duplicate the full daily snapshot into
+`pageNotes`.
 
 **Retention:** prefer short dated entries (2–5 bullets). Full history also lives in daily
 logs and Decision Reviews.
@@ -388,10 +451,6 @@ logs and Decision Reviews.
 - Move fragments the UI highlights: `↑ +1.2%`, `↓ -0.8%`, `(+$1.20, +0.5%)`,
   `| -2.1% from $45.00`, or `(flat — …)`. Use ASCII `+`/`-` or unicode `−`; avoid inventing
   emoji status badges.
-- Do not duplicate long daily-log text into ticker notes.
-
-Each entry: date, current stored price, price move, action classification,
-stop/target/zone context, earnings/DTE context, any adaptive pending-action status.
 
 ## 13. Watchlist action states
 
@@ -463,3 +522,23 @@ Soft warnings are informational; hard caps are `409`. Rule or limit changes are
 exposed on MCP (HTTP-only for Ivan). Living strategy prose updates go through
 `upsert_document` (`STRATEGY_LESSONS` / `INVESTMENT_STYLE`) only on repeated patterns
 (≥3 cases). Ticker-list hygiene uses `sync_tracked_tickers`.
+
+Urgency-language cap and Outstanding Decisions: see §4 Escalation cap (§11.8).
+
+## 16. Routine-run ledger
+
+Every routine that writes (`daily`, `earnings`, `weekly`, `monthly`) must include a short
+**Run ledger** block in the primary write (`upsert_daily_log.notes` or report `content`)
+covering:
+
+| Field | Content |
+|---|---|
+| Scheduled / start / completion | MYT timestamps (approx OK) |
+| Routine + `rulesVersion` | From context |
+| Success / failure + error | Tool/data failures, not vibes |
+| Price freshness summary | Counts of `OK` / `STALE` / `SYNC_FAILED` / `UNKNOWN`; list failed tickers |
+| Rows read / written | Approximate tool counts |
+| Source count | Distinct web/filing sources cited |
+| Forbidden tool attempts | `log_trade` / `patch_config` / etc. — should be none; say so |
+
+This is audit evidence, not narrative padding.

@@ -7,12 +7,12 @@ sizing (§7), sleeves (§6), price provenance (§3), Decision Review (§11), and
 
 **Tools:** `get_context(routine="daily")`, `get_prompt`, `list_portfolio`,
 `list_watchlist` (use `includeDemoted=true` when checking re-promotion), `list_ideas`,
-`list_trends`, `list_trades`, `list_decision_reviews`, `list_daily_logs`, `get_document` →
-`upsert_daily_log`, `patch_portfolio`, `upsert_watchlist`, `upsert_idea`,
-`append_page_notes`, `upsert_decision_review`, `sync_tracked_tickers`. Soft-demote via
-`delete_watchlist` (default) or `upsert_watchlist` with `action=DEMOTED|DROPPED` — see
-`_shared` §13. Never `log_trade` (Ivan-triggered only). Never `patch_config`. Never
-`hard=true` delete except structurally dead names.
+`list_trends`, `list_trades`, `list_decision_reviews`, `list_daily_logs`, `get_document`,
+`get_page_notes` → `upsert_daily_log`, `patch_portfolio`, `upsert_watchlist`,
+`upsert_idea`, `append_page_notes`, `upsert_decision_review`, `sync_tracked_tickers`.
+Soft-demote via `delete_watchlist` (default) or `upsert_watchlist` with
+`action=DEMOTED|DROPPED` — see `_shared` §13. Never `log_trade` (Ivan-triggered only).
+Never `patch_config`. Never `hard=true` delete except structurally dead names.
 
 ---
 
@@ -49,21 +49,27 @@ For every pending STOP LOSS / TAKE PROFIT / TRIM / ADD / BUY / EXIT action:
    expired if not actionable; replace if reversal confirmed. Never repeat an urgent
    instruction the current setup no longer supports. Update the DR row when status
    changes.
-5. **Escalation cap (§11.8):** an alert may escalate urgency at most **twice**. On the
-   third run where it would repeat "execute now" without execution or materially new
-   evidence, auto-downgrade to `STALE_PENDING` regardless of how far price has moved, and
-   stop repeating until fresh reassessment changes the classification.
+5. **Escalation cap (§11.8):** urgency language may escalate at most **twice**. On the
+   third run where it would repeat "recommend execution now" without execution or
+   materially new evidence, stop the urgent phrasing and mark urgency `STALE_PENDING`.
+   **Still-valid unresolved EXIT/REDUCE must remain** in an **Outstanding Decisions**
+   section (calm wording) until truly resolved — do not drop them after three repetitions
+   (`_shared` §4).
 
 Include a Pending Action Review **table** ReportBlock in `upsert_daily_log.actionTaken`
 with headers: `Ticker`, `Original Action`, `Current Status`, `Evidence Today`,
-`Updated Recommendation`.
+`Updated Recommendation`. Also list Outstanding Decisions that hit the urgency cap but
+remain `STILL_VALID`.
 
 ## 2. Per-ticker pass
 
 For every portfolio and watchlist ticker in `trackedTickers`:
 
-- Read `currentPrice` / `lastPriceUpdate` / `pageNotes` from context (or `list_portfolio`).
-  Run the §3 stale-sync check.
+- Read `currentPrice` / `lastPriceUpdate` / `priceStatus` / truncated `pageNotes` from
+  context (or `list_portfolio` / `list_watchlist`). Run the §3 stale-sync check. If
+  `priceStatus` is `SYNC_FAILED` / `STALE` / `UNKNOWN`, **block** price-dependent
+  recommendations for that ticker (`_shared` §3). Use `get_page_notes` only when you need
+  older note history (`pageNotesTruncated=true`).
 - Check stop loss, entry/add zone, target proximity, earnings timing, thesis status,
   repeated flags.
 - **Backfill null enums first** — before any sleeve-dependent rule: portfolio `sleeve`,
@@ -91,7 +97,8 @@ For every portfolio and watchlist ticker in `trackedTickers`:
 - Update portfolio `action` to a legal `PositionAction` only (`HOLD` | `ADD_ON_DIP` |
   `REDUCE` | `EXIT` | `WATCH`) — map freeform language per `_shared` §2.
 - Update watchlist `priority` and/or `action` (`WatchlistAction`) per `_shared` §13.
-- Append today's dated note via `append_page_notes` (`_shared` §12).
+- Append a dated note via `append_page_notes` **only when material** (`_shared` §12) —
+  not for every ticker every day. Quiet no-change rows live in the daily log only.
 
 ## 2b. Portfolio construction scan (shape of the book)
 
@@ -222,9 +229,10 @@ the daily log's Shadow Test section: (a) fixed target-cross trim executed at tar
 
 ## 9. Write the log
 
-`upsert_daily_log` every run, keyed on `logDate` (today's MYT date, `YYYY-MM-DD`) — the
-call is idempotent, so re-running updates rather than duplicating. All narrative fields
-are `ReportBlock[]`. Stamp `rulesVersion`.
+`upsert_daily_log` every run with `logDate` (today's MYT date, `YYYY-MM-DD`) and
+`routineType=DAILY` (or omit — default). Idempotent on `(logDate, routineType)` so
+re-running updates rather than duplicating; Earnings uses `EARNINGS` and must not
+overwrite this row. All narrative fields are `ReportBlock[]`. Stamp `rulesVersion`.
 
 | Field | Content |
 |---|---|
@@ -232,8 +240,8 @@ are `ReportBlock[]`. Stamp `rulesVersion`.
 | `topNews` | Prefer `bulleted_list_item` — one story per bullet; bold ticker in the line |
 | `portfolioMove` | **One `bulleted_list_item` (or table row) per position.** Never pack multiple tickers into one paragraph. Line shape: `TICKER $price move · action · one-line reason` |
 | `watchlistMove` | Prefer the curation **table** (§6). If freeform, still **one bullet per ticker** |
-| `actionTaken` | Pending Action Review table (§1); summarise DR creates (full rows via `upsert_decision_review`) |
-| `notes` | Shadow Test (§8), post-sync reconciliation notes (§7), hygiene flags, data-quality issues |
+| `actionTaken` | Pending Action Review table (§1); Outstanding Decisions; summarise DR creates |
+| `notes` | Shadow Test (§8), post-sync reconciliation (§7), hygiene flags, **Run ledger** (`_shared` §16) |
 | `flaggedTickers` | String array — one entry per ticker, e.g. `"MRVL +12.8"` / `"VST -8.1"` (not one giant UP/DOWN sentence) |
 
 **UI readability:** the portal splits legacy walls-of-text at `TICKER $price` boundaries, but

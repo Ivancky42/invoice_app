@@ -35,7 +35,10 @@ import {
 import type { Portfolio, Watchlist, Trade, Trend, Idea, DecisionReview, ContentPage } from "@/generated/prisma/client";
 import type { Decimal } from "@/generated/prisma/internal/prismaNamespace";
 import type { EarningsRiskThresholds } from "@/lib/stocks/derived";
-import { asReportBlocks } from "@/lib/content/blocks";
+import {
+  asReportBlocks,
+  truncatePageNotes,
+} from "@/lib/content/blocks";
 
 export const AGENT_ROUTINES = ["daily", "weekly", "earnings", "monthly"] as const;
 export type AgentRoutine = (typeof AGENT_ROUTINES)[number];
@@ -120,7 +123,37 @@ export type SyncRunSummary = {
   lastError: string | null;
   /** Present on notion when Phase 5 freeze is active — lastSuccessAt is historical only. */
   frozen?: boolean;
+  /** From SyncStatus.rowCounts when source=prices. */
+  failedTickers?: string[];
+  failedDetails?: Array<{ table: string; ticker: string | null; error: string }>;
+  updated?: number;
+  failed?: number;
 };
+
+function priceStatusFromUpdate(
+  lastPriceUpdate: Date | null | undefined,
+  failedTickers: Set<string>,
+  ticker: string | null | undefined,
+): "OK" | "STALE" | "SYNC_FAILED" | "UNKNOWN" {
+  const t = ticker?.trim().toUpperCase();
+  if (t && failedTickers.has(t)) return "SYNC_FAILED";
+  if (!lastPriceUpdate) return "UNKNOWN";
+  const today = snapshotDateGMT8();
+  const markDay = snapshotDateGMT8(lastPriceUpdate);
+  const ageDays = Math.round((today.getTime() - markDay.getTime()) / 86_400_000);
+  // Weekend/holiday buffer: >2 calendar days behind expected close → STALE.
+  if (ageDays > 2) return "STALE";
+  return "OK";
+}
+
+function pageNotesPreview(body: unknown) {
+  const { blocks, totalBlocks, truncated } = truncatePageNotes(body, 3);
+  return {
+    pageNotes: blocks,
+    pageNotesTotal: totalBlocks,
+    pageNotesTruncated: truncated,
+  };
+}
 
 async function lastRunSummary(): Promise<{
   prices: SyncRunSummary | null;
@@ -133,11 +166,25 @@ async function lastRunSummary(): Promise<{
   const map = (source: string): SyncRunSummary | null => {
     const row = bySource.get(source);
     if (!row) return null;
+    const counts =
+      row.rowCounts && typeof row.rowCounts === "object" && !Array.isArray(row.rowCounts)
+        ? (row.rowCounts as Record<string, unknown>)
+        : {};
+    const failedTickers = Array.isArray(counts.failedTickers)
+      ? counts.failedTickers.filter((t): t is string => typeof t === "string")
+      : undefined;
+    const failedDetails = Array.isArray(counts.failedDetails)
+      ? (counts.failedDetails as Array<{ table: string; ticker: string | null; error: string }>)
+      : undefined;
     return {
       source,
       lastRunAt: iso(row.lastRunAt),
       lastSuccessAt: iso(row.lastSuccessAt),
       lastError: row.lastError,
+      failedTickers,
+      failedDetails,
+      updated: typeof counts.updated === "number" ? counts.updated : undefined,
+      failed: typeof counts.failed === "number" ? counts.failed : undefined,
     };
   };
   const notionFrozen = process.env.NOTION_SYNC_ENABLED !== "true";
@@ -166,12 +213,19 @@ async function lastRunSummary(): Promise<{
 
 export function serializePortfolioRow(
   p: Portfolio,
-  opts?: { sharesOverride?: number | null; weightPct?: number | null; marketValue?: number | null },
+  opts?: {
+    sharesOverride?: number | null;
+    weightPct?: number | null;
+    marketValue?: number | null;
+    failedTickers?: Set<string>;
+  },
 ) {
   const currentPrice = num(p.currentPrice);
   const analystTarget = num(p.analystTarget);
   const storedUpside = num(p.upsidePct);
   const derivedUpside = computeUpsidePct(currentPrice, analystTarget);
+  const notes = pageNotesPreview(p.pageNotes);
+  const failed = opts?.failedTickers ?? new Set<string>();
   return {
     id: p.id,
     ticker: p.ticker,
@@ -202,17 +256,21 @@ export function serializePortfolioRow(
     beatRate: p.beatRate,
     impliedMove: p.impliedMove,
     lastPriceUpdate: iso(p.lastPriceUpdate),
+    priceStatus: priceStatusFromUpdate(p.lastPriceUpdate, failed, p.ticker),
     weightPct: opts?.weightPct ?? null,
     marketValue: opts?.marketValue ?? null,
     thesis: jsonText(p.thesis),
     notes: jsonText(p.notes),
-    pageNotes: asReportBlocks(p.pageNotes),
+    ...notes,
   };
 }
 
 export function serializeWatchlistRow(
   w: Watchlist,
-  opts?: { earningsRiskThresholds?: EarningsRiskThresholds },
+  opts?: {
+    earningsRiskThresholds?: EarningsRiskThresholds;
+    failedTickers?: Set<string>;
+  },
 ) {
   const earn = opts?.earningsRiskThresholds
     ? earningsFields(w.earningsDate, w.daysToEarnings, opts.earningsRiskThresholds)
@@ -220,6 +278,8 @@ export function serializeWatchlistRow(
   const currentPrice = num(w.currentPrice);
   const analystTarget = num(w.analystTarget);
   const derivedUpside = computeUpsidePct(currentPrice, analystTarget);
+  const notes = pageNotesPreview(w.pageNotes);
+  const failed = opts?.failedTickers ?? new Set<string>();
   return {
     id: w.id,
     ticker: w.ticker,
@@ -250,9 +310,11 @@ export function serializeWatchlistRow(
     impliedMove: w.impliedMove,
     analystCount: w.analystCount,
     marketCapBucket: w.marketCapBucket,
+    lastPriceUpdate: iso(w.lastPriceUpdate),
+    priceStatus: priceStatusFromUpdate(w.lastPriceUpdate, failed, w.ticker),
     thesis: jsonText(w.thesis),
     actionNotes: jsonText(w.actionNotes),
-    pageNotes: asReportBlocks(w.pageNotes),
+    ...notes,
   };
 }
 
@@ -309,8 +371,9 @@ export function serializeTrendRow(t: Trend, detail = true) {
   };
 }
 
-export function serializeIdeaRow(i: Idea) {
+export function serializeIdeaRow(i: Idea, opts?: { failedTickers?: Set<string> }) {
   const priceReliable = Boolean(i.leadTicker?.trim());
+  const failed = opts?.failedTickers ?? new Set<string>();
   return {
     id: i.id,
     stockSector: i.stockSector,
@@ -320,6 +383,10 @@ export function serializeIdeaRow(i: Idea) {
     // Only trust currentPrice when leadTicker is set (sector rows often had junk quotes).
     currentPrice: priceReliable ? num(i.currentPrice) : null,
     priceReliable,
+    lastPriceUpdate: priceReliable ? iso(i.lastPriceUpdate) : null,
+    priceStatus: priceReliable
+      ? priceStatusFromUpdate(i.lastPriceUpdate, failed, i.leadTicker)
+      : "UNKNOWN",
     analystTarget: num(i.analystTarget),
     upsidePct: num(i.upsidePct),
     riskLevel: i.riskLevel,
@@ -339,10 +406,15 @@ export function serializeIdeaRow(i: Idea) {
 }
 
 export async function listPortfolioPositions() {
-  const [portfolio, trades] = await Promise.all([getPortfolio(), getTrades()]);
+  const [portfolio, trades, lastRun] = await Promise.all([
+    getPortfolio(),
+    getTrades(),
+    lastRunSummary(),
+  ]);
   const holdings = holdingsByTicker(trades);
   const totals = computePortfolioTotals(portfolio, trades);
   const exCspxNav = exCspxNavFromTotals(totals);
+  const failedTickers = new Set(lastRun.prices?.failedTickers ?? []);
 
   return portfolio
     .filter((p) => !isCashTicker(p.ticker))
@@ -356,20 +428,26 @@ export async function listPortfolioPositions() {
         sharesOverride: shares,
         weightPct,
         marketValue,
+        failedTickers,
       });
     });
 }
 
 export async function listWatchlistItems(opts?: { includeDemoted?: boolean }) {
-  const [rows, thresholds] = await Promise.all([
+  const [rows, thresholds, lastRun] = await Promise.all([
     getWatchlist(),
     getAgentRuntimeConfig().then((c) => c.earningsRiskThresholds),
+    lastRunSummary(),
   ]);
+  const failedTickers = new Set(lastRun.prices?.failedTickers ?? []);
   const filtered = opts?.includeDemoted
     ? rows
     : rows.filter((w) => w.action !== "DEMOTED" && w.action !== "DROPPED");
   return filtered.map((w) =>
-    serializeWatchlistRow(w, { earningsRiskThresholds: thresholds }),
+    serializeWatchlistRow(w, {
+      earningsRiskThresholds: thresholds,
+      failedTickers,
+    }),
   );
 }
 
@@ -438,14 +516,16 @@ export async function listTradeItems() {
 }
 
 export async function listIdeaItems() {
-  const rows = await getIdeas();
-  return rows.map(serializeIdeaRow);
+  const [rows, lastRun] = await Promise.all([getIdeas(), lastRunSummary()]);
+  const failedTickers = new Set(lastRun.prices?.failedTickers ?? []);
+  return rows.map((i) => serializeIdeaRow(i, { failedTickers }));
 }
 
 export function serializeDailyLogRow(row: {
   id: string;
   title: string;
   logDate: Date | null;
+  routineType?: string | null;
   marketContext: unknown;
   topNews: unknown;
   portfolioMove: unknown;
@@ -460,6 +540,7 @@ export function serializeDailyLogRow(row: {
     id: row.id,
     title: row.title,
     logDate: iso(row.logDate),
+    routineType: row.routineType ?? "DAILY",
     marketContext: asReportBlocks(row.marketContext),
     topNews: asReportBlocks(row.topNews),
     portfolioMove: asReportBlocks(row.portfolioMove),
@@ -494,9 +575,14 @@ export async function listDailyLogItems(opts?: {
   since?: string;
   until?: string;
   limit?: number;
+  routineType?: "DAILY" | "EARNINGS";
 }) {
   const limit = opts?.limit ?? 14;
-  const where: { logDate?: { gte?: Date; lte?: Date } } = {};
+  const where: {
+    logDate?: { gte?: Date; lte?: Date };
+    routineType?: "DAILY" | "EARNINGS";
+  } = {};
+  if (opts?.routineType) where.routineType = opts.routineType;
   if (opts?.since || opts?.until) {
     where.logDate = {};
     if (opts.since) {
@@ -508,7 +594,7 @@ export async function listDailyLogItems(opts?: {
   }
   const rows = await prisma.dailyLog.findMany({
     where,
-    orderBy: { logDate: "desc" },
+    orderBy: [{ logDate: "desc" }, { routineType: "asc" }],
     take: limit,
   });
   return rows.map(serializeDailyLogRow);
@@ -648,7 +734,12 @@ export async function buildAgentContext(routine: AgentRoutine) {
           computeUpsidePct(cur, decToNum(p.analystTarget)) ??
           decToNum(p.upsidePct),
         lastPriceUpdate: iso(p.lastPriceUpdate),
-        pageNotes: asReportBlocks(p.pageNotes),
+        priceStatus: priceStatusFromUpdate(
+          p.lastPriceUpdate,
+          new Set(lastRun.prices?.failedTickers ?? []),
+          p.ticker,
+        ),
+        ...pageNotesPreview(p.pageNotes),
       };
     });
 
@@ -687,10 +778,17 @@ export async function buildAgentContext(routine: AgentRoutine) {
     },
     positions,
     watchlist: watchlist.map((w) =>
-      serializeWatchlistRow(w, { earningsRiskThresholds }),
+      serializeWatchlistRow(w, {
+        earningsRiskThresholds,
+        failedTickers: new Set(lastRun.prices?.failedTickers ?? []),
+      }),
     ),
     trends: trends.map((t) => serializeTrendRow(t, trendDetail)),
-    ideas: ideas.map(serializeIdeaRow),
+    ideas: ideas.map((i) =>
+      serializeIdeaRow(i, {
+        failedTickers: new Set(lastRun.prices?.failedTickers ?? []),
+      }),
+    ),
     documents,
     limits,
     thresholds: {
