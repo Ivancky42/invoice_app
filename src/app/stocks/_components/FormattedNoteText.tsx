@@ -34,7 +34,8 @@ function moveClassName(tone: MoveTone): string {
 }
 
 /** Highlight standalone tickers like `DDOG` / `CASH_USD` when bordered by punctuation/space. */
-const TICKER_TOKEN = /\b([A-Z]{1,5}(?:_USD)?)\b(?=\s*\$|\s*\||\s*[—(]|$)/g;
+const TICKER_TOKEN =
+	/\b([A-Z]{1,5}(?:_USD)?)\b(?=\s*\$|\s*\||\s*[—(⚠️↑↓+\-−]|\s+[+\-−↑↓]|\s*$)/g;
 
 function formatNoteText(text: string): ReactNode[] {
 	const parts: { type: "text" | "move" | "ticker"; value: string }[] = [];

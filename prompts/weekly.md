@@ -160,6 +160,10 @@ graduate marginal names to fill the list.
 
 `upsert_report(reportType="WEEKLY", reportDate=<Monday, YYYY-MM-DD>)`, `content` as
 `ReportBlock[]` (headings + tables as JSON blocks, not markdown). Stamp `rulesVersion`.
+
+**Format:** every section is `heading_2` then a **table** or `bulleted_list_item` list —
+never a single paragraph that lists many tickers. One row/bullet per ticker.
+
 Required sections (as `heading_2` + table/paragraph blocks):
 
 - **Strategy Changes This Week** — Ticker | Old Strategy | New Evidence | Updated Strategy |

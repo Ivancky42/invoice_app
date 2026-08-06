@@ -98,7 +98,7 @@ function BriefModal({
 			aria-label={title}
 		>
 			<div
-				className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[min(92vh,900px)] flex flex-col"
+				className="bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[min(92vh,960px)] flex flex-col"
 				onClick={(e) => e.stopPropagation()}
 			>
 				<div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-gray-100 shrink-0">

@@ -195,6 +195,85 @@ export async function getDecisionReviews(): Promise<DecisionReviewRow[]> {
 	});
 }
 
+/** Plain shape for Client Components (Prisma Decimal is not RSC-serializable). */
+export type DecisionReviewDTO = {
+	id: string;
+	title: string;
+	ticker: string | null;
+	decisionDate: string | null;
+	decisionType: DecisionReview["decisionType"];
+	positionContext: DecisionReview["positionContext"];
+	priceAtDecision: number | null;
+	entryZone: string | null;
+	stopLoss: number | null;
+	target: number | null;
+	convictionScore: number | null;
+	catalyst: string | null;
+	catalystDate: string | null;
+	originalThesis: string | null;
+	expectedOutcome: string | null;
+	keyMetricToWatch: string | null;
+	reasonForDecision: string | null;
+	riskInvalidation: string | null;
+	sourceSignal: string[];
+	antiPatternTags: string[];
+	criteriaThatWorked: string[];
+	criteriaThatFailed: string[];
+	reviewStatus: DecisionReview["reviewStatus"];
+	outcome1w: string | null;
+	outcome4w: string | null;
+	outcome3m: string | null;
+	return1wPct: number | null;
+	return4wPct: number | null;
+	return3mPct: number | null;
+	finalVerdict: DecisionReview["finalVerdict"];
+	signalQuality: DecisionReview["signalQuality"];
+	executionQuality: DecisionReview["executionQuality"];
+	lessonLearned: string | null;
+};
+
+function dateToIso(d: Date | null | undefined): string | null {
+	return d ? d.toISOString() : null;
+}
+
+export function decisionReviewToDTO(row: DecisionReviewRow): DecisionReviewDTO {
+	return {
+		id: row.id,
+		title: row.title,
+		ticker: row.ticker,
+		decisionDate: dateToIso(row.decisionDate),
+		decisionType: row.decisionType,
+		positionContext: row.positionContext,
+		priceAtDecision: decToNum(row.priceAtDecision),
+		entryZone: row.entryZone,
+		stopLoss: decToNum(row.stopLoss),
+		target: decToNum(row.target),
+		convictionScore: row.convictionScore,
+		catalyst: row.catalyst,
+		catalystDate: dateToIso(row.catalystDate),
+		originalThesis: row.originalThesis,
+		expectedOutcome: row.expectedOutcome,
+		keyMetricToWatch: row.keyMetricToWatch,
+		reasonForDecision: row.reasonForDecision,
+		riskInvalidation: row.riskInvalidation,
+		sourceSignal: row.sourceSignal,
+		antiPatternTags: row.antiPatternTags,
+		criteriaThatWorked: row.criteriaThatWorked,
+		criteriaThatFailed: row.criteriaThatFailed,
+		reviewStatus: row.reviewStatus,
+		outcome1w: row.outcome1w,
+		outcome4w: row.outcome4w,
+		outcome3m: row.outcome3m,
+		return1wPct: decToNum(row.return1wPct),
+		return4wPct: decToNum(row.return4wPct),
+		return3mPct: decToNum(row.return3mPct),
+		finalVerdict: row.finalVerdict,
+		signalQuality: row.signalQuality,
+		executionQuality: row.executionQuality,
+		lessonLearned: row.lessonLearned,
+	};
+}
+
 export async function getContentPages(): Promise<ContentPageRow[]> {
 	return prisma.contentPage.findMany({ orderBy: { key: "asc" } });
 }

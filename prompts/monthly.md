@@ -128,7 +128,12 @@ calls that helped vs misled; reversals correctly or incorrectly recognised.
 ## 7. Report
 
 `upsert_report(reportType="MONTHLY", reportDate=<1st, YYYY-MM-DD>)`, `content` as
-`ReportBlock[]` (JSON blocks, not markdown). Stamp `rulesVersion`. Required sections:
+`ReportBlock[]` (JSON blocks, not markdown). Stamp `rulesVersion`.
+
+**Format:** `heading_2` + table or bullets per section — one row/bullet per ticker or
+lesson. Do not pack multi-ticker narratives into a single paragraph.
+
+Required sections:
 
 - **Discovery Scorecard** (§2) — discovery P&L, earliness lag, average stage at graduation,
   EARLY ENTRY and QUALITY REBOUND tracked separately

@@ -1,5 +1,9 @@
 import { DecisionReviewStatus } from "@/generated/prisma/client";
-import { getDecisionReviews, getSyncStatus } from "@/lib/stocks/db";
+import {
+  decisionReviewToDTO,
+  getDecisionReviews,
+  getSyncStatus,
+} from "@/lib/stocks/db";
 import { SyncStatusBanner } from "@/app/_components/SyncStatusBanner";
 import { DecisionReviewsTable } from "@/app/stocks/_components/DecisionReviewsTable";
 import { DECISION_REVIEW_STATUS_LABEL } from "@/lib/stocks/labels";
@@ -16,7 +20,8 @@ const STATUS_ORDER: Array<DecisionReviewStatus | null> = [
 ];
 
 export default async function DecisionsPage() {
-  const [rows, status] = await Promise.all([getDecisionReviews(), getSyncStatus()]);
+  const [rawRows, status] = await Promise.all([getDecisionReviews(), getSyncStatus()]);
+  const rows = rawRows.map(decisionReviewToDTO);
 
   const pending = rows.filter((r) => r.reviewStatus === DecisionReviewStatus.PENDING).length;
 

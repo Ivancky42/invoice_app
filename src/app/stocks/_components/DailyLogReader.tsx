@@ -3,22 +3,34 @@
 import type { ReportBlock } from "@/lib/content/blocks";
 import type { DailyLogDTO } from "@/lib/stocks/db";
 import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
+import {
+	FlaggedTickersPanel,
+	TickerMoveBlocks,
+} from "@/app/stocks/_components/TickerMoveBlocks";
+import { parseFlaggedTickers } from "@/lib/stocks/splitTickerMoves";
 
 function Section({
 	title,
 	blocks,
 	card = false,
+	moves = false,
 }: {
 	title: string;
 	blocks: ReportBlock[] | null;
 	card?: boolean;
+	/** Split dense ticker walls into one row per name. */
+	moves?: boolean;
 }) {
-	const body = <ReportBlocks blocks={blocks} emptyLabel="Empty" />;
+	const body = moves ? (
+		<TickerMoveBlocks blocks={blocks} emptyLabel="Empty" />
+	) : (
+		<ReportBlocks blocks={blocks} emptyLabel="Empty" className="space-y-3" />
+	);
 
 	if (card) {
 		return (
-			<div className="rounded-xl border border-emerald-100/50 bg-emerald-50/40 px-5 pt-5 pb-6 shadow-sm">
-				<h3 className="text-xs font-semibold uppercase tracking-wide text-emerald-800/70 mb-4">
+			<div className="rounded-xl border border-gray-200 bg-gray-50/60 px-4 pt-4 pb-4 sm:px-5 sm:pt-5 sm:pb-5">
+				<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">
 					{title}
 				</h3>
 				{body}
@@ -27,11 +39,9 @@ function Section({
 	}
 
 	return (
-		<div>
-			<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-				{title}
-			</h3>
-			{body}
+		<div className="space-y-2">
+			<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">{title}</h3>
+			<div className="text-sm text-gray-800 leading-relaxed">{body}</div>
 		</div>
 	);
 }
@@ -44,9 +54,10 @@ export function DailyLogReader({
 	embedded?: boolean;
 }) {
 	const flagged = entry.flaggedTickers ?? [];
+	const flagCount = parseFlaggedTickers(flagged).reduce((n, g) => n + g.items.length, 0);
 
 	return (
-		<article className="space-y-6">
+		<article className="space-y-7">
 			<header className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-gray-100">
 				{!embedded ? (
 					<div>
@@ -56,7 +67,7 @@ export function DailyLogReader({
 				<dl className={`flex flex-wrap gap-3 text-sm ${embedded ? "w-full" : ""}`}>
 					<div className="rounded-lg bg-gray-50 px-3 py-2">
 						<dt className="text-xs text-gray-500">Flags</dt>
-						<dd className="font-medium tabular-nums">{flagged.length}</dd>
+						<dd className="font-medium tabular-nums">{flagCount || flagged.length}</dd>
 					</div>
 					<div className="rounded-lg bg-gray-50 px-3 py-2">
 						<dt className="text-xs text-gray-500">Alert email</dt>
@@ -77,20 +88,13 @@ export function DailyLogReader({
 				</dl>
 			</header>
 
-			{flagged.length > 0 ? (
-				<section>
-					<h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-						Flagged tickers
-					</h3>
-					<p className="text-sm text-gray-800 tracking-wide">{flagged.join(", ")}</p>
-				</section>
-			) : null}
+			{flagged.length > 0 ? <FlaggedTickersPanel tickers={flagged} /> : null}
 
 			<Section title="Market context" blocks={entry.marketContext} />
 			<Section title="Top news" blocks={entry.topNews} />
-			<section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-				<Section title="Portfolio move" blocks={entry.portfolioMove} card />
-				<Section title="Watchlist move" blocks={entry.watchlistMove} card />
+			<section className="grid grid-cols-1 gap-4">
+				<Section title="Portfolio move" blocks={entry.portfolioMove} card moves />
+				<Section title="Watchlist move" blocks={entry.watchlistMove} card moves />
 			</section>
 			<Section title="Action taken" blocks={entry.actionTaken} />
 			<Section title="Notes" blocks={entry.notes} />

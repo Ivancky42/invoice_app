@@ -180,12 +180,15 @@ are `ReportBlock[]`. Stamp `rulesVersion`.
 
 | Field | Content |
 |---|---|
-| `marketContext` | Market backdrop, sector/theme momentum |
-| `topNews` | Thesis-relevant news, Radar finds, thesis shocks |
-| `portfolioMove` | Per-position moves, flags, sleeve-aware action classification |
-| `watchlistMove` | Curation table (§6), zone entries, priority/action changes |
+| `marketContext` | Short paragraphs or bullets — backdrop + sector/theme momentum (not a wall of text) |
+| `topNews` | Prefer `bulleted_list_item` — one story per bullet; bold ticker in the line |
+| `portfolioMove` | **One `bulleted_list_item` (or table row) per position.** Never pack multiple tickers into one paragraph. Line shape: `TICKER $price move · action · one-line reason` |
+| `watchlistMove` | Prefer the curation **table** (§6). If freeform, still **one bullet per ticker** |
 | `actionTaken` | Pending Action Review table (§1); summarise DR creates (full rows via `upsert_decision_review`) |
 | `notes` | Shadow Test (§8), post-sync reconciliation notes (§7), hygiene flags, data-quality issues |
-| `flaggedTickers` | Array of tickers flagged today |
+| `flaggedTickers` | String array — one entry per ticker, e.g. `"MRVL +12.8"` / `"VST -8.1"` (not one giant UP/DOWN sentence) |
+
+**UI readability:** the portal splits legacy walls-of-text at `TICKER $price` boundaries, but
+agents must write list/table blocks going forward so weekly/monthly stay scannable too.
 
 Set `alertEmailSent=false` — no email, ever.

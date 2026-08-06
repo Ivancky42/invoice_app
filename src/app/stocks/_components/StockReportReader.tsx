@@ -1,8 +1,8 @@
 "use client";
 
-import type { ReportBlock } from "@/lib/content/blocks";
 import type { StockReportDTO } from "@/lib/stocks/db";
 import { ReportBlocks } from "@/app/stocks/_components/ReportBlocks";
+import { TickerMoveBlocks } from "@/app/stocks/_components/TickerMoveBlocks";
 
 function reportTypeLabel(type: StockReportDTO["reportType"]): string {
 	return type === "WEEKLY" ? "Weekly" : "Monthly";
@@ -21,7 +21,16 @@ export function StockReportReader({
 	entry: StockReportDTO;
 	embedded?: boolean;
 }) {
-	const content: ReportBlock[] = entry.content ?? [];
+	const content = entry.content ?? [];
+	const hasStructure = content.some(
+		(b) =>
+			b.type === "table" ||
+			b.type === "heading_1" ||
+			b.type === "heading_2" ||
+			b.type === "heading_3" ||
+			b.type === "bulleted_list_item" ||
+			b.type === "numbered_list_item",
+	);
 
 	return (
 		<article className="space-y-6">
@@ -37,7 +46,11 @@ export function StockReportReader({
 					</div>
 				</header>
 			) : null}
-			<ReportBlocks blocks={content} />
+			{hasStructure ? (
+				<ReportBlocks blocks={content} className="space-y-5" />
+			) : (
+				<TickerMoveBlocks blocks={content} />
+			)}
 		</article>
 	);
 }

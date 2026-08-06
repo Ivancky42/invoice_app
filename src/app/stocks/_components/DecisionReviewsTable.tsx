@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { DecisionReviewRow } from "@/lib/stocks/db";
-import { decToNum, fmtMoney, fmtPctPoints, fmtTicker } from "@/lib/stocks/format";
+import type { DecisionReviewDTO } from "@/lib/stocks/db";
+import { fmtMoney, fmtPctPoints, fmtTicker } from "@/lib/stocks/format";
 import {
   DECISION_REVIEW_STATUS_CLASS,
   DECISION_TYPE_CLASS,
@@ -14,8 +14,8 @@ import {
   decisionVerdictLabel,
 } from "@/lib/stocks/labels";
 
-function ymd(d: Date | null | undefined): string {
-  return d ? d.toISOString().slice(0, 10) : "—";
+function ymd(iso: string | null | undefined): string {
+  return iso ? iso.slice(0, 10) : "—";
 }
 
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
@@ -30,9 +30,8 @@ function DetailField({ label, children }: { label: string; children: React.React
   );
 }
 
-function DecisionRow({ row }: { row: DecisionReviewRow }) {
+function DecisionRow({ row }: { row: DecisionReviewDTO }) {
   const [open, setOpen] = useState(false);
-  const price = decToNum(row.priceAtDecision);
 
   return (
     <>
@@ -58,7 +57,7 @@ function DecisionRow({ row }: { row: DecisionReviewRow }) {
             {row.title}
           </div>
         </td>
-        <td className="px-4 py-3 text-right">{fmtMoney(price)}</td>
+        <td className="px-4 py-3 text-right tabular-nums">{fmtMoney(row.priceAtDecision)}</td>
         <td className="px-4 py-3 text-center">
           {row.convictionScore != null ? row.convictionScore : "—"}
         </td>
@@ -90,8 +89,8 @@ function DecisionRow({ row }: { row: DecisionReviewRow }) {
                 {decisionPositionContextLabel(row.positionContext)}
               </DetailField>
               <DetailField label="Entry zone">{row.entryZone}</DetailField>
-              <DetailField label="Stop">{fmtMoney(decToNum(row.stopLoss))}</DetailField>
-              <DetailField label="Target">{fmtMoney(decToNum(row.target))}</DetailField>
+              <DetailField label="Stop">{fmtMoney(row.stopLoss)}</DetailField>
+              <DetailField label="Target">{fmtMoney(row.target)}</DetailField>
               <DetailField label="Catalyst">{row.catalyst}</DetailField>
               <DetailField label="Catalyst date">{ymd(row.catalystDate)}</DetailField>
               <DetailField label="Signal quality">
@@ -148,7 +147,7 @@ function DecisionRow({ row }: { row: DecisionReviewRow }) {
   );
 }
 
-export function DecisionReviewsTable({ rows }: { rows: DecisionReviewRow[] }) {
+export function DecisionReviewsTable({ rows }: { rows: DecisionReviewDTO[] }) {
   if (rows.length === 0) {
     return (
       <div className="card p-8 text-center text-sm text-gray-500">
