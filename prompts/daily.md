@@ -39,9 +39,11 @@ unresolved actions from the Notion era. Skip on all later runs once DR rows exis
 
 | Ticker | Issue | Notes |
 |---|---|---|
-| OKLO | EXIT vs $48 stop (~$42.99) | Outstanding since early Jun 2026 |
-| GLXY | Stop breach (~$19.07 vs $20) | |
-| ISRG | Stop breach (~$375 vs $400) | `QUALITY_CORE` — broken stop is advisory only (`_shared` §6) |
+| OKLO | EXIT test-starter — close below $46 on 2026-07-18 | Downgraded to `STALE_PENDING` in notes (§11.8); still open |
+| ISRG | QUALITY REBOUND tranche-1 ADD | §12.11 fired 2026-07-27; §12.12 gap-midpoint 2026-08-03; `QUALITY_CORE` |
+| BULL | REDUCE — capital recycling (2026-08-02 weekly) | ~14% book vs 2–3% Speculative cap; not executed |
+
+Run `npx tsx scripts/seed-decision-reviews.ts` once if the table is still empty (idempotent).
 
 Also backfill portfolio enums (§2) for any row you touch during seeding. **Run 1 is a
 backfill run**, not a normal run — sleeve-dependent judgments are unreliable until §2's

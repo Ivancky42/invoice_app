@@ -46,8 +46,10 @@ Do not rely on stale config copied into a routine.
 - `200` + `warnings[]` = soft sizing-band mismatch: proceed, surface the warning.
 - Stamp `rulesVersion` from context on tools that accept it: `upsert_daily_log`,
   `upsert_report`, `upsert_decision_review`, `append_page_notes`, `log_trade`,
-  `upsert_document`. Do **not** invent extra props on `patch_portfolio` /
-  `upsert_watchlist` / `upsert_idea` / `upsert_trend` (those schemas omit it).
+  `upsert_document`. It is a short git SHA (e.g. `17c6643`), never a date — so each
+  decision can be resolved to the exact ruleset. Do **not** invent extra props on
+  `patch_portfolio` / `upsert_watchlist` / `upsert_idea` / `upsert_trend` (those
+  schemas omit it).
 - **Never write prices.** Prices come from the price sync only.
 - **`patch_config` is not on MCP.** Cash/FX/LIMITS changes are HTTP-only for Ivan.
   Ticker-list hygiene uses `sync_tracked_tickers`.
@@ -260,7 +262,9 @@ undervaluation ✓/✗, entry zone ✓/✗
 
 Outcome scoring happens later against this pre-registered scorecard, never against memory.
 Lessons derived from decisions **without** a pre-registered scorecard are flagged
-lower-confidence.
+lower-confidence. When a DR row has no scorecard (including migration seeds), tag
+`antiPatternTags` with `NO_PREREGISTERED_SCORECARD` so the monthly learning loop can
+discount it automatically.
 
 ## 11. Decision Review Log
 
@@ -270,9 +274,10 @@ Default `reviewStatus=PENDING`. Put the §12.4 criteria scorecard inside `reason
 **Migration (Neon cutover):** pending actions that lived only in Notion `pageNotes` or old
 daily logs are invisible to `list_decision_reviews` until seeded. Before the first scheduled
 Daily run, if `list_decision_reviews(PENDING)` is empty but notes still show open EXIT /
-stop-breach / REDUCE actions, create DR rows with their **original** `decisionDate` (see
-`daily` §0). Otherwise the adaptive loop quietly forgives every pre-migration pending —
-the opposite of what this log exists for.
+ADD / REDUCE actions, run `npx tsx scripts/seed-decision-reviews.ts` (idempotent) or
+create DR rows manually with their **original** `decisionDate` (see `daily` §0). Otherwise
+the adaptive loop quietly forgives every pre-migration pending — the opposite of what this
+log exists for.
 
 Decisions that warrant a DR entry: BUY, ADD, AVERAGE_DOWN, REDUCE, EXIT, WAIT before
 catalyst/earnings, AVOID, DO_NOT_AVERAGE_DOWN, stop-loss action, thesis alert, earnings

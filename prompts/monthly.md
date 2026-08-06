@@ -86,8 +86,10 @@ adjusted when the thesis evolved, and avoided known anti-patterns — **not** me
 whether the original stop or target was hit.
 
 Score outcomes against the **pre-registered** scorecard (`_shared` §10), never against
-memory. Flag lessons from decisions lacking a pre-registered scorecard as lower-confidence.
-Update DR outcome / quality fields via `upsert_decision_review` when scoring.
+memory. Flag lessons from decisions lacking a pre-registered scorecard as lower-confidence
+— treat any DR with `antiPatternTags` containing `NO_PREREGISTERED_SCORECARD` (or an empty
+scorecard in `reasonForDecision`) as lower-confidence automatically. Update DR outcome /
+quality fields via `upsert_decision_review` when scoring.
 
 Questions to answer: did strict stops protect capital or cause whipsaw, and are stops too
 tight for high-beta names? Did immediate trims beat holding winners with strong momentum?
