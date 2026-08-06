@@ -1,5 +1,5 @@
 /**
- * Self-hosted OAuth 2.1 helpers for Claude Custom Connector → Stock HQ MCP.
+ * Self-hosted OAuth 2.1 helpers for Claude / ChatGPT → Stock HQ MCP.
  * Stateless JWTs (HMAC-SHA256) for auth codes + access/refresh tokens.
  */
 
@@ -7,10 +7,15 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 
 export const MCP_SCOPE = "mcp:tools";
 
+/** Exact redirect URIs (Claude + ChatGPT legacy). */
 export const ALLOWED_REDIRECT_URIS = [
   "https://claude.ai/api/mcp/auth_callback",
   "https://claude.com/api/mcp/auth_callback",
+  "https://chatgpt.com/connector_platform_oauth_redirect",
 ] as const;
+
+/** ChatGPT per-connector callbacks: https://chatgpt.com/connector/oauth/{id} */
+const CHATGPT_CONNECTOR_OAUTH_PREFIX = "https://chatgpt.com/connector/oauth/";
 
 const AUTH_CODE_TTL_SEC = 5 * 60;
 const ACCESS_TOKEN_TTL_SEC = 60 * 60;
@@ -47,7 +52,13 @@ export function mcpResourceUrl(origin = getAppOrigin()): string {
 }
 
 export function isAllowedRedirectUri(uri: string): boolean {
-  return (ALLOWED_REDIRECT_URIS as readonly string[]).includes(uri);
+  if ((ALLOWED_REDIRECT_URIS as readonly string[]).includes(uri)) return true;
+  // ChatGPT DCR uses a unique callback id per connector instance.
+  if (uri.startsWith(CHATGPT_CONNECTOR_OAUTH_PREFIX)) {
+    const id = uri.slice(CHATGPT_CONNECTOR_OAUTH_PREFIX.length);
+    return id.length > 0 && !id.includes("/") && !id.includes("?");
+  }
+  return false;
 }
 
 export function getAgentToken(): string | null {

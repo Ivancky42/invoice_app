@@ -91,6 +91,7 @@ Auth:
 | Client | How |
 |--------|-----|
 | **Claude Custom Connector / Cowork (cloud)** | OAuth 2.1 on this app — DCR + consent with `AGENT_TOKEN` |
+| **ChatGPT custom MCP plugin** | OAuth 2.1 — DCR + consent with `AGENT_TOKEN` (redirects under `https://chatgpt.com/connector/oauth/…`) |
 | **Desktop `mcp-remote` / curl / REST** | `Authorization: Bearer $AGENT_TOKEN` (unchanged) |
 
 Site PIN gate is bypassed for `/api/mcp`, `/api/oauth`, and `/.well-known/*`.
@@ -103,6 +104,13 @@ Site PIN gate is bypassed for `/api/mcp`, `/api/oauth`, and `/.well-known/*`.
 4. **Advanced:** leave OAuth Client ID and Client Secret **empty** (Dynamic Client Registration)
 5. **Add** → **Connect** → browser opens Stock HQ consent → paste `AGENT_TOKEN` → **Approve**
 6. Confirm tools appear; attach the connector to Cowork routines
+
+#### ChatGPT custom MCP plugin
+
+1. ChatGPT → create plugin / custom MCP → **Server URL** `https://<your-app>.vercel.app/api/mcp/mcp`
+2. **Authentication:** OAuth; registration **DCR**; scope `mcp:tools`
+3. Create → OAuth consent → paste `AGENT_TOKEN` → Approve
+4. Redirect URIs under `https://chatgpt.com/connector/oauth/…` are allowlisted (plus legacy `connector_platform_oauth_redirect`)
 
 OAuth endpoints (self-hosted on the same app):
 
