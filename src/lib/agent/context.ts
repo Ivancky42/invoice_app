@@ -3,6 +3,7 @@ import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import {
   getAgentRuntimeConfig,
+  getLimits,
   CONFIG_KEYS,
 } from "@/lib/stocks/config";
 import {
@@ -555,6 +556,9 @@ export async function getAllConfig(): Promise<Record<string, unknown>> {
   for (const key of Object.values(CONFIG_KEYS)) {
     if (!(key in out)) out[key] = null;
   }
+  // Normalize LIMITS through the same parser as get_context so defaults
+  // (e.g. speculativeSleevePct) are visible — raw JSON may omit newer keys.
+  out[CONFIG_KEYS.LIMITS] = await getLimits();
   return out;
 }
 

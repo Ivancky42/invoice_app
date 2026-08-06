@@ -441,7 +441,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Sync tracked tickers",
       description:
-        "Rebuild Config TRACKED_TICKERS from Portfolio + active Watchlist (excludes DEMOTED/DROPPED). Prefer this over patch_config for ticker list hygiene.",
+        "Rebuild Config TRACKED_TICKERS from Portfolio + active Watchlist. Includes rows with action=null; excludes only DEMOTED/DROPPED. Prefer this over patch_config for ticker list hygiene.",
       inputSchema: {},
     },
     async () => textJson(await syncTrackedTickersFromDb()),

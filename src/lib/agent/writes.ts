@@ -66,12 +66,18 @@ function daysToEarningsFrom(date: Date | null): number | null {
 /**
  * Rebuild TRACKED_TICKERS from Portfolio + active Watchlist rows.
  * Soft-demoted (DEMOTED/DROPPED) watchlist names are excluded.
+ * Null `action` is active — SQL `NOT IN (...)` would drop NULLs (three-valued logic).
  */
 export async function syncTrackedTickersFromDb() {
   const [portfolio, watchlist] = await Promise.all([
     prisma.portfolio.findMany({ select: { ticker: true } }),
     prisma.watchlist.findMany({
-      where: { NOT: { action: { in: ["DEMOTED", "DROPPED"] } } },
+      where: {
+        OR: [
+          { action: null },
+          { action: { notIn: ["DEMOTED", "DROPPED"] } },
+        ],
+      },
       select: { ticker: true },
     }),
   ]);
