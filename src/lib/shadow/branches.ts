@@ -7,6 +7,7 @@
  */
 import type { Branch } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { challengerLegitimacy } from "@/lib/rules/challenger";
 import { decToNum } from "@/lib/stocks/format";
 import { roundMoney } from "@/lib/shadow/fillMath";
 import { sessionDate, ymd } from "@/lib/shadow/sessions";
@@ -69,29 +70,61 @@ function rowToBranch(row: {
  *
  * `update: {}` on the upsert is on purpose — re-running must never clobber a live book's
  * cash, startNav or high-water mark. The ruleVersion pointer is then reconciled on its
- * own: a CANDIDATE RuleVersion created after the branches were seeded (or a promotion
- * that changed the ACTIVE version) would otherwise leave the pointer stale and
- * mis-attribute this branch's fitness to the wrong ruleset. Only that one column is
- * written here; {@link resetBranch} (promotion) is the other writer of it, and it also
- * restarts the book.
+ * own: a promotion that changed the ACTIVE version would otherwise leave LIVE's pointer
+ * stale and mis-attribute that branch's fitness to the wrong ruleset. Only that one column
+ * is written here; {@link resetBranch} (promotion / propose) is the other writer of it, and
+ * it also restarts the book.
+ *
+ * The CANDIDATE pointer is only reconciled when its target is ILLEGITIMATE — see
+ * {@link challengerLegitimacy}. A legitimate target (a status-CANDIDATE row, or the
+ * immediately-deposed champion running the revert series) is never overwritten here.
  */
 export async function ensureShadowBranches(): Promise<void> {
-  const [active, candidate] = await Promise.all([
+  const [active, candidatePointer] = await Promise.all([
     prisma.ruleVersion.findFirst({
       where: { status: "ACTIVE" },
       orderBy: { id: "desc" },
-      select: { id: true },
+      select: { id: true, parentId: true },
     }),
-    prisma.ruleVersion.findFirst({
-      where: { status: "CANDIDATE" },
-      orderBy: { id: "desc" },
-      select: { id: true },
+    prisma.shadowBranch.findUnique({
+      where: { branch: "CANDIDATE" },
+      select: { ruleVersionId: true },
     }),
   ]);
 
   // No ruleset at all → nothing to attribute a book to; seeding waits for one.
   const liveVersionId = active?.id ?? null;
-  const candidateVersionId = candidate?.id ?? active?.id ?? null;
+
+  // The CANDIDATE pointer is the source of truth for "who the challenger is". A LEGITIMATE
+  // target is left exactly where it is — recomputing it from status is what used to
+  // overwrite the deposed champion (RETIRED, not CANDIDATE) back to ACTIVE on the next
+  // tick and erase the revert series before it produced a single paired session.
+  const pointerTarget = candidatePointer
+    ? await prisma.ruleVersion.findUnique({
+        where: { id: candidatePointer.ruleVersionId },
+        select: { id: true, status: true },
+      })
+    : null;
+  const legitimacy = challengerLegitimacy(pointerTarget, active);
+
+  let candidateVersionId: number | null;
+  if (legitimacy.ok) {
+    candidateVersionId = candidatePointer!.ruleVersionId;
+  } else {
+    if (legitimacy.inconsistent) {
+      console.error(
+        "[shadow ensureShadowBranches] CANDIDATE pointer is illegitimate",
+        `version ${candidatePointer?.ruleVersionId} (${legitimacy.reason})`,
+        "— reconciling",
+      );
+    }
+    const candidate = await prisma.ruleVersion.findFirst({
+      where: { status: "CANDIDATE" },
+      orderBy: { id: "desc" },
+      select: { id: true },
+    });
+    candidateVersionId = candidate?.id ?? active?.id ?? null;
+  }
 
   const now = new Date();
   const seed = (branch: Branch, ruleVersionId: number) =>

@@ -37,6 +37,17 @@ const STATEMENTS: Array<{ label: string; sql: string }> = [
     label: "ShadowPosition_open_unique",
     sql: `CREATE UNIQUE INDEX IF NOT EXISTS "ShadowPosition_open_unique" ON "ShadowPosition"("branchId","ticker") WHERE "closedAt" IS NULL`,
   },
+  {
+    // The evolution audit log is append-only at the DATABASE level: DO INSTEAD NOTHING
+    // turns UPDATE/DELETE into silent no-ops for every role, so no agent, migration or
+    // psql session can rewrite history. `prisma db push` never emits RULEs, hence here.
+    label: "EvolutionEvent_no_delete",
+    sql: `CREATE OR REPLACE RULE "EvolutionEvent_no_delete" AS ON DELETE TO "EvolutionEvent" DO INSTEAD NOTHING`,
+  },
+  {
+    label: "EvolutionEvent_no_update",
+    sql: `CREATE OR REPLACE RULE "EvolutionEvent_no_update" AS ON UPDATE TO "EvolutionEvent" DO INSTEAD NOTHING`,
+  },
 ];
 
 const url = process.env.DIRECT_DATABASE_URL?.trim() || process.env.DATABASE_URL;

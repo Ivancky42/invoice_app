@@ -11,11 +11,13 @@ import {
   DiscoveredVia,
   EvidenceKind,
   EvidenceTier,
+  EvolutionEventKind,
   IdeaStage,
   IdeaStatus,
   MarketCapBucket,
   PositionAction,
   RiskLevel,
+  RuleStatus,
   Sleeve,
   StockReportType,
   Theme,
@@ -482,6 +484,90 @@ export const patchConfigInputSchema = patchConfigFieldsSchema.refine(
   { message: "at least one config key required" },
 );
 
+// === Evolution engine (rule proposals, gap-fixes, scoring, audit log) ===
+
+/** One prose edit. Section-scoped edits may pin the section's sha to detect drift. */
+export const proposeHunkSchema = z
+  .object({
+    /** One of the five prompt files, with or without the `.md` suffix. */
+    file: z.string().min(1).max(64),
+    /** `## N.` heading number. Omit to replace the WHOLE file (rare; huge diffs). */
+    sectionId: z.string().min(1).max(8).optional(),
+    /** sha256 of the current section text — 409 `section_sha_mismatch` when it moved. */
+    expectedSectionSha: z.string().regex(/^[0-9a-f]{64}$/, "expectedSectionSha must be sha256 hex").optional(),
+    newText: z.string().min(1).max(100_000),
+  })
+  .strict();
+
+export const limitsChangeSchema = z
+  .object({
+    /** JSON pointer into limits, e.g. "/singlePositionPct" or "/tierBands/CONVICTION/1". */
+    path: z.string().min(2).max(120).regex(/^\//, "path must be a JSON pointer starting with /"),
+    value: z.number().finite(),
+  })
+  .strict();
+
+/** Fields only — the MCP tool needs `.shape`, so the refinement lives on the wrapper. */
+export const proposeRuleChangeFieldsSchema = z
+  .object({
+    hunks: z.array(proposeHunkSchema).max(10).optional(),
+    limitsChanges: z.array(limitsChangeSchema).max(10).optional(),
+    changeSummary: z.string().min(20).max(2000),
+    reasoningPattern: z.string().min(5).max(300),
+    successMetric: z.string().min(5).max(500),
+    counterCase: z.string().min(1).max(2000),
+    worstCase: z.string().max(2000).nullable().optional(),
+    evidenceDecisionIds: z.array(z.string().min(1).max(64)).max(50).optional(),
+    /**
+     * Accepted and IGNORED. The server assigns the lane; a claim is recorded as
+     * `laneClaimIgnored` in the audit event. Rejecting it outright would only teach the
+     * agent to omit it — recording it makes the attempt visible.
+     */
+    lane: z.string().max(16).optional(),
+  });
+
+export const proposeRuleChangeInputSchema = proposeRuleChangeFieldsSchema.refine(
+  (o) => (o.hunks?.length ?? 0) + (o.limitsChanges?.length ?? 0) > 0,
+  { message: "at least one hunk or limitsChange required" },
+);
+
+export const applyGapFixInputSchema = z
+  .object({
+    file: z.string().min(1).max(64),
+    sectionId: z.string().min(1).max(8),
+    /** REQUIRED — a gap-fix without a sha is a blind overwrite of live prose. */
+    expectedSectionSha: z.string().regex(/^[0-9a-f]{64}$/, "expectedSectionSha must be sha256 hex"),
+    newText: z.string().min(1).max(100_000),
+    reason: z.string().min(20).max(2000),
+  })
+  .strict();
+
+export const scoreRuleVersionInputSchema = z
+  .object({
+    versionId: z.coerce.number().int().positive(),
+    /** Recorded under outcomeDetail.agentClaim; NEVER used as the outcome. */
+    outcomeClaim: z.string().max(1000).nullable().optional(),
+  })
+  .strict();
+
+export const listEvolutionLogInputSchema = z
+  .object({
+    kind: z.enum(enumValues(EvolutionEventKind)).optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+  })
+  .strict();
+
+export const getRuleVersionInputSchema = z
+  .object({ id: z.coerce.number().int().positive() })
+  .strict();
+
+export const listRuleVersionsInputSchema = z
+  .object({
+    status: z.enum(enumValues(RuleStatus)).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+  })
+  .strict();
+
 /** Legal enum values keyed by Prisma enum name (for 400 responses). */
 export const LEGAL_ENUM_VALUES: Record<string, string[]> = {
   TradeType: Object.values(TradeType),
@@ -508,6 +594,8 @@ export const LEGAL_ENUM_VALUES: Record<string, string[]> = {
   DecisionPositionContext: Object.values(DecisionPositionContext),
   ContentPageKey: Object.values(ContentPageKey),
   DailyLogRoutine: Object.values(DailyLogRoutine),
+  RuleStatus: Object.values(RuleStatus),
+  EvolutionEventKind: Object.values(EvolutionEventKind),
 };
 
 /** Map zod path leaf → enum name when known. */
@@ -535,6 +623,7 @@ const PATH_TO_ENUM: Record<string, string> = {
   positionContext: "DecisionPositionContext",
   key: "ContentPageKey",
   routineType: "DailyLogRoutine",
+  kind: "EvolutionEventKind",
 };
 
 /** Disambiguate `status` / `action` when multiple enums share the field name. */

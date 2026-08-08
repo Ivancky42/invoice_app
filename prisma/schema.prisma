@@ -844,10 +844,30 @@ enum Branch {
   CANDIDATE
 }
 
+/// Retrospective verdict on a rule version once its tenure is over.
+enum RuleOutcome {
+  HELPED
+  NEUTRAL
+  HURT
+}
+
+/// Which way a rule change moves the rails. LOOSEN carries a higher evidence bar.
+enum ChangeDirection {
+  TIGHTEN
+  LOOSEN
+  NEUTRAL
+}
+
+/// What part of the routine a rule change touches. ACTION = exposure-adjacent.
+enum RuleScope {
+  DISCOVERY
+  ACTION
+}
+
 /// One immutable snapshot of the whole ruleset (all five prompt files + limits).
 /// `id` IS the version number — never reuse or renumber.
 model RuleVersion {
-  id             Int         @id @default(autoincrement())
+  id             Int              @id @default(autoincrement())
   status         RuleStatus
   /// Null for v1 and for HUMAN-authored versions that belong to no evolution lane.
   lane           RuleLane?
@@ -866,11 +886,61 @@ model RuleVersion {
   /// Sessions on/before this instant are excluded from any fitness comparison for
   /// this version — stamped at creation so a candidate cannot claim pre-existing history.
   evidenceCutoff DateTime?
-  createdAt      DateTime    @default(now())
+  /// The GENERALISABLE belief behind the change ("earnings blackouts protect averaging
+  /// down"). Grouping key for pattern retirement: two HURT versions sharing a pattern
+  /// retire it, and later proposals reusing it are refused.
+  reasoningPattern String?
+  /// How the proposer said this would be measured — must name a number and a metric.
+  successMetric    String?
+  /// The case the proposer says would falsify it (≥40 chars; "none" is not an answer).
+  counterCase      String?
+  direction        ChangeDirection?
+  scope            RuleScope?
+  /// Server-computed verdict once the version's tenure is scoreable. Never agent-supplied.
+  outcome          RuleOutcome?
+  /// { deltaPerSession, sessions, thresholds, agentClaim? } — evidence for `outcome`.
+  outcomeDetail    Json?
+  createdAt      DateTime         @default(now())
   activatedAt    DateTime?
   retiredAt      DateTime?
 
   @@index([status])
+}
+
+/// Kind of audit row in the evolution log. One row per state change, never edited.
+enum EvolutionEventKind {
+  PROPOSE
+  ELIGIBILITY_REJECT
+  KERNEL_ATTEMPT
+  GAPFIX
+  PROMOTE
+  EARLY_KILL
+  HARD_REVERT
+  INCONCLUSIVE
+  DRIFT_BLOCK
+  PATTERN_RETIRED
+  SCORE
+  MIRROR
+}
+
+/// APPEND-ONLY audit log of the evolution engine.
+///
+/// Enforced twice: Postgres RULEs make UPDATE/DELETE no-ops (see the migration and
+/// scripts/apply-raw-constraints.ts), and every write in the codebase goes through the
+/// single chokepoint `appendEvolutionEvent` in src/lib/evolution/log.ts. Corrections are
+/// made by appending a new event referencing the earlier one — never by editing history.
+model EvolutionEvent {
+  id            String             @id @default(cuid())
+  kind          EvolutionEventKind
+  /// Version the event is about; null for events that precede version creation
+  /// (e.g. a rejected proposal).
+  ruleVersionId Int?
+  actor         RuleActor
+  detail        Json
+  createdAt     DateTime           @default(now())
+
+  @@index([kind])
+  @@index([ruleVersionId])
 }
 
 // === Paper-only shadow ledger (shadow evolution) ===

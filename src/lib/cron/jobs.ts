@@ -11,6 +11,8 @@ import { runPriceHistorySync } from "@/lib/pricehistory/sync";
 import { runBreadthClassify } from "@/lib/fitness/breadthClassify";
 import { runCounterfactuals } from "@/lib/fitness/counterfactuals";
 import { runFitnessSnapshot } from "@/lib/fitness/snapshot";
+import { runEvolutionEvaluate } from "@/lib/evolution/evaluate";
+import { runRuleScoring } from "@/lib/evolution/scoring";
 import { runDecisionReturns } from "@/lib/shadow/decisionReturns";
 import { runShadowEnqueue } from "@/lib/shadow/enqueue";
 import { runShadowFill } from "@/lib/shadow/fill";
@@ -53,6 +55,8 @@ export const SHADOW_MARK_JOB = "shadow_mark";
 export const DECISION_RETURNS_JOB = "decision_returns";
 export const COUNTERFACTUAL_RESOLVE_JOB = "counterfactual_resolve";
 export const FITNESS_SNAPSHOT_JOB = "fitness_snapshot";
+export const EVOLUTION_EVALUATE_JOB = "evolution_evaluate";
+export const RULE_SCORING_JOB = "rule_scoring";
 
 /**
  * Ordered cron registry. Later commits append jobs here; order is the run
@@ -175,6 +179,28 @@ export const CRON_JOBS: CronJob[] = [
     dependsOn: [SHADOW_MARK_JOB, COUNTERFACTUAL_RESOLVE_JOB],
     async run(ctx) {
       return runFitnessSnapshot(ctx);
+    },
+  },
+  // Judges the challenger on the snapshot this tick just wrote, and is the ONLY code path
+  // that can promote a ruleset. Deliberately not exposed as an agent tool (see the
+  // registration comment in src/lib/agent/mcp-tools.ts, mirroring the patch_config
+  // precedent): the proposer must never be able to crown its own proposal.
+  {
+    job: EVOLUTION_EVALUATE_JOB,
+    cadence: "daily",
+    dependsOn: [FITNESS_SNAPSHOT_JOB],
+    async run(ctx) {
+      return runEvolutionEvaluate(ctx);
+    },
+  },
+  // Monthly retrospective: HELPED / NEUTRAL / HURT on versions whose data has settled.
+  // Independent of today's snapshot — it only reads long-closed windows.
+  {
+    job: RULE_SCORING_JOB,
+    cadence: "monthly",
+    dependsOn: [],
+    async run(ctx) {
+      return runRuleScoring(ctx);
     },
   },
 ];

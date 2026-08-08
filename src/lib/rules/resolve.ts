@@ -1,15 +1,18 @@
 /**
  * Branch-aware ruleset resolution.
  *
- * LIVE runs the ACTIVE RuleVersion; CANDIDATE runs the candidate when one exists and
- * falls back to ACTIVE otherwise. Resolution must never throw: a DB blip degrades to the
- * on-disk `/prompts` files + DEFAULT_LIMITS rather than stopping the live routine.
+ * LIVE runs the ACTIVE RuleVersion; CANDIDATE runs whatever the `ShadowBranch.CANDIDATE`
+ * pointer targets, provided that target is a legitimate challenger
+ * (see src/lib/rules/challenger.ts), and falls back to ACTIVE otherwise. Resolution must
+ * never throw: a DB blip degrades to the on-disk `/prompts` files + DEFAULT_LIMITS rather
+ * than stopping the live routine.
  */
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { Branch } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { challengerLegitimacy } from "@/lib/rules/challenger";
 import { validateKernel, type KernelViolation } from "@/lib/rules/kernel";
 import {
   DEFAULT_LIMITS,
@@ -147,30 +150,47 @@ async function loadRuleSet(branch: Branch): Promise<RuleSet> {
   const findActive = () =>
     prisma.ruleVersion.findFirst({ where: { status: "ACTIVE" }, orderBy: { id: "desc" } });
 
-  const [candidate, activeRow] = await Promise.all([
+  // The CANDIDATE branch resolves off its ShadowBranch POINTER, not off status: after a
+  // promotion the challenger book runs the DEPOSED CHAMPION (status RETIRED) so the new
+  // rules have to beat the rules they replaced. Keying on status served ACTIVE instead,
+  // which silently made the revert series unobservable.
+  const [pointer, activeRow] = await Promise.all([
     branch === "CANDIDATE"
-      ? prisma.ruleVersion.findFirst({
-          where: { status: "CANDIDATE" },
-          orderBy: { id: "desc" },
+      ? prisma.shadowBranch.findUnique({
+          where: { branch: "CANDIDATE" },
+          select: { ruleVersionId: true },
         })
       : null,
     findActive(),
   ]);
 
-  // Correct null case for CANDIDATE: no candidate exists → run the live ruleset.
   let active = activeRow;
-  if (!candidate && !active) {
+  if (!active) {
     await ensureRuleVersion1();
     active = await findActive();
   }
+  if (!active) throw new Error("no_rule_version");
 
-  const row = candidate ?? active;
-  if (!row) throw new Error("no_rule_version");
+  const target = pointer
+    ? await prisma.ruleVersion.findUnique({ where: { id: pointer.ruleVersionId } })
+    : null;
+  const legitimacy = challengerLegitimacy(target, active);
+  if (!legitimacy.ok && legitimacy.inconsistent) {
+    console.error(
+      "[rules getRuleSet] CANDIDATE branch points at an illegitimate challenger",
+      `version ${pointer?.ruleVersionId} (${legitimacy.reason})`,
+      "— serving ACTIVE",
+    );
+  }
+  // Correct null case for CANDIDATE: no legitimate challenger → run the live ruleset.
+  const challenger = legitimacy.ok ? target : null;
 
-  const files =
-    candidate && active
-      ? mergeCandidateFiles(filesFromRow(active.files), filesFromRow(candidate.files))
-      : filesFromRow(row.files);
+  const row = challenger ?? active;
+  // Defence-in-depth merge: a challenger (candidate OR deposed champion) that lacks a file
+  // picks it up from ACTIVE rather than from disk.
+  const files = challenger
+    ? mergeCandidateFiles(filesFromRow(active.files), filesFromRow(challenger.files))
+    : filesFromRow(row.files);
 
   return {
     versionId: row.id,

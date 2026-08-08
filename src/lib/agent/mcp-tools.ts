@@ -19,6 +19,11 @@ import {
 } from "@/lib/agent/context";
 import { logTrade } from "@/lib/agent/logTrade";
 import { getShadowFitness, listCounterfactuals } from "@/lib/fitness/read";
+import { applyGapFix } from "@/lib/evolution/gapfix";
+import { listEvolutionEvents } from "@/lib/evolution/log";
+import { proposeRuleChange } from "@/lib/evolution/propose";
+import { getKernel, getRuleVersion, listRuleVersions } from "@/lib/evolution/read";
+import { scoreRuleVersion } from "@/lib/evolution/scoring";
 import { listShadowOrders, listShadowPositions } from "@/lib/shadow/read";
 import {
   dailyLogInputSchema,
@@ -36,6 +41,13 @@ import {
   appendPageNotesInputSchema,
   addEvidenceFieldsSchema,
   addEvidenceInputSchema,
+  applyGapFixInputSchema,
+  getRuleVersionInputSchema,
+  listEvolutionLogInputSchema,
+  listRuleVersionsInputSchema,
+  proposeRuleChangeFieldsSchema,
+  proposeRuleChangeInputSchema,
+  scoreRuleVersionInputSchema,
   getPageNotesInputSchema,
   stockReportInputSchema,
   upsertContentPageInputSchema,
@@ -365,6 +377,64 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       return textJson(await listCounterfactuals(parsed));
     },
   );
+
+  server.registerTool(
+    "list_evolution_log",
+    {
+      title: "List evolution log",
+      description:
+        "Read the APPEND-ONLY evolution audit log (proposals, rejections, kernel attempts, promotions, kills, scores), newest first. Rejections are logged too — read them before re-proposing. Default limit 50 (max 200).",
+      inputSchema: listEvolutionLogInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(listEvolutionLogInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await listEvolutionEvents(parsed));
+    },
+  );
+
+  server.registerTool(
+    "get_rule_version",
+    {
+      title: "Get rule version",
+      description:
+        "Metadata for one RuleVersion: status, lane, limits, changedPaths, direction/scope, reasoningPattern, outcome. Never returns prompt text — use get_prompt for the ruleset you are running.",
+      inputSchema: getRuleVersionInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(getRuleVersionInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      const result = await getRuleVersion(parsed.id);
+      if (!result.ok) return { ...textJson(result), isError: true as const };
+      return textJson(result);
+    },
+  );
+
+  server.registerTool(
+    "list_rule_versions",
+    {
+      title: "List rule versions",
+      description:
+        "List RuleVersion metadata (newest first), optionally filtered by status. Metadata only — never prompt text. Default limit 20 (max 100).",
+      inputSchema: listRuleVersionsInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(listRuleVersionsInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await listRuleVersions(parsed));
+    },
+  );
+
+  server.registerTool(
+    "get_kernel",
+    {
+      title: "Get kernel clauses",
+      description:
+        "The pinned kernel clauses (id + sha256 + canonical text) from the deployed bundle. Read this BEFORE proposing: any change that edits a line inside a kernel fence is rejected and logged as a KERNEL_ATTEMPT.",
+      inputSchema: {},
+    },
+    async () => textJson(getKernel()),
+  );
 }
 
 /** Register Stock HQ write MCP tools (Phase 4c). */
@@ -617,8 +687,64 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     },
   );
 
+  server.registerTool(
+    "propose_rule_change",
+    {
+      title: "Propose rule change",
+      description:
+        "Propose a CANDIDATE ruleset (prose hunks and/or limits changes). The SERVER assigns the lane — any `lane` you pass is ignored and recorded. Requires cited scored decision reviews (≥3, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome), a falsifiable counterCase (≥40 chars) and a measurable successMetric. Kernel edits, drift-rail breaches and eligibility failures are rejected AND appended to the evolution log.",
+      inputSchema: proposeRuleChangeFieldsSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(proposeRuleChangeInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      const result = await proposeRuleChange(parsed);
+      if (!result.ok) return { ...textJson(result), isError: true as const };
+      return textJson(result);
+    },
+  );
+
+  server.registerTool(
+    "apply_gap_fix",
+    {
+      title: "Apply gap fix",
+      description:
+        "Immediately patch ONE section of the ACTIVE ruleset for a typo / contradiction / clarification (≤40 changed lines). expectedSectionSha is REQUIRED and a mismatch is a 409. Not a rule change: use propose_rule_change for anything that alters behaviour. An in-flight candidate is rebased, or killed if it touched the same section.",
+      inputSchema: applyGapFixInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(applyGapFixInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      const result = await applyGapFix(parsed);
+      if (!result.ok) return { ...textJson(result), isError: true as const };
+      return textJson(result);
+    },
+  );
+
+  server.registerTool(
+    "score_rule_version",
+    {
+      title: "Score rule version",
+      description:
+        "Compute the retrospective HELPED/NEUTRAL/HURT outcome of a RETIRED or KILLED rule version from the fitness ledger. `outcomeClaim` is recorded under outcomeDetail.agentClaim and logged, but NEVER used as the outcome — the server scores it. Below 10 paired sessions the call returns `preview: true, outcome: null` and writes NOTHING: the version stays unscored until its series is long enough.",
+      inputSchema: scoreRuleVersionInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(scoreRuleVersionInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      const result = await scoreRuleVersion(parsed);
+      if (!result.ok) return { ...textJson(result), isError: true as const };
+      return textJson(result);
+    },
+  );
+
   // patch_config intentionally NOT registered on MCP — routines must not rewrite LIMITS.
   // Ivan ops: PATCH /api/agent/config with Bearer AGENT_TOKEN.
+  //
+  // Same precedent, same reason: promote / revert / activate are intentionally NOT
+  // registered anywhere as agent tools. Promotion is cron-only (`evolution_evaluate`) and
+  // reversion is a kernel rule — a proposer that could crown or spare its own candidate
+  // would remove the only selection pressure in the system.
 }
 
 /** Register all Stock HQ MCP tools (reads + writes). */

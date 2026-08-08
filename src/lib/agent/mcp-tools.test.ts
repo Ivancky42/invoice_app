@@ -10,20 +10,25 @@ import { registerAgentMcpTools } from "@/lib/agent/mcp-tools";
 const EXPECTED_TOOL_NAMES = [
   "add_evidence",
   "append_page_notes",
+  "apply_gap_fix",
   "delete_watchlist",
   "get_config",
   "get_context",
   "get_document",
+  "get_kernel",
   "get_page_notes",
   "get_price_history",
   "get_prompt",
+  "get_rule_version",
   "get_shadow_fitness",
   "list_counterfactuals",
   "list_daily_logs",
   "list_decision_reviews",
+  "list_evolution_log",
   "list_ideas",
   "list_portfolio",
   "list_reports",
+  "list_rule_versions",
   "list_shadow_orders",
   "list_shadow_positions",
   "list_trades",
@@ -31,6 +36,8 @@ const EXPECTED_TOOL_NAMES = [
   "list_watchlist",
   "log_trade",
   "patch_portfolio",
+  "propose_rule_change",
+  "score_rule_version",
   "sync_tracked_tickers",
   "upsert_daily_log",
   "upsert_decision_review",
@@ -65,6 +72,14 @@ describe("MCP tool surface", () => {
       if (/order/i.test(name)) {
         expect(name).toMatch(/^(list|get)_/);
       }
+    }
+  });
+
+  it("exposes no tool that can promote, activate or revert a rule version", () => {
+    // Promotion is cron-only (`evolution_evaluate`); reversion is a kernel rule. A tool
+    // that let the proposer crown its own candidate would remove the selection pressure.
+    for (const name of collectToolNames()) {
+      expect(name).not.toMatch(/promote|activate|revert|kill_/i);
     }
   });
 
