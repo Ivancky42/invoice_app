@@ -101,13 +101,15 @@ export function resolveIdeaQuoteSymbol(
     return looksLikeEquityTicker(s);
   }
 
-  const head = s.match(/^([A-Za-z]{1,5})\s*(?:[—–\-]|\s*\/)/);
+  // Title forms must already be ticker-cased ("AAPL — …", "MSFT/…").
+  // Do NOT match title-case prose like "Value/Defensive Sector Rotation" → VALUE.
+  const head = s.match(/^([A-Z]{1,5})\s*(?:[—–\-]|\s*\/)/);
   if (head?.[1]) {
     const sym = looksLikeEquityTicker(head[1]);
     if (sym) return sym;
   }
 
-  const paren = s.match(/\(\s*([A-Za-z]{1,5})(?:\s*\/|\s*,|\s*\))/);
+  const paren = s.match(/\(\s*([A-Z]{1,5})(?:\s*\/|\s*,|\s*\))/);
   if (paren?.[1]) {
     return looksLikeEquityTicker(paren[1]);
   }
