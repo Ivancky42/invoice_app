@@ -8,6 +8,7 @@ import {
 } from "@/lib/cron/priceSyncJob";
 import type { Cadence } from "@/lib/cron/schedule";
 import { runPriceHistorySync } from "@/lib/pricehistory/sync";
+import { runBreadthClassify } from "@/lib/fitness/breadthClassify";
 import { runCounterfactuals } from "@/lib/fitness/counterfactuals";
 import { runFitnessSnapshot } from "@/lib/fitness/snapshot";
 import { runDecisionReturns } from "@/lib/shadow/decisionReturns";
@@ -45,6 +46,7 @@ export type CronJob = {
 export const PRICE_SYNC_JOB = "price_sync";
 export const PORTFOLIO_SNAPSHOT_JOB = "portfolio_snapshot";
 export const PRICE_HISTORY_JOB = "price_history";
+export const BREADTH_CLASSIFY_JOB = "breadth_classify";
 export const SHADOW_ENQUEUE_JOB = "shadow_enqueue";
 export const SHADOW_FILL_JOB = "shadow_fill";
 export const SHADOW_MARK_JOB = "shadow_mark";
@@ -103,6 +105,16 @@ export const CRON_JOBS: CronJob[] = [
     dependsOn: [PRICE_SYNC_JOB],
     async run(ctx) {
       return runPriceHistorySync(ctx);
+    },
+  },
+  // Attributes each recent decision's ticker move to the market / theme / the name
+  // itself. Depends only on price_history (the bars); does not touch the shadow ledger.
+  {
+    job: BREADTH_CLASSIFY_JOB,
+    cadence: "daily",
+    dependsOn: [PRICE_HISTORY_JOB],
+    async run(ctx) {
+      return runBreadthClassify(ctx);
     },
   },
   // Paper-only shadow ledger. Order matters: fill → enqueue → mark, all downstream of

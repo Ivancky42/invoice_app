@@ -571,6 +571,8 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
     decisionDate: decisionDate ?? undefined,
     decisionType: input.decisionType ?? undefined,
     positionContext: input.positionContext ?? undefined,
+    thesisState: input.thesisState ?? undefined,
+    priorThesisState: input.priorThesisState ?? undefined,
     priceAtDecision: input.priceAtDecision ?? undefined,
     entryZone: input.entryZone ?? undefined,
     stopLoss: input.stopLoss ?? undefined,
@@ -617,6 +619,14 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
       // already identifies and must never move it across branches — that would flip a
       // CANDIDATE decision to LIVE (and let it enqueue into the real branch's book).
       const { idempotencyKey: _k, branch: _b, ...update } = data;
+      // Server-derived on the update path (same pattern as ruleVersionId above): when
+      // the replay changes thesisState, priorThesisState must be the state actually
+      // being replaced — a caller-omitted (or stale) value would preserve an old prior
+      // and desync the pair, e.g. (BROKEN, INTACT) erasing the WEAKENING step. On
+      // fresh create the caller's value stands.
+      if (input.thesisState != null && input.thesisState !== existing.thesisState) {
+        update.priorThesisState = existing.thesisState;
+      }
       const row = await prisma.decisionReview.update({
         where: { id: existing.id },
         data: update,

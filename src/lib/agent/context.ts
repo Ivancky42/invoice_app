@@ -519,6 +519,13 @@ export function serializeDecisionReviewRow(r: DecisionReview) {
     decisionDate: iso(r.decisionDate),
     decisionType: r.decisionType,
     positionContext: r.positionContext,
+    thesisState: r.thesisState,
+    priorThesisState: r.priorThesisState,
+    // Server-computed noise classification (breadth_classify job); read-only to the agent.
+    moveClass: r.moveClass,
+    breadth: num(r.breadth),
+    themeBreadth: num(r.themeBreadth),
+    excessMove: num(r.excessMove),
     priceAtDecision: num(r.priceAtDecision),
     entryZone: r.entryZone,
     stopLoss: num(r.stopLoss),

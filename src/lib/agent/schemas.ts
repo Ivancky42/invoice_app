@@ -17,6 +17,7 @@ import {
   Sleeve,
   StockReportType,
   Theme,
+  ThesisState,
   TradeStatus,
   TradeType,
   TrendStage,
@@ -238,6 +239,11 @@ export const upsertDecisionReviewInputSchema = z.object({
   decisionDate: dateYmd.nullable().optional(),
   decisionType: z.enum(enumValues(DecisionType)).nullable().optional(),
   positionContext: z.enum(enumValues(DecisionPositionContext)).nullable().optional(),
+  thesisState: z.enum(enumValues(ThesisState)).nullable().optional(),
+  priorThesisState: z.enum(enumValues(ThesisState)).nullable().optional(),
+  // moveClass / breadth / themeBreadth / excessMove are SERVER-computed by the
+  // breadth_classify job (see src/lib/fitness/breadthClassify.ts) — like upsidePct, they
+  // are never accepted from the caller, only derived and written back.
   priceAtDecision: z.number().positive().nullable().optional(),
   entryZone: z.string().max(500).nullable().optional(),
   stopLoss: z.number().positive().nullable().optional(),

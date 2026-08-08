@@ -598,6 +598,21 @@ enum DecisionPositionContext {
   EARNINGS
 }
 
+/// Noise attribution for a name's move: see classifyMove in src/lib/fitness/math.ts.
+enum MoveClass {
+  MARKET_MOVE
+  THEME_MOVE
+  IDIOSYNCRATIC
+  INSUFFICIENT_DATA
+}
+
+/// Current read on whether a decision's original thesis still holds.
+enum ThesisState {
+  INTACT
+  WEAKENING
+  BROKEN
+}
+
 model DecisionReview {
   id                   String                    @id @default(cuid())
   notionId             String?                   @unique
@@ -610,6 +625,18 @@ model DecisionReview {
   decisionTypeRaw      String?
   positionContext      DecisionPositionContext?
   positionContextRaw   String?
+  /// Current read on whether the original thesis still holds.
+  thesisState          ThesisState?
+  /// thesisState immediately before this write, carried for drift/history reads.
+  priorThesisState     ThesisState?
+  /// MARKET_MOVE / THEME_MOVE / IDIOSYNCRATIC / INSUFFICIENT_DATA — set by `breadth_classify`.
+  moveClass            MoveClass?
+  /// Fraction of the tracked universe moving the same direction as `ticker` at decisionSession.
+  breadth              Decimal?                  @db.Decimal(6, 4)
+  /// Fraction of the ticker's theme moving the same direction.
+  themeBreadth         Decimal?                  @db.Decimal(6, 4)
+  /// Ticker's 1-session return minus the market median return (signed fraction).
+  excessMove           Decimal?                  @db.Decimal(10, 6)
   priceAtDecision      Decimal?                  @db.Decimal(14, 4)
   entryZone            String?
   stopLoss             Decimal?                  @db.Decimal(14, 4)

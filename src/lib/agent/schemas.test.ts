@@ -101,3 +101,38 @@ describe("branchKeyRejection", () => {
     expect(branchKeyRejection(null)).toBeNull();
   });
 });
+
+describe("decision review thesis state", () => {
+  it("accepts thesisState and priorThesisState", () => {
+    const parsed = upsertDecisionReviewInputSchema.safeParse({
+      title: "t",
+      thesisState: "WEAKENING",
+      priorThesisState: "INTACT",
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.thesisState).toBe("WEAKENING");
+    expect(parsed.data.priorThesisState).toBe("INTACT");
+  });
+
+  it("rejects an unknown thesisState value", () => {
+    expect(
+      upsertDecisionReviewInputSchema.safeParse({ title: "t", thesisState: "MOSTLY_FINE" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("moveClass is server-computed and never survives parsing, even when supplied", () => {
+    // Unknown keys are stripped by zod's default (non-strict) object parsing, so this
+    // asserts the PARSED OUTPUT never carries moveClass — not that the input was refused.
+    const parsed = upsertDecisionReviewInputSchema.safeParse({
+      title: "t",
+      moveClass: "MARKET_MOVE",
+      breadth: 0.9,
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).not.toHaveProperty("moveClass");
+    expect(parsed.data).not.toHaveProperty("breadth");
+  });
+});
