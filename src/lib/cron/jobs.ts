@@ -8,6 +8,8 @@ import {
 } from "@/lib/cron/priceSyncJob";
 import type { Cadence } from "@/lib/cron/schedule";
 import { runPriceHistorySync } from "@/lib/pricehistory/sync";
+import { runCounterfactuals } from "@/lib/fitness/counterfactuals";
+import { runFitnessSnapshot } from "@/lib/fitness/snapshot";
 import { runDecisionReturns } from "@/lib/shadow/decisionReturns";
 import { runShadowEnqueue } from "@/lib/shadow/enqueue";
 import { runShadowFill } from "@/lib/shadow/fill";
@@ -47,6 +49,8 @@ export const SHADOW_ENQUEUE_JOB = "shadow_enqueue";
 export const SHADOW_FILL_JOB = "shadow_fill";
 export const SHADOW_MARK_JOB = "shadow_mark";
 export const DECISION_RETURNS_JOB = "decision_returns";
+export const COUNTERFACTUAL_RESOLVE_JOB = "counterfactual_resolve";
+export const FITNESS_SNAPSHOT_JOB = "fitness_snapshot";
 
 /**
  * Ordered cron registry. Later commits append jobs here; order is the run
@@ -140,6 +144,25 @@ export const CRON_JOBS: CronJob[] = [
     dependsOn: [PRICE_HISTORY_JOB],
     async run(ctx) {
       return runDecisionReturns(ctx);
+    },
+  },
+  // Seeding needs today's closes (price_history) and the marked book (shadow_mark) for
+  // the DNAD / double-count weights; resolution needs the same closes.
+  {
+    job: COUNTERFACTUAL_RESOLVE_JOB,
+    cadence: "daily",
+    dependsOn: [PRICE_HISTORY_JOB, SHADOW_MARK_JOB],
+    async run(ctx) {
+      return runCounterfactuals(ctx);
+    },
+  },
+  // Last: the snapshot scores the marked book AND the credits this tick just resolved.
+  {
+    job: FITNESS_SNAPSHOT_JOB,
+    cadence: "daily",
+    dependsOn: [SHADOW_MARK_JOB, COUNTERFACTUAL_RESOLVE_JOB],
+    async run(ctx) {
+      return runFitnessSnapshot(ctx);
     },
   },
 ];

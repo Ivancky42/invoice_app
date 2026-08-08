@@ -47,7 +47,9 @@ function isCurrentClient(client: PrismaClient | undefined): client is PrismaClie
     typeof (client as { ruleVersion?: unknown }).ruleVersion !== "undefined" &&
     typeof (client as { shadowBranch?: unknown }).shadowBranch !== "undefined" &&
     typeof (client as { shadowOrder?: unknown }).shadowOrder !== "undefined" &&
-    typeof (client as { shadowPosition?: unknown }).shadowPosition !== "undefined"
+    typeof (client as { shadowPosition?: unknown }).shadowPosition !== "undefined" &&
+    typeof (client as { counterfactual?: unknown }).counterfactual !== "undefined" &&
+    typeof (client as { fitnessSnapshot?: unknown }).fitnessSnapshot !== "undefined"
   );
 }
 

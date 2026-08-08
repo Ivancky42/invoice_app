@@ -16,6 +16,8 @@ const EXPECTED_TOOL_NAMES = [
   "get_page_notes",
   "get_price_history",
   "get_prompt",
+  "get_shadow_fitness",
+  "list_counterfactuals",
   "list_daily_logs",
   "list_decision_reviews",
   "list_ideas",

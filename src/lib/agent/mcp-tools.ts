@@ -18,11 +18,14 @@ import {
   AGENT_ROUTINES,
 } from "@/lib/agent/context";
 import { logTrade } from "@/lib/agent/logTrade";
+import { getShadowFitness, listCounterfactuals } from "@/lib/fitness/read";
 import { listShadowOrders, listShadowPositions } from "@/lib/shadow/read";
 import {
   dailyLogInputSchema,
   getContentPageInputSchema,
   getPriceHistoryInputSchema,
+  getShadowFitnessInputSchema,
+  listCounterfactualsInputSchema,
   listDailyLogsQuerySchema,
   listDecisionReviewsQuerySchema,
   listReportsQuerySchema,
@@ -327,6 +330,36 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       const parsed = parseTool(listShadowOrdersInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       return textJson(await listShadowOrders(parsed));
+    },
+  );
+
+  server.registerTool(
+    "get_shadow_fitness",
+    {
+      title: "Get shadow fitness",
+      description:
+        "Daily fitness snapshots for a shadow branch (default LIVE), newest session first. All values are FRACTIONS (0.03 = 3%). avoidedCreditDelta is SIGNED: refusing a name that fell credits, refusing one that rose debits. Default limit 30 (max 90).",
+      inputSchema: getShadowFitnessInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(getShadowFitnessInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await getShadowFitness(parsed));
+    },
+  );
+
+  server.registerTool(
+    "list_counterfactuals",
+    {
+      title: "List counterfactuals",
+      description:
+        "List what NOT-taken decisions (AVOID / WAIT / DO_NOT_AVERAGE_DOWN) would have been worth for a shadow branch (default LIVE), newest decision first. `credit` is SIGNED and in NAV fractions. Optional status filter; default limit 50 (max 200).",
+      inputSchema: listCounterfactualsInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(listCounterfactualsInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await listCounterfactuals(parsed));
     },
   );
 }

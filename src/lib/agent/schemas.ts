@@ -289,6 +289,17 @@ export const listShadowOrdersInputSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 
+export const getShadowFitnessInputSchema = z.object({
+  branch: z.enum(["LIVE", "CANDIDATE"]).optional(),
+  limit: z.coerce.number().int().min(1).max(90).optional(),
+});
+
+export const listCounterfactualsInputSchema = z.object({
+  branch: z.enum(["LIVE", "CANDIDATE"]).optional(),
+  status: z.enum(["PENDING", "RESOLVED", "UNRESOLVED"]).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
 export const listDecisionReviewsQuerySchema = z.object({
   ticker: z.string().min(1).max(32).optional(),
   reviewStatus: z.enum(enumValues(DecisionReviewStatus)).optional(),

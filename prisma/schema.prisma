@@ -889,3 +889,85 @@ model ShadowPosition {
   // "ShadowPosition_open_unique" in scripts/apply-raw-constraints.ts.
   @@index([branchId])
 }
+
+// === Counterfactuals + fitness (shadow evolution) ===
+// The fitness function scores each paper book daily. Its signature term is a SIGNED,
+// unclamped avoided-loss credit: refusing a name that then fell earns credit, refusing
+// one that then rose earns a debit. Every field here is a FRACTION (0.03 = 3%), never
+// percentage points — nothing in this section carries a `Pct` suffix.
+
+/// Lifecycle of a counterfactual. PENDING rows wait for their horizon session.
+enum CounterfactualStatus {
+  PENDING
+  RESOLVED
+  /// Horizon passed with no usable bar inside the forward walk — excluded from credit forever.
+  UNRESOLVED
+}
+
+/// Evidence quality of a fitness snapshot. DEGRADED = too many carried (stale) marks.
+enum SnapshotQuality {
+  OK
+  DEGRADED
+}
+
+/// What a NOT-taken decision (AVOID / WAIT / DO_NOT_AVERAGE_DOWN) would have cost or saved.
+model Counterfactual {
+  id               String               @id @default(cuid())
+  branchId         String
+  decisionReviewId String
+  ticker           String
+  decisionType     DecisionType
+  /// Session whose bars the decision was made on (see src/lib/shadow/sessions.ts).
+  decisionSession  DateTime             @db.Date
+  /// Horizon length in SESSIONS — constant 63 (one quarter), counted on the session
+  /// calendar so holidays cannot stretch or shorten the window.
+  horizonSessions  Int
+  priceAtDecision  Decimal              @db.Decimal(14, 4)
+  /// Fraction of NAV the branch's ruleset WOULD have allowed for this name.
+  permittedSize    Decimal              @db.Decimal(8, 6)
+  /// Session actually priced at the horizon (may be up to 5 sessions past the exact one).
+  horizonSession   DateTime?            @db.Date
+  priceAtHorizon   Decimal?             @db.Decimal(14, 4)
+  horizonReturn    Decimal?             @db.Decimal(10, 6)
+  /// SIGNED: −horizonReturn × permittedSize. Never clamped, never abs().
+  credit           Decimal?             @db.Decimal(10, 6)
+  status           CounterfactualStatus @default(PENDING)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  /// One counterfactual per decision per branch — a replayed seed cannot double-count.
+  @@unique([branchId, decisionReviewId])
+  @@index([branchId])
+  @@index([status])
+}
+
+/// One branch's fitness accounting for one session. All fractions.
+model FitnessSnapshot {
+  id                 String          @id @default(cuid())
+  branchId           String
+  session            DateTime        @db.Date
+  nav                Decimal         @db.Decimal(18, 4)
+  /// nav / previous snapshot's nav − 1; null on the branch's first snapshot.
+  dailyIncrement     Decimal?        @db.Decimal(10, 6)
+  /// Σ credits of counterfactuals newly RESOLVED since the previous snapshot. Credits are
+  /// already NAV-fractions (permittedSize × return), so they sum straight into fitness.
+  avoidedCreditDelta Decimal         @default(0) @db.Decimal(10, 6)
+  /// CSPX close / previous session's close − 1; null when the carry exceeds 3 sessions.
+  benchmarkIncrement Decimal?        @db.Decimal(10, 6)
+  /// dailyIncrement + avoidedCreditDelta − turnoverDelta − benchmarkIncrement.
+  fitnessIncrement   Decimal?        @db.Decimal(10, 6)
+  /// Rolling 30-session fitness LEVEL (includes the window drawdown penalty); null when
+  /// the window is short or the benchmark is unavailable.
+  windowFitness      Decimal?        @db.Decimal(10, 6)
+  /// Peak-to-trough of the branch's snapshot NAV series since its last reset.
+  maxDrawdown        Decimal         @db.Decimal(8, 6)
+  /// Frictional cost of this session's fills, as a fraction of NAV.
+  turnoverDelta      Decimal         @default(0) @db.Decimal(10, 6)
+  quality            SnapshotQuality
+  staleMarks         Int
+  openPositions      Int
+  createdAt          DateTime        @default(now())
+
+  @@unique([branchId, session])
+  @@index([session])
+}
