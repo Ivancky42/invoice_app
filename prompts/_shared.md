@@ -100,6 +100,7 @@ expect full ticker-note history in context/list payloads.
 from Portfolio + active Watchlist (excludes DEMOTED/DROPPED). Do **not** use
 `patch_config` for ticker lists in routines.
 
+<!-- KERNEL:BEGIN id=price-provenance v=1 -->
 ## 3. Price provenance (§12.10-C — supersedes the voided §12.10)
 
 The sync runs ~06:00 MYT ≈ 18:00 ET, ~2h after the US close. The Daily routine runs
@@ -122,6 +123,7 @@ just-completed session — label them "US close (date)" with confidence, do not 
   `leadTicker`). Do not quote unreliable idea prices. §11.4 sanity rules apply: never write
   one price for a basket; if a value differs >50% from the previous stored value or doesn't
   plausibly match the lead ticker, flag rather than use.
+<!-- KERNEL:END id=price-provenance -->
 
 ## 4. Adaptive Decision Layer (§10) — highest authority
 
@@ -223,6 +225,7 @@ new idea graduation / earnings HOLD-through) must cite:
 Do not present inferred conclusions as filed facts. If the only source is prior notes,
 say so.
 
+<!-- KERNEL:BEGIN id=execution-boundary v=1 -->
 ## 5. Execution boundary — non-negotiable
 
 - Never place, execute, route, schedule, or simulate a real trade. Never imply one
@@ -230,6 +233,7 @@ say so.
 - A BUY signal is a **suggestion**. It must never move a name into the portfolio. A stock
   enters `list_portfolio` only when Ivan reports an actual trade via `log_trade`.
 - Never auto-add to Portfolio via any tool.
+<!-- KERNEL:END id=execution-boundary -->
 
 ## 6. Sleeves (§12.13)
 
@@ -542,3 +546,41 @@ covering:
 | Forbidden tool attempts | `log_trade` / `patch_config` / etc. — should be none; say so |
 
 This is audit evidence, not narrative padding.
+
+<!-- KERNEL:BEGIN id=fitness-definition v=1 -->
+## 17. Fitness definition (kernel)
+
+Branch fitness over a comparison window is exactly:
+
+`fitness = shadowReturn + avoidedLossCredit − drawdownPenalty − turnoverCost − benchmarkReturn`
+
+- All five components are fractions of starting capital (`0.08` = 8%), never percentage points.
+- `shadowReturn` is the branch's paper-ledger return; `benchmarkReturn` is CSPX over the same window.
+- `avoidedLossCredit` is **signed**: correctly avoided losses add, wrongly avoided gains subtract.
+- `drawdownPenalty` and `turnoverCost` are always subtracted, never floored away.
+- No rule change may redefine, reweight, clamp, or drop any component, or swap the benchmark.
+<!-- KERNEL:END id=fitness-definition -->
+
+<!-- KERNEL:BEGIN id=reversion-mechanism v=1 -->
+## 18. Reversion mechanism (kernel)
+
+- Any branch whose equity closes **25% or more below its own high-water mark** hard-reverts
+  immediately: the branch stops trading, its candidate rules are killed, and LIVE returns to
+  the last known-good ACTIVE version.
+- Reversion is evaluated first and takes precedence over every other signal — a breach reverts
+  even when fitness, promotion criteria, or a pending proposal say otherwise.
+- Reversion is never deferred, sampled, overridden by fresh evidence, or waived for "one more
+  session".
+- The 25% threshold and this precedence order can only change by a human commit to this file.
+<!-- KERNEL:END id=reversion-mechanism -->
+
+<!-- KERNEL:BEGIN id=audit-append-only v=1 -->
+## 19. Audit log is append-only (kernel)
+
+- `EvolutionEvent` records are append-only: once written they are never updated, deleted,
+  redacted, back-dated, or rewritten by any agent, routine, or rule version.
+- Any proposal, tool call, or rule change that attempts to modify or remove audit rows is
+  rejected outright, and the rejection is itself appended to the log.
+- Corrections are made by appending a new event that references the earlier one — never by
+  editing history.
+<!-- KERNEL:END id=audit-append-only -->

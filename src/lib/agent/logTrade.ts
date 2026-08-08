@@ -25,6 +25,7 @@ import { resolvePositionShares } from "@/lib/stocks/portfolioTotals";
 import type { ReportBlock } from "@/lib/content/blocks";
 import type { LogTradeInputParsed } from "@/lib/agent/schemas";
 import { syncTrackedTickersFromDb } from "@/lib/agent/writes";
+import { getRuleSet } from "@/lib/rules/resolve";
 
 const SHARES_EPS = 1e-6;
 const MONEY_EPS = 0.02;
@@ -110,6 +111,8 @@ function parseLimits(value: unknown): LimitsConfig {
     return [asNumber(v[0], fb[0]), asNumber(v[1], fb[1])];
   };
   return {
+    // Keys not enforced here (prose-derived thresholds) fall through from defaults.
+    ...DEFAULT_LIMITS,
     singlePositionPct: asNumber(o.singlePositionPct, DEFAULT_LIMITS.singlePositionPct),
     themePct: asNumber(o.themePct, DEFAULT_LIMITS.themePct),
     speculativeSleevePct: asNumber(
@@ -401,6 +404,12 @@ export async function logTrade(
     };
   }
 
+  // Server-derived attribution stamp; resolved outside the transaction (cached 60s).
+  // The book is LIVE-only. Null when resolution degraded — unknown, not zero.
+  const liveRules = await getRuleSet("LIVE");
+  const ruleVersionId =
+    liveRules.degraded || liveRules.versionId <= 0 ? null : liveRules.versionId;
+
   try {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Idempotent replay
@@ -412,7 +421,8 @@ export async function logTrade(
       }
 
       // Serialize concurrent first trades on the same ticker (advisory + row locks).
-      await tx.$queryRaw(
+      // $executeRaw, not $queryRaw: the adapter cannot deserialize the void return (P2010).
+      await tx.$executeRaw(
         Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`stock-hq-trade:${ticker}`}))`,
       );
       await tx.$queryRaw`
@@ -673,6 +683,7 @@ export async function logTrade(
           status,
           // Pre-trade avg so historical average-down counts work (price < avgCostBasis).
           avgCostBasis: oldShares > SHARES_EPS ? oldAvg : newAvg || null,
+          ruleVersionId,
           exitReason: input.exitReason ?? null,
           thesisAtEntry: (input.thesisAtEntry ?? undefined) as Prisma.InputJsonValue | undefined,
           notes: (input.notes ?? undefined) as Prisma.InputJsonValue | undefined,

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { ZodSchema } from "zod";
-import { validationFailure } from "@/lib/agent/schemas";
+import { branchKeyRejection, validationFailure } from "@/lib/agent/schemas";
 
 export async function readJsonBody(req: Request): Promise<unknown> {
   try {
@@ -8,6 +8,12 @@ export async function readJsonBody(req: Request): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+/** 400 when a real-book write carries a `branch` key; null when it does not. */
+export function rejectBranchOr400(input: unknown): NextResponse | null {
+  const failure = branchKeyRejection(input);
+  return failure ? NextResponse.json(failure, { status: 400 }) : null;
 }
 
 export function parseOr400<T>(

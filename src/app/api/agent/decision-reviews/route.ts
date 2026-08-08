@@ -35,5 +35,11 @@ export async function PUT(req: NextRequest) {
   const parsed = parseOr400(upsertDecisionReviewInputSchema, body);
   if (!parsed.ok) return parsed.response;
 
-  return NextResponse.json(await upsertDecisionReview(parsed.data));
+  const result = await upsertDecisionReview(parsed.data);
+  if (!result.ok) {
+    // Refused before anything was written (evidence_insufficient in strict mode) — same
+    // 409 conflict shape the trade route uses for its refused-write path.
+    return NextResponse.json(result, { status: 409 });
+  }
+  return NextResponse.json(result, { status: 200 });
 }

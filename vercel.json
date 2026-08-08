@@ -2,7 +2,7 @@
   "regions": ["sin1"],
   "crons": [
     {
-      "path": "/api/sync/prices",
+      "path": "/api/cron/tick",
       "schedule": "0 22 * * *"
     }
   ]

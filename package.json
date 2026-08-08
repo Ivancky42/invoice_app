@@ -8,7 +8,7 @@
     "start": "next start",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
-    "db:push": "prisma db push && prisma generate",
+    "db:push": "prisma db push && prisma generate && npx tsx scripts/apply-raw-constraints.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
     "start:all": "pnpm db:up && pnpm db:push && pnpm dev",
@@ -16,7 +16,17 @@
     "db:resolve-daily-log-prod": "prisma migrate resolve --applied 20250514190100_daily_log --config prisma.config.ts",
     "db:resolve-portfolio-snapshot-breakdown-prod": "prisma migrate resolve --applied 20250527150000_portfolio_snapshot_breakdown --config prisma.config.ts",
     "db:repair-prod-migrations": "prisma migrate resolve --applied 20250527150000_portfolio_snapshot_breakdown --config prisma.config.ts && prisma migrate deploy --config prisma.config.ts",
-    "db:migrate-prod": "prisma migrate deploy --config prisma.config.ts"
+    "db:resolve-cron-job-ledger-prod": "prisma migrate resolve --applied 20260808120000_cron_job_ledger --config prisma.config.ts",
+    "db:resolve-price-history-prod": "prisma migrate resolve --applied 20260808130000_price_history --config prisma.config.ts",
+    "db:resolve-rule-versions-prod": "prisma migrate resolve --applied 20260808140000_rule_versions --config prisma.config.ts",
+    "db:resolve-shadow-ledger-prod": "prisma migrate resolve --applied 20260808150000_shadow_ledger --config prisma.config.ts",
+    "db:resolve-fitness-prod": "prisma migrate resolve --applied 20260808160000_fitness --config prisma.config.ts",
+    "db:resolve-noise-thesis-prod": "prisma migrate resolve --applied 20260808170000_noise_thesis --config prisma.config.ts",
+    "db:resolve-evidence-prod": "prisma migrate resolve --applied 20260808180000_evidence --config prisma.config.ts",
+    "db:resolve-evolution-prod": "prisma migrate resolve --applied 20260808190000_evolution --config prisma.config.ts",
+    "db:migrate-prod": "prisma migrate deploy --config prisma.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.26.0",
@@ -49,7 +59,8 @@
     "prisma": "^7.8.0",
     "tailwindcss": "^3.4.15",
     "tailwindcss-animate": "^1.0.7",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   },
   "packageManager": "pnpm@9.0.0",
   "engines": {

@@ -27,12 +27,15 @@ import {
   isCashTicker,
 } from "@/lib/stocks/format";
 import { listStockEnums } from "@/lib/agent/enums";
+import { CRON_JOBS } from "@/lib/cron/jobs";
+import { getRuleSet } from "@/lib/rules/resolve";
+import { shadowContextBlock } from "@/lib/shadow/read";
 import { ensureContentPages } from "@/lib/agent/contentPages";
 import {
   earningsRiskFromDays,
   type DerivedEarningsRisk,
 } from "@/lib/stocks/derived";
-import type { Portfolio, Watchlist, Trade, Trend, Idea, DecisionReview, ContentPage } from "@/generated/prisma/client";
+import type { Branch, Portfolio, Watchlist, Trade, Trend, Idea, DecisionReview, ContentPage } from "@/generated/prisma/client";
 import type { Decimal } from "@/generated/prisma/internal/prismaNamespace";
 import type { EarningsRiskThresholds } from "@/lib/stocks/derived";
 import {
@@ -155,13 +158,66 @@ function pageNotesPreview(body: unknown) {
   };
 }
 
+export type StaleJob = {
+  job: string;
+  /** UTC run day of the last SUCCESS, or null when the job has never succeeded. */
+  lastSuccess: string | null;
+  /** Days since that success; null when there has never been one. */
+  daysBehind: number | null;
+};
+
+/** A registered cron job is stale once its last SUCCESS is older than this. */
+const STALE_JOB_DAYS = 2;
+
+/**
+ * Registered cron jobs whose last SUCCESS is more than {@link STALE_JOB_DAYS} old.
+ * Surfaced in context so a routine can see that (e.g.) price_history stopped feeding
+ * the marks it is about to reason over, instead of trusting silently stale data.
+ */
+async function staleJobsSummary(): Promise<StaleJob[]> {
+  const grouped = await prisma.jobRun.groupBy({
+    by: ["job"],
+    where: { status: "SUCCESS" },
+    _max: { runDay: true },
+  });
+  const lastByJob = new Map(grouped.map((g) => [g.job, g._max.runDay ?? null]));
+
+  const todayMs = Date.UTC(
+    new Date().getUTCFullYear(),
+    new Date().getUTCMonth(),
+    new Date().getUTCDate(),
+  );
+
+  const out: StaleJob[] = [];
+  for (const descriptor of CRON_JOBS) {
+    const last = lastByJob.get(descriptor.job) ?? null;
+    if (!last) {
+      out.push({ job: descriptor.job, lastSuccess: null, daysBehind: null });
+      continue;
+    }
+    const daysBehind = Math.round((todayMs - last.getTime()) / 86_400_000);
+    if (daysBehind > STALE_JOB_DAYS) {
+      out.push({
+        job: descriptor.job,
+        lastSuccess: last.toISOString().slice(0, 10),
+        daysBehind,
+      });
+    }
+  }
+  return out;
+}
+
 async function lastRunSummary(): Promise<{
   prices: SyncRunSummary | null;
   notion: SyncRunSummary | null;
+  staleJobs: StaleJob[];
 }> {
-  const rows = await prisma.syncStatus.findMany({
-    where: { source: { in: ["prices", "notion"] } },
-  });
+  const [rows, staleJobs] = await Promise.all([
+    prisma.syncStatus.findMany({
+      where: { source: { in: ["prices", "notion"] } },
+    }),
+    staleJobsSummary(),
+  ]);
   const bySource = new Map(rows.map((r) => [r.source, r]));
   const map = (source: string): SyncRunSummary | null => {
     const row = bySource.get(source);
@@ -190,6 +246,7 @@ async function lastRunSummary(): Promise<{
   const notionFrozen = process.env.NOTION_SYNC_ENABLED !== "true";
   const notion = map("notion");
   return {
+    staleJobs,
     prices: map("prices"),
     notion: notion
       ? {
@@ -456,11 +513,19 @@ export function serializeDecisionReviewRow(r: DecisionReview) {
     id: r.id,
     notionId: r.notionId,
     idempotencyKey: r.idempotencyKey,
+    branch: r.branch,
     title: r.title,
     ticker: r.ticker,
     decisionDate: iso(r.decisionDate),
     decisionType: r.decisionType,
     positionContext: r.positionContext,
+    thesisState: r.thesisState,
+    priorThesisState: r.priorThesisState,
+    // Server-computed noise classification (breadth_classify job); read-only to the agent.
+    moveClass: r.moveClass,
+    breadth: num(r.breadth),
+    themeBreadth: num(r.themeBreadth),
+    excessMove: num(r.excessMove),
     priceAtDecision: num(r.priceAtDecision),
     entryZone: r.entryZone,
     stopLoss: num(r.stopLoss),
@@ -629,6 +694,50 @@ export async function listStockReportItems(opts?: {
   return rows.map(serializeStockReportRow);
 }
 
+export function serializePriceHistoryRow(row: {
+  ticker: string;
+  date: Date;
+  open: Decimal | null;
+  close: Decimal;
+  adjClose: Decimal | null;
+  volume: bigint | null;
+  source: string;
+}) {
+  return {
+    ticker: row.ticker,
+    date: iso(row.date)!.slice(0, 10),
+    open: decToNum(row.open),
+    close: decToNum(row.close),
+    adjClose: decToNum(row.adjClose),
+    volume: row.volume === null ? null : Number(row.volume),
+    source: row.source,
+  };
+}
+
+export async function listPriceHistoryItems(opts: {
+  ticker: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}) {
+  const limit = opts.limit ?? 120;
+  const where: {
+    ticker: string;
+    date?: { gte?: Date; lte?: Date };
+  } = { ticker: opts.ticker.trim().toUpperCase() };
+  if (opts.from || opts.to) {
+    where.date = {};
+    if (opts.from) where.date.gte = new Date(`${opts.from}T00:00:00.000Z`);
+    if (opts.to) where.date.lte = new Date(`${opts.to}T00:00:00.000Z`);
+  }
+  const rows = await prisma.priceHistory.findMany({
+    where,
+    orderBy: { date: "desc" },
+    take: limit,
+  });
+  return rows.map(serializePriceHistoryRow);
+}
+
 export async function listTrendItems(detail = true) {
   const rows = await getTrends();
   return rows.map((t) => serializeTrendRow(t, detail));
@@ -650,19 +759,39 @@ export async function getAllConfig(): Promise<Record<string, unknown>> {
   return out;
 }
 
-export async function getPromptMarkdown(name: PromptName): Promise<string> {
+/**
+ * Prompt text for a routine, from the RuleVersion in force on `branch`.
+ * Falls back to the committed file on disk when the ruleset is degraded or incomplete.
+ */
+export async function getPromptMarkdown(
+  name: PromptName,
+  branch: Branch = "LIVE",
+): Promise<string> {
+  const ruleSet = await getRuleSet(branch);
+  const fromDb = ruleSet.files[`${name}.md`];
+  if (typeof fromDb === "string" && fromDb.length > 0) return fromDb;
+
   const filePath = path.join(process.cwd(), "prompts", `${name}.md`);
   return fs.readFile(filePath, "utf8");
 }
 
-export async function buildAgentContext(routine: AgentRoutine) {
+export async function buildAgentContext(routine: AgentRoutine, branch: Branch = "LIVE") {
   const trendDetail = routine !== "earnings";
 
   // Batched: 1 Config query (+ optional cash fallback) + 5 table reads + 1 SyncStatus.
   // Previously fanned out to ~12–13 concurrent queries (pool pressure on cold Neon).
-  const [runtime, portfolio, trades, watchlistRaw, trends, ideas, lastRun, documents] =
-    await Promise.all([
-      getAgentRuntimeConfig(),
+  const [
+    runtime,
+    portfolio,
+    trades,
+    watchlistRaw,
+    trends,
+    ideas,
+    lastRun,
+    documents,
+    shadow,
+  ] = await Promise.all([
+      getAgentRuntimeConfig(branch),
       getPortfolio(),
       getTrades(),
       getWatchlist(),
@@ -670,6 +799,8 @@ export async function buildAgentContext(routine: AgentRoutine) {
       getIdeas(),
       lastRunSummary(),
       listContentPages(),
+      // Informational only: the paper book for this branch, null until it is seeded.
+      shadowContextBlock(branch).catch(() => null),
     ]);
 
   const watchlist = watchlistRaw.filter(
@@ -682,6 +813,8 @@ export async function buildAgentContext(routine: AgentRoutine) {
     sentimentThresholds,
     earningsRiskThresholds,
     trackedTickers,
+    ruleVersionId,
+    degraded,
   } = runtime;
 
   const holdings = holdingsByTicker(trades);
@@ -764,6 +897,11 @@ export async function buildAgentContext(routine: AgentRoutine) {
   return {
     routine,
     rulesVersion: rulesVersion(),
+    branch,
+    /// RuleVersion the routine is running under; 0 when resolution degraded to disk.
+    ruleVersionId,
+    /// True when the ruleset came from disk defaults instead of the DB — log it.
+    degraded,
     asOf: asOfNow(),
     timezone: TIMEZONE,
     cash,
@@ -797,6 +935,8 @@ export async function buildAgentContext(routine: AgentRoutine) {
     },
     trackedTickers,
     enums: listStockEnums(),
+    /// Paper-only shadow ledger for this branch — never the real book, never executable.
+    shadow,
     lastRun,
   };
 }

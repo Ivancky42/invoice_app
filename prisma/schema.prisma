@@ -369,6 +369,9 @@ model Trade {
   thesisAtEntry    Json?
   /// Long-form notes as ReportBlock[].
   notes            Json?
+  /// RuleVersion.id in force when the trade was logged. No branch column — the real
+  /// book is LIVE-only by design; shadow trades never land here.
+  ruleVersionId    Int?
   syncedAt         DateTime     @updatedAt
 
   @@index([ticker])
@@ -477,11 +480,15 @@ model DailyLog {
   flaggedTickers   String[]         @default([])
   alertEmailSent   Boolean?         @default(false)
   rulesVersion     String?
+  /// LIVE = real routine output; CANDIDATE = shadow run under a candidate ruleset.
+  branch           Branch           @default(LIVE)
+  /// RuleVersion.id this row was produced under (null for pre-versioning rows).
+  ruleVersionId    Int?
   syncedAt         DateTime         @updatedAt
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
-  @@unique([logDate, routineType])
+  @@unique([logDate, routineType, branch])
   @@index([logDate])
 }
 
@@ -500,9 +507,13 @@ model StockReport {
   /// Normalized block tree for rendering (paragraphs, headings, tables, lists).
   content      Json
   rulesVersion String?
+  /// LIVE = real routine output; CANDIDATE = shadow run under a candidate ruleset.
+  branch       Branch          @default(LIVE)
+  /// RuleVersion.id this row was produced under (null for pre-versioning rows).
+  ruleVersionId Int?
   syncedAt     DateTime        @updatedAt
 
-  @@unique([reportType, reportDate])
+  @@unique([reportType, reportDate, branch])
   @@index([reportType])
   @@index([reportDate])
 }
@@ -587,6 +598,21 @@ enum DecisionPositionContext {
   EARNINGS
 }
 
+/// Noise attribution for a name's move: see classifyMove in src/lib/fitness/math.ts.
+enum MoveClass {
+  MARKET_MOVE
+  THEME_MOVE
+  IDIOSYNCRATIC
+  INSUFFICIENT_DATA
+}
+
+/// Current read on whether a decision's original thesis still holds.
+enum ThesisState {
+  INTACT
+  WEAKENING
+  BROKEN
+}
+
 model DecisionReview {
   id                   String                    @id @default(cuid())
   notionId             String?                   @unique
@@ -599,6 +625,18 @@ model DecisionReview {
   decisionTypeRaw      String?
   positionContext      DecisionPositionContext?
   positionContextRaw   String?
+  /// Current read on whether the original thesis still holds.
+  thesisState          ThesisState?
+  /// thesisState immediately before this write, carried for drift/history reads.
+  priorThesisState     ThesisState?
+  /// MARKET_MOVE / THEME_MOVE / IDIOSYNCRATIC / INSUFFICIENT_DATA — set by `breadth_classify`.
+  moveClass            MoveClass?
+  /// Fraction of the tracked universe moving the same direction as `ticker` at decisionSession.
+  breadth              Decimal?                  @db.Decimal(6, 4)
+  /// Fraction of the ticker's theme moving the same direction.
+  themeBreadth         Decimal?                  @db.Decimal(6, 4)
+  /// Ticker's 1-session return minus the market median return (signed fraction).
+  excessMove           Decimal?                  @db.Decimal(10, 6)
   priceAtDecision      Decimal?                  @db.Decimal(14, 4)
   entryZone            String?
   stopLoss             Decimal?                  @db.Decimal(14, 4)
@@ -632,6 +670,10 @@ model DecisionReview {
   lessonLearned        String?
   updateStrategy       Boolean?
   rulesVersion         String?
+  /// LIVE = real decision; CANDIDATE = shadow decision under a candidate ruleset.
+  branch               Branch                    @default(LIVE)
+  /// RuleVersion.id this decision was made under (null for pre-versioning rows).
+  ruleVersionId        Int?
   syncedAt             DateTime                  @updatedAt
   createdAt            DateTime                  @default(now())
   updatedAt            DateTime                  @updatedAt
@@ -640,6 +682,53 @@ model DecisionReview {
   @@index([decisionDate])
   @@index([reviewStatus])
   @@index([decisionType])
+  @@index([branch])
+}
+
+/// Evidence source strength, weakest→strongest is T4→T1 (Cowork §9 signal-tier semantics,
+/// mapped onto evidence sourcing: T1/T2 = primary-source ("tier-1/2" evidence — see
+/// hasTier12Evidence in src/lib/fitness/math.ts); T3 = credible secondary reporting;
+/// T4 = never sufficient alone (see EvidenceKind for the kind→tier convention).
+enum EvidenceTier {
+  T1
+  T2
+  T3
+  T4
+}
+
+/// Source kind for one EvidenceItem. Conventional tier alignment (not DB-enforced):
+/// T1 — FILING, EARNINGS_CALL, MANAGEMENT_GUIDANCE, PRIMARY_DATA (primary source, verifiable).
+/// T2 — NEWS_REPORT, ANALYST_NOTE (credible secondary reporting on primary events).
+/// T3 — SOCIAL_SENTIMENT (crowd/unverified signal).
+/// T4 — PRICE_ACTION, INFERENCE, OTHER (never sufficient alone — see rules.ts).
+enum EvidenceKind {
+  FILING
+  EARNINGS_CALL
+  MANAGEMENT_GUIDANCE
+  PRIMARY_DATA
+  NEWS_REPORT
+  ANALYST_NOTE
+  SOCIAL_SENTIMENT
+  PRICE_ACTION
+  INFERENCE
+  OTHER
+}
+
+/// Evidence cited for one DecisionReview (Commit 8 — warn-only enforcement via
+/// EVIDENCE_ENFORCEMENT; see src/lib/evidence/rules.ts). Plain FK, no Prisma relation —
+/// matches ShadowOrder/Counterfactual's decisionReviewId convention.
+model EvidenceItem {
+  id               String       @id @default(cuid())
+  decisionReviewId String
+  tier             EvidenceTier
+  kind             EvidenceKind
+  summary          String
+  sourceUrl        String?
+  /// When the evidence became knowable (not when it was logged).
+  observedAt       DateTime
+  createdAt        DateTime     @default(now())
+
+  @@index([decisionReviewId])
 }
 
 /// Living strategy docs (Cowork Strategy Lessons Summary + Investment Style Profile).
@@ -657,4 +746,371 @@ model ContentPage {
   notionPageId String?
   syncedAt     DateTime?
   updatedAt    DateTime       @updatedAt
+}
+
+/// Lifecycle of one entry in the cron job ledger.
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+/// Cron dispatcher ledger — one row per (job, UTC run day).
+/// The reserved `__tick` job holds the dispatcher lease for the day.
+model JobRun {
+  id         String    @id @default(cuid())
+  job        String
+  /// UTC calendar date of the tick invocation.
+  runDay     DateTime  @db.Date
+  status     JobStatus
+  startedAt  DateTime?
+  finishedAt DateTime?
+  /// Lease expiry while status is RUNNING; stale leases can be reclaimed.
+  leaseUntil DateTime?
+  /// Resume point for jobs that return `{ done: false }`.
+  cursor     Json?
+  error      String?
+  /// Job-specific summary handed to later jobs / ops.
+  detail     Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([job, runDay])
+  @@index([runDay])
+}
+
+/// Permanent daily OHLC bar store — trading-session calendar and mark source
+/// for the shadow ledger. Never overwritten in place like Portfolio.currentPrice.
+model PriceHistory {
+  ticker    String
+  /// US session date (not the fetch timestamp).
+  date      DateTime @db.Date
+  open      Decimal? @db.Decimal(14, 4)
+  close     Decimal  @db.Decimal(14, 4)
+  adjClose  Decimal? @db.Decimal(14, 4)
+  volume    BigInt?
+  /// "finnhub" | "eodhd" | "stooq"
+  source    String
+  createdAt DateTime @default(now())
+
+  @@id([ticker, date])
+  @@index([date])
+}
+
+/// Per-ticker health of the daily price-history sync (last success/failure, streak).
+model TickerPriceStatus {
+  ticker              String    @id
+  lastSuccessAt       DateTime?
+  lastAttemptAt       DateTime?
+  lastSource          String?
+  lastError           String?
+  consecutiveFailures Int       @default(0)
+  updatedAt           DateTime  @updatedAt
+}
+
+// === Versioned ruleset (shadow evolution) ===
+// The Stock HQ ruleset (prompts + limits) becomes database-resident and versioned so a
+// later evolution engine can propose candidate versions on the CANDIDATE branch while
+// LIVE keeps running the ACTIVE version. Kernel clauses stay pinned in the deployed
+// bundle (src/lib/rules/kernelClauses.ts) — the DB can never relax them.
+
+/// Lifecycle of a RuleVersion. Exactly one ACTIVE and at most one CANDIDATE per lane
+/// (enforced by partial unique indexes; see scripts/apply-raw-constraints.ts).
+enum RuleStatus {
+  CANDIDATE
+  ACTIVE
+  RETIRED
+  KILLED
+}
+
+/// Evolution lane a candidate belongs to. FAST = short-horizon experiments, SLOW = structural.
+enum RuleLane {
+  FAST
+  SLOW
+}
+
+/// Who created a rule version.
+enum RuleActor {
+  AGENT
+  HUMAN
+  CRON
+}
+
+/// Which ruleset a row was produced under. LIVE is the real book; CANDIDATE is shadow-only.
+enum Branch {
+  LIVE
+  CANDIDATE
+}
+
+/// Retrospective verdict on a rule version once its tenure is over.
+enum RuleOutcome {
+  HELPED
+  NEUTRAL
+  HURT
+}
+
+/// Which way a rule change moves the rails. LOOSEN carries a higher evidence bar.
+enum ChangeDirection {
+  TIGHTEN
+  LOOSEN
+  NEUTRAL
+}
+
+/// What part of the routine a rule change touches. ACTION = exposure-adjacent.
+enum RuleScope {
+  DISCOVERY
+  ACTION
+}
+
+/// One immutable snapshot of the whole ruleset (all five prompt files + limits).
+/// `id` IS the version number — never reuse or renumber.
+model RuleVersion {
+  id             Int              @id @default(autoincrement())
+  status         RuleStatus
+  /// Null for v1 and for HUMAN-authored versions that belong to no evolution lane.
+  lane           RuleLane?
+  actor          RuleActor
+  /// Version this one was derived from; null for v1.
+  parentId       Int?
+  /// { "_shared.md": "<full text>", … } — all five prompt files.
+  files          Json
+  /// { "_shared.md": "<sha256 hex>", … } over the exact stored text.
+  fileShas       Json
+  /// LimitsConfig snapshot (same shape as Config.LIMITS).
+  limits         Json
+  changeSummary  String?
+  /// e.g. ["prompts:_shared#7", "limits:cashFloorPct"].
+  changedPaths   Json?
+  /// Sessions on/before this instant are excluded from any fitness comparison for
+  /// this version — stamped at creation so a candidate cannot claim pre-existing history.
+  evidenceCutoff DateTime?
+  /// The GENERALISABLE belief behind the change ("earnings blackouts protect averaging
+  /// down"). Grouping key for pattern retirement: two HURT versions sharing a pattern
+  /// retire it, and later proposals reusing it are refused.
+  reasoningPattern String?
+  /// How the proposer said this would be measured — must name a number and a metric.
+  successMetric    String?
+  /// The case the proposer says would falsify it (≥40 chars; "none" is not an answer).
+  counterCase      String?
+  direction        ChangeDirection?
+  scope            RuleScope?
+  /// Server-computed verdict once the version's tenure is scoreable. Never agent-supplied.
+  outcome          RuleOutcome?
+  /// { deltaPerSession, sessions, thresholds, agentClaim? } — evidence for `outcome`.
+  outcomeDetail    Json?
+  createdAt      DateTime         @default(now())
+  activatedAt    DateTime?
+  retiredAt      DateTime?
+
+  @@index([status])
+}
+
+/// Kind of audit row in the evolution log. One row per state change, never edited.
+enum EvolutionEventKind {
+  PROPOSE
+  ELIGIBILITY_REJECT
+  KERNEL_ATTEMPT
+  GAPFIX
+  PROMOTE
+  EARLY_KILL
+  HARD_REVERT
+  INCONCLUSIVE
+  DRIFT_BLOCK
+  PATTERN_RETIRED
+  SCORE
+  MIRROR
+}
+
+/// APPEND-ONLY audit log of the evolution engine.
+///
+/// Enforced twice: Postgres RULEs make UPDATE/DELETE no-ops (see the migration and
+/// scripts/apply-raw-constraints.ts), and every write in the codebase goes through the
+/// single chokepoint `appendEvolutionEvent` in src/lib/evolution/log.ts. Corrections are
+/// made by appending a new event referencing the earlier one — never by editing history.
+model EvolutionEvent {
+  id            String             @id @default(cuid())
+  kind          EvolutionEventKind
+  /// Version the event is about; null for events that precede version creation
+  /// (e.g. a rejected proposal).
+  ruleVersionId Int?
+  actor         RuleActor
+  detail        Json
+  createdAt     DateTime           @default(now())
+
+  @@index([kind])
+  @@index([ruleVersionId])
+}
+
+// === Paper-only shadow ledger (shadow evolution) ===
+// Two branches keep fully independent PAPER books: LIVE mirrors the decisions the ACTIVE
+// ruleset produced, CANDIDATE those of the challenger. Fills come from DecisionReview rows
+// at the NEXT session's open and marks from PriceHistory closes. This accounting never
+// touches Portfolio / Trade / Config cash, and nothing here can place a real order.
+
+/// Direction of a shadow (paper) order.
+enum ShadowSide {
+  BUY
+  SELL
+}
+
+/// Lifecycle of a shadow order. PENDING orders wait for the next session's open.
+enum ShadowOrderStatus {
+  PENDING
+  FILLED
+  REJECTED
+}
+
+/// One paper book per branch. Cash + positions here are play money, never the real book.
+model ShadowBranch {
+  id            String   @id @default(cuid())
+  branch        Branch   @unique
+  /// RuleVersion this branch's book is currently running.
+  ruleVersionId Int
+  /// NAV the book started (or was last reset) with.
+  startNav      Decimal  @db.Decimal(18, 4)
+  cash          Decimal  @db.Decimal(18, 4)
+  /// Running max NAV since the last reset — drawdown input for later fitness work.
+  highWaterNav  Decimal  @db.Decimal(18, 4)
+  resetAt       DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+/// A paper order derived from a DecisionReview row. Filled at the NEXT session's open.
+model ShadowOrder {
+  id               String            @id @default(cuid())
+  branchId         String
+  ticker           String
+  side             ShadowSide
+  /// Copied from the DecisionReview for attribution (the DR row may later change).
+  decisionType     DecisionType?
+  decisionReviewId String?
+  /// Session whose bars the decision was made on (see src/lib/shadow/sessions.ts).
+  decisionSession  DateTime          @db.Date
+  /// BUY: fraction of branch NAV at enqueue time. SELL: fraction of the open position
+  /// to liquidate (1 = full exit) — a NAV-denominated sell cannot close a position
+  /// exactly once the mark moves between enqueue and fill.
+  sizeFraction     Decimal           @db.Decimal(8, 6)
+  status           ShadowOrderStatus @default(PENDING)
+  fillSession      DateTime?         @db.Date
+  /// Always a PriceHistory `open` — never a close, never a substitute.
+  fillPrice        Decimal?          @db.Decimal(14, 4)
+  notional         Decimal?          @db.Decimal(18, 4)
+  shares           Decimal?          @db.Decimal(18, 6)
+  rejectReason     String?
+  /// Sessions this order has waited without a usable open; 3 → REJECTED no_open_price.
+  pendingSessions  Int               @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  /// One DecisionReview may enqueue at most one order per side (null ids are manual rows).
+  @@unique([branchId, decisionReviewId, side])
+  @@index([branchId, status])
+  @@index([decisionReviewId])
+}
+
+/// An open (or closed) paper position in one branch's book.
+model ShadowPosition {
+  id              String    @id @default(cuid())
+  branchId        String
+  ticker          String
+  openedSession   DateTime  @db.Date
+  closedAt        DateTime?
+  shares          Decimal   @db.Decimal(18, 6)
+  avgCost         Decimal   @db.Decimal(14, 4)
+  lastMark        Decimal?  @db.Decimal(14, 4)
+  lastMarkSession DateTime? @db.Date
+  /// True when the last mark was carried forward (no bar that session).
+  markStale       Boolean   @default(false)
+  realizedPnl     Decimal   @default(0) @db.Decimal(18, 4)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // At most one OPEN position per (branch, ticker) — partial unique index
+  // "ShadowPosition_open_unique" in scripts/apply-raw-constraints.ts.
+  @@index([branchId])
+}
+
+// === Counterfactuals + fitness (shadow evolution) ===
+// The fitness function scores each paper book daily. Its signature term is a SIGNED,
+// unclamped avoided-loss credit: refusing a name that then fell earns credit, refusing
+// one that then rose earns a debit. Every field here is a FRACTION (0.03 = 3%), never
+// percentage points — nothing in this section carries a `Pct` suffix.
+
+/// Lifecycle of a counterfactual. PENDING rows wait for their horizon session.
+enum CounterfactualStatus {
+  PENDING
+  RESOLVED
+  /// Horizon passed with no usable bar inside the forward walk — excluded from credit forever.
+  UNRESOLVED
+}
+
+/// Evidence quality of a fitness snapshot. DEGRADED = too many carried (stale) marks.
+enum SnapshotQuality {
+  OK
+  DEGRADED
+}
+
+/// What a NOT-taken decision (AVOID / WAIT / DO_NOT_AVERAGE_DOWN) would have cost or saved.
+model Counterfactual {
+  id               String               @id @default(cuid())
+  branchId         String
+  decisionReviewId String
+  ticker           String
+  decisionType     DecisionType
+  /// Session whose bars the decision was made on (see src/lib/shadow/sessions.ts).
+  decisionSession  DateTime             @db.Date
+  /// Horizon length in SESSIONS — constant 63 (one quarter), counted on the session
+  /// calendar so holidays cannot stretch or shorten the window.
+  horizonSessions  Int
+  priceAtDecision  Decimal              @db.Decimal(14, 4)
+  /// Fraction of NAV the branch's ruleset WOULD have allowed for this name.
+  permittedSize    Decimal              @db.Decimal(8, 6)
+  /// Session actually priced at the horizon (may be up to 5 sessions past the exact one).
+  horizonSession   DateTime?            @db.Date
+  priceAtHorizon   Decimal?             @db.Decimal(14, 4)
+  horizonReturn    Decimal?             @db.Decimal(10, 6)
+  /// SIGNED: −horizonReturn × permittedSize. Never clamped, never abs().
+  credit           Decimal?             @db.Decimal(10, 6)
+  status           CounterfactualStatus @default(PENDING)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  /// One counterfactual per decision per branch — a replayed seed cannot double-count.
+  @@unique([branchId, decisionReviewId])
+  @@index([branchId])
+  @@index([status])
+}
+
+/// One branch's fitness accounting for one session. All fractions.
+model FitnessSnapshot {
+  id                 String          @id @default(cuid())
+  branchId           String
+  session            DateTime        @db.Date
+  nav                Decimal         @db.Decimal(18, 4)
+  /// nav / previous snapshot's nav − 1; null on the branch's first snapshot.
+  dailyIncrement     Decimal?        @db.Decimal(10, 6)
+  /// Σ credits of counterfactuals newly RESOLVED since the previous snapshot. Credits are
+  /// already NAV-fractions (permittedSize × return), so they sum straight into fitness.
+  avoidedCreditDelta Decimal         @default(0) @db.Decimal(10, 6)
+  /// CSPX close / previous session's close − 1; null when the carry exceeds 3 sessions.
+  benchmarkIncrement Decimal?        @db.Decimal(10, 6)
+  /// dailyIncrement + avoidedCreditDelta − turnoverDelta − benchmarkIncrement.
+  fitnessIncrement   Decimal?        @db.Decimal(10, 6)
+  /// Rolling 30-session fitness LEVEL (includes the window drawdown penalty); null when
+  /// the window is short or the benchmark is unavailable.
+  windowFitness      Decimal?        @db.Decimal(10, 6)
+  /// Peak-to-trough of the branch's snapshot NAV series since its last reset.
+  maxDrawdown        Decimal         @db.Decimal(8, 6)
+  /// Frictional cost of this session's fills, as a fraction of NAV.
+  turnoverDelta      Decimal         @default(0) @db.Decimal(10, 6)
+  quality            SnapshotQuality
+  staleMarks         Int
+  openPositions      Int
+  createdAt          DateTime        @default(now())
+
+  @@unique([branchId, session])
+  @@index([session])
 }

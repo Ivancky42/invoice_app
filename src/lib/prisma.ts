@@ -41,7 +41,17 @@ function isCurrentClient(client: PrismaClient | undefined): client is PrismaClie
   // Probe the newest models — an older singleton may still expose older delegates.
   return (
     typeof (client as { decisionReview?: unknown }).decisionReview !== "undefined" &&
-    typeof (client as { contentPage?: unknown }).contentPage !== "undefined"
+    typeof (client as { contentPage?: unknown }).contentPage !== "undefined" &&
+    typeof (client as { jobRun?: unknown }).jobRun !== "undefined" &&
+    typeof (client as { priceHistory?: unknown }).priceHistory !== "undefined" &&
+    typeof (client as { ruleVersion?: unknown }).ruleVersion !== "undefined" &&
+    typeof (client as { shadowBranch?: unknown }).shadowBranch !== "undefined" &&
+    typeof (client as { shadowOrder?: unknown }).shadowOrder !== "undefined" &&
+    typeof (client as { shadowPosition?: unknown }).shadowPosition !== "undefined" &&
+    typeof (client as { counterfactual?: unknown }).counterfactual !== "undefined" &&
+    typeof (client as { fitnessSnapshot?: unknown }).fitnessSnapshot !== "undefined" &&
+    typeof (client as { evidenceItem?: unknown }).evidenceItem !== "undefined" &&
+    typeof (client as { evolutionEvent?: unknown }).evolutionEvent !== "undefined"
   );
 }
 

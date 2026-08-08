@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
+import type { Branch, Prisma } from "@/generated/prisma/client";
 import {
   DEFAULT_EARNINGS_RISK,
   DEFAULT_SENTIMENT,
@@ -35,6 +35,22 @@ export type LimitsConfig = {
   cashFloorPct: number;
   maxAverageDowns: number;
   tierBands: TierBands;
+  /** Nominal initial stop distance below entry (fraction). `_shared` §6 stop policy. */
+  stopDistancePct: number;
+  /** Nominal entry-zone half-width around the zone midpoint (fraction). */
+  entryZoneWidthPct: number;
+  /** Fraction of tracked names advancing above which market breadth counts as positive. */
+  breadthMarketThreshold: number;
+  /** Fraction of a theme's names advancing above which theme breadth counts as positive. */
+  themeBreadthThreshold: number;
+  /** Move vs its theme beyond which a ticker move is treated as idiosyncratic (fraction). */
+  excessMoveIdiosyncratic: number;
+  /** Evidence newer than this many days counts as recent. */
+  evidenceRecencyDays: number;
+  /** Evidence older than this many days is stale and must be re-confirmed. */
+  evidenceStaleDays: number;
+  /** No meaningful averaging down within this many days before earnings (Lesson #1). */
+  earningsBlackoutDays: number;
 };
 
 export type CashConfig = {
@@ -60,6 +76,15 @@ export const DEFAULT_LIMITS: LimitsConfig = {
     CONFIRMATION: [0.05, 0.06],
     CONVICTION: [0, 0.08],
   },
+  // Numbers lifted out of prompt prose so a rule version can carry them (all fractions).
+  stopDistancePct: 0.15,
+  entryZoneWidthPct: 0.05,
+  breadthMarketThreshold: 0.5,
+  themeBreadthThreshold: 0.5,
+  excessMoveIdiosyncratic: 0.1,
+  evidenceRecencyDays: 30,
+  evidenceStaleDays: 90,
+  earningsBlackoutDays: 10,
 };
 
 function asNumber(value: unknown, fallback: number): number {
@@ -87,7 +112,7 @@ function parseTierBand(value: unknown, fallback: [number, number]): [number, num
   return [asNumber(value[0], fallback[0]), asNumber(value[1], fallback[1])];
 }
 
-function parseLimits(value: unknown): LimitsConfig | null {
+export function parseLimits(value: unknown): LimitsConfig | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const o = value as Record<string, unknown>;
   const bands =
@@ -108,6 +133,23 @@ function parseLimits(value: unknown): LimitsConfig | null {
       CONFIRMATION: parseTierBand(bands.CONFIRMATION, DEFAULT_LIMITS.tierBands.CONFIRMATION),
       CONVICTION: parseTierBand(bands.CONVICTION, DEFAULT_LIMITS.tierBands.CONVICTION),
     },
+    stopDistancePct: asNumber(o.stopDistancePct, DEFAULT_LIMITS.stopDistancePct),
+    entryZoneWidthPct: asNumber(o.entryZoneWidthPct, DEFAULT_LIMITS.entryZoneWidthPct),
+    breadthMarketThreshold: asNumber(
+      o.breadthMarketThreshold,
+      DEFAULT_LIMITS.breadthMarketThreshold,
+    ),
+    themeBreadthThreshold: asNumber(
+      o.themeBreadthThreshold,
+      DEFAULT_LIMITS.themeBreadthThreshold,
+    ),
+    excessMoveIdiosyncratic: asNumber(
+      o.excessMoveIdiosyncratic,
+      DEFAULT_LIMITS.excessMoveIdiosyncratic,
+    ),
+    evidenceRecencyDays: asNumber(o.evidenceRecencyDays, DEFAULT_LIMITS.evidenceRecencyDays),
+    evidenceStaleDays: asNumber(o.evidenceStaleDays, DEFAULT_LIMITS.evidenceStaleDays),
+    earningsBlackoutDays: asNumber(o.earningsBlackoutDays, DEFAULT_LIMITS.earningsBlackoutDays),
   };
 }
 
@@ -231,15 +273,22 @@ function parseTrackedTickers(raw: Prisma.JsonValue | null | undefined): TrackedT
  * One Config round-trip for agent context (cash + limits + thresholds + tracked).
  * Avoids the N+1 getConfig fan-out inside buildAgentContext.
  */
-export async function getAgentRuntimeConfig(): Promise<{
+export async function getAgentRuntimeConfig(branch: Branch = "LIVE"): Promise<{
   cash: CashConfig;
   limits: LimitsConfig;
   sentimentThresholds: SentimentThresholds;
   earningsRiskThresholds: EarningsRiskThresholds;
   trackedTickers: TrackedTickersConfig;
+  ruleVersionId: number;
+  degraded: boolean;
 }> {
   const keys = Object.values(CONFIG_KEYS);
-  const rows = await prisma.config.findMany({ where: { key: { in: [...keys] } } });
+  // Dynamic import: rules/resolve imports this module for parseLimits/DEFAULT_LIMITS.
+  const { getRuleSet } = await import("@/lib/rules/resolve");
+  const [rows, ruleSet] = await Promise.all([
+    prisma.config.findMany({ where: { key: { in: [...keys] } } }),
+    getRuleSet(branch),
+  ]);
   const map = new Map(rows.map((r) => [r.key, r.value]));
 
   const partial = cashFromRaw(
@@ -258,13 +307,19 @@ export async function getAgentRuntimeConfig(): Promise<{
       fxRate: partial.fxRate,
       lastUpdated: partial.lastUpdated,
     },
-    limits: parseLimits(map.get(CONFIG_KEYS.LIMITS) ?? null) ?? DEFAULT_LIMITS,
+    // Versioned ruleset owns limits once it exists; Config.LIMITS is the pre-versioning path.
+    limits:
+      ruleSet.versionId > 0
+        ? ruleSet.limits
+        : (parseLimits(map.get(CONFIG_KEYS.LIMITS) ?? null) ?? DEFAULT_LIMITS),
     sentimentThresholds:
       parseSentiment(map.get(CONFIG_KEYS.SENTIMENT_THRESHOLDS) ?? null) ?? DEFAULT_SENTIMENT,
     earningsRiskThresholds:
       parseEarningsRisk(map.get(CONFIG_KEYS.EARNINGS_RISK_THRESHOLDS) ?? null) ??
       DEFAULT_EARNINGS_RISK,
     trackedTickers: parseTrackedTickers(map.get(CONFIG_KEYS.TRACKED_TICKERS)),
+    ruleVersionId: ruleSet.versionId,
+    degraded: ruleSet.degraded,
   };
 }
 

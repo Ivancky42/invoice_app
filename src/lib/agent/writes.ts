@@ -21,6 +21,7 @@ import {
   serializeWatchlistRow,
 } from "@/lib/agent/context";
 import type {
+  addEvidenceInputSchema,
   appendPageNotesInputSchema,
   dailyLogInputSchema,
   listDecisionReviewsQuerySchema,
@@ -35,8 +36,15 @@ import type {
 } from "@/lib/agent/schemas";
 import type { z } from "zod";
 import { asReportBlocks, truncatePageNotes } from "@/lib/content/blocks";
-import type { WatchlistAction } from "@/generated/prisma/client";
+import type { Branch, WatchlistAction } from "@/generated/prisma/client";
 import { contentPageTitle, ensureContentPages } from "@/lib/agent/contentPages";
+import {
+  clearRuleSetCache,
+  filesFromRow,
+  getRuleSet,
+  kernelGate,
+} from "@/lib/rules/resolve";
+import { checkEvidence, type EvidenceEnforcement } from "@/lib/evidence/rules";
 
 type DailyLogInput = z.infer<typeof dailyLogInputSchema>;
 type StockReportInput = z.infer<typeof stockReportInputSchema>;
@@ -49,6 +57,7 @@ type AppendPageNotesInput = z.infer<typeof appendPageNotesInputSchema>;
 type UpsertDecisionReviewInput = z.infer<typeof upsertDecisionReviewInputSchema>;
 type ListDecisionReviewsQuery = z.infer<typeof listDecisionReviewsQuerySchema>;
 type UpsertContentPageInput = z.infer<typeof upsertContentPageInputSchema>;
+type AddEvidenceInput = z.infer<typeof addEvidenceInputSchema>;
 
 function parseYmdNoon(ymd: string): Date {
   return new Date(`${ymd}T12:00:00.000Z`);
@@ -122,6 +131,17 @@ function assignDefined<T extends Record<string, unknown>>(
   }
 }
 
+/**
+ * RuleVersion in force on `branch`, stamped server-side (never from input, like
+ * upsidePct). Null when resolution degraded to disk — attribution is unknown, not zero.
+ * Cheap: getRuleSet is cached 60s, so this is not a per-write DB round-trip.
+ */
+async function branchRuleVersionId(branch: Branch = "LIVE"): Promise<number | null> {
+  const ruleSet = await getRuleSet(branch);
+  if (ruleSet.degraded || ruleSet.versionId <= 0) return null;
+  return ruleSet.versionId;
+}
+
 export async function upsertDailyLog(input: DailyLogInput) {
   const logDate = parseYmdNoon(input.logDate);
   const routineType = input.routineType ?? "DAILY";
@@ -129,9 +149,14 @@ export async function upsertDailyLog(input: DailyLogInput) {
     input.title?.trim() ||
     (routineType === "EARNINGS" ? `Earnings ${input.logDate}` : input.logDate);
 
+  const branch = input.branch ?? "LIVE";
+  const ruleVersionId = await branchRuleVersionId(branch);
+
   const update: PrismaTypes.DailyLogUpdateInput = {};
   assignDefined(update as Record<string, unknown>, {
     title,
+    // Version at last write wins; a degraded write (null) preserves the prior stamp.
+    ruleVersionId: ruleVersionId ?? undefined,
     marketContext: jsonField(input.marketContext),
     topNews: jsonField(input.topNews),
     portfolioMove: jsonField(input.portfolioMove),
@@ -144,11 +169,13 @@ export async function upsertDailyLog(input: DailyLogInput) {
   });
 
   const row = await prisma.dailyLog.upsert({
-    where: { logDate_routineType: { logDate, routineType } },
+    // Widened natural key: LIVE and CANDIDATE keep separate rows for the same day.
+    where: { logDate_routineType_branch: { logDate, routineType, branch } },
     create: {
       title,
       logDate,
       routineType,
+      branch,
       marketContext: jsonField(input.marketContext) as PrismaTypes.InputJsonValue,
       topNews: jsonField(input.topNews) as PrismaTypes.InputJsonValue,
       portfolioMove: jsonField(input.portfolioMove) as PrismaTypes.InputJsonValue,
@@ -158,6 +185,7 @@ export async function upsertDailyLog(input: DailyLogInput) {
       flaggedTickers: input.flaggedTickers ?? [],
       alertEmailSent: input.alertEmailSent ?? false,
       rulesVersion: input.rulesVersion ?? null,
+      ruleVersionId,
     },
     update,
   });
@@ -167,6 +195,7 @@ export async function upsertDailyLog(input: DailyLogInput) {
     title: row.title,
     logDate: row.logDate?.toISOString() ?? null,
     routineType: row.routineType,
+    branch: row.branch,
     flaggedTickers: row.flaggedTickers,
     rulesVersion: row.rulesVersion,
   };
@@ -175,25 +204,33 @@ export async function upsertDailyLog(input: DailyLogInput) {
 export async function upsertStockReport(input: StockReportInput) {
   const reportDate = parseYmdNoon(input.reportDate);
   const title = input.title?.trim() || `${input.reportType} ${input.reportDate}`;
+  const branch = input.branch ?? "LIVE";
+  const ruleVersionId = await branchRuleVersionId(branch);
 
   const row = await prisma.stockReport.upsert({
     where: {
-      reportType_reportDate: {
+      // Widened natural key: LIVE and CANDIDATE keep separate rows for the same date.
+      reportType_reportDate_branch: {
         reportType: input.reportType,
         reportDate,
+        branch,
       },
     },
     create: {
       title,
       reportType: input.reportType,
       reportDate,
+      branch,
       content: input.content as PrismaTypes.InputJsonValue,
       rulesVersion: input.rulesVersion ?? null,
+      ruleVersionId,
     },
     update: {
       title,
       content: input.content as PrismaTypes.InputJsonValue,
       rulesVersion: input.rulesVersion ?? null,
+      // Version at last write wins; a degraded write (null) preserves the prior stamp.
+      ruleVersionId: ruleVersionId ?? undefined,
     },
   });
 
@@ -202,6 +239,7 @@ export async function upsertStockReport(input: StockReportInput) {
     title: row.title,
     reportType: row.reportType,
     reportDate: row.reportDate?.toISOString() ?? null,
+    branch: row.branch,
     rulesVersion: row.rulesVersion,
   };
 }
@@ -390,6 +428,17 @@ export async function appendPageNotes(input: AppendPageNotesInput) {
   if (incoming.length === 0) {
     return { ok: false as const, status: 400 as const, reason: "empty_blocks", ticker };
   }
+  // pageNotes live on the real Portfolio/Watchlist rows, which have no branch column.
+  // Accepting a CANDIDATE append would write shadow prose into the real book, so the
+  // branch is validated and refused rather than silently ignored.
+  if ((input.branch ?? "LIVE") !== "LIVE") {
+    return {
+      ok: false as const,
+      status: 400 as const,
+      reason: "branch_not_supported_for_page_notes",
+      ticker,
+    };
+  }
 
   if (input.target === "portfolio") {
     const existing = await prisma.portfolio.findFirst({
@@ -497,8 +546,46 @@ export async function getPageNotes(input: {
   };
 }
 
+/** `EVIDENCE_ENFORCEMENT` env — anything other than "strict" is the warn-only default. */
+function evidenceEnforcementMode(): EvidenceEnforcement {
+  return process.env.EVIDENCE_ENFORCEMENT === "strict" ? "strict" : "warn";
+}
+
+/**
+ * Replace-on-replay: delete existing EvidenceItem rows for the DR then recreate from
+ * `items` — idempotent, so a replayed upsert_decision_review call converges rather than
+ * appending duplicates. `undefined` (caller omitted `evidence` entirely) leaves whatever
+ * was previously persisted untouched — only an explicit (possibly empty) array clears it.
+ */
+async function replaceEvidenceItems(
+  tx: PrismaTypes.TransactionClient,
+  decisionReviewId: string,
+  items: UpsertDecisionReviewInput["evidence"],
+): Promise<void> {
+  if (items === undefined) return;
+  await tx.evidenceItem.deleteMany({ where: { decisionReviewId } });
+  if (items.length === 0) return;
+  await tx.evidenceItem.createMany({
+    data: items.map((it) => ({
+      decisionReviewId,
+      tier: it.tier,
+      kind: it.kind,
+      summary: it.summary,
+      sourceUrl: it.sourceUrl ?? null,
+      observedAt: new Date(it.observedAt),
+    })),
+  });
+}
+
 export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
   const ticker = input.ticker?.trim().toUpperCase() || null;
+  const branch = input.branch ?? "LIVE";
+  // `idempotencyKey` is globally unique, but the two branches replay the SAME routine
+  // with the same keys — an unprefixed CANDIDATE key would collide with (and overwrite)
+  // the LIVE decision. LIVE keeps the bare key so existing keys keep replaying.
+  const rawKey = input.idempotencyKey?.trim() || null;
+  const idempotencyKey =
+    rawKey === null ? null : branch === "LIVE" ? rawKey : `${branch}:${rawKey}`;
   const decisionDate =
     input.decisionDate === undefined
       ? undefined
@@ -512,12 +599,81 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
         ? null
         : parseYmdNoon(input.catalystDate);
 
+  // Looked up once, ahead of the write, so the evidence check below can see the row the
+  // write will actually replay onto (fresh creates never have one).
+  const existing = idempotencyKey
+    ? await prisma.decisionReview.findUnique({ where: { idempotencyKey } })
+    : null;
+
+  // Mirror the server-derived priorThesisState logic further down (a caller-omitted or
+  // stale prior must not desync from what the write will actually persist). Both an
+  // omitted AND an explicit null fall back to the existing row: the write below maps
+  // null to `undefined` (Prisma no-op), so the row keeps its current value and the check
+  // must be run against that value, not against a null the write never persists.
+  const decisionTypeForCheck = input.decisionType ?? existing?.decisionType ?? null;
+  const thesisStateForCheck = input.thesisState ?? existing?.thesisState ?? null;
+  const priorThesisStateForCheck =
+    existing && input.thesisState != null && input.thesisState !== existing.thesisState
+      ? existing.thesisState
+      : (input.priorThesisState ?? existing?.priorThesisState ?? null);
+  // moveClass is server-computed by breadth_classify and never accepted from the caller.
+  // On replay the existing row's value is authoritative; a fresh DR has none yet — null
+  // moveClass is the bootstrap case and simply skips the move-class rule in checkEvidence.
+  const moveClassForCheck = existing?.moveClass ?? null;
+
+  // Same rule as replaceEvidenceItems: an omitted `evidence` leaves the persisted items
+  // untouched, so the check must run against THOSE rows — otherwise a replay that carries
+  // no evidence (the standard outcome-review shape) is judged as zero evidence and gets
+  // rejected in strict mode / warned on every time. An explicit array is the replacement
+  // and is checked as-is — including an explicit `[]`, which deliberately clears the
+  // evidence and therefore legitimately fails an exposure DR in strict mode.
+  const evidenceForCheck =
+    input.evidence !== undefined
+      ? input.evidence.map((e) => ({
+          tier: e.tier,
+          kind: e.kind,
+          observedAt: new Date(e.observedAt),
+        }))
+      : existing
+        ? await prisma.evidenceItem.findMany({
+            where: { decisionReviewId: existing.id },
+            select: { tier: true, kind: true, observedAt: true },
+          })
+        : [];
+
+  const limits = (await getRuleSet(branch)).limits;
+  const enforcement = evidenceEnforcementMode();
+  const evidenceCheck = checkEvidence({
+    decisionType: decisionTypeForCheck,
+    thesisState: thesisStateForCheck,
+    priorThesisState: priorThesisStateForCheck,
+    moveClass: moveClassForCheck,
+    evidence: evidenceForCheck,
+    now: new Date(),
+    limits: {
+      evidenceRecencyDays: limits.evidenceRecencyDays,
+      evidenceStaleDays: limits.evidenceStaleDays,
+    },
+    enforcement,
+  });
+
+  if (enforcement === "strict" && evidenceCheck.failures.length > 0) {
+    // Hard failure: writes NOTHING (mirrors logTrade's 409-style shape).
+    return {
+      ok: false as const,
+      error: "evidence_insufficient" as const,
+      failures: evidenceCheck.failures,
+    };
+  }
+
   const data: PrismaTypes.DecisionReviewUncheckedCreateInput = {
     title: input.title.trim(),
     ticker,
     decisionDate: decisionDate ?? undefined,
     decisionType: input.decisionType ?? undefined,
     positionContext: input.positionContext ?? undefined,
+    thesisState: input.thesisState ?? undefined,
+    priorThesisState: input.priorThesisState ?? undefined,
     priceAtDecision: input.priceAtDecision ?? undefined,
     entryZone: input.entryZone ?? undefined,
     stopLoss: input.stopLoss ?? undefined,
@@ -547,28 +703,109 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
     lessonLearned: input.lessonLearned ?? undefined,
     updateStrategy: input.updateStrategy ?? undefined,
     rulesVersion: input.rulesVersion ?? undefined,
-    idempotencyKey: input.idempotencyKey?.trim() || undefined,
+    branch,
+    // Server-derived; on the idempotent-replay path this re-stamps with the version at
+    // the latest write. A degraded write (null) preserves any prior stamp.
+    ruleVersionId: (await branchRuleVersionId(branch)) ?? undefined,
+    idempotencyKey: idempotencyKey ?? undefined,
   };
 
-  if (input.idempotencyKey?.trim()) {
-    const key = input.idempotencyKey.trim();
-    const existing = await prisma.decisionReview.findUnique({
-      where: { idempotencyKey: key },
-    });
-    if (existing) {
-      const { idempotencyKey: _k, ...update } = data;
-      const row = await prisma.decisionReview.update({
+  if (idempotencyKey && existing) {
+    // `branch` is dropped alongside `idempotencyKey`: a replay updates the row the key
+    // already identifies and must never move it across branches — that would flip a
+    // CANDIDATE decision to LIVE (and let it enqueue into the real branch's book).
+    const { idempotencyKey: _k, branch: _b, ...update } = data;
+    // Server-derived on the update path (same pattern as ruleVersionId above): when
+    // the replay changes thesisState, priorThesisState must be the state actually
+    // being replaced — a caller-omitted (or stale) value would preserve an old prior
+    // and desync the pair, e.g. (BROKEN, INTACT) erasing the WEAKENING step. On
+    // fresh create the caller's value stands.
+    if (input.thesisState != null && input.thesisState !== existing.thesisState) {
+      update.priorThesisState = existing.thesisState;
+    }
+    const row = await prisma.$transaction(async (tx) => {
+      const updated = await tx.decisionReview.update({
         where: { id: existing.id },
         data: update,
       });
-      return { ok: true as const, idempotentReplay: true as const, decision: serializeDecisionReviewRow(row) };
-    }
-    const row = await prisma.decisionReview.create({ data });
-    return { ok: true as const, idempotentReplay: false as const, decision: serializeDecisionReviewRow(row) };
+      await replaceEvidenceItems(tx, updated.id, input.evidence);
+      return updated;
+    });
+    return {
+      ok: true as const,
+      idempotentReplay: true as const,
+      decision: serializeDecisionReviewRow(row),
+      warnings: evidenceCheck.warnings,
+    };
   }
 
-  const row = await prisma.decisionReview.create({ data });
-  return { ok: true as const, idempotentReplay: false as const, decision: serializeDecisionReviewRow(row) };
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.decisionReview.create({ data });
+    await replaceEvidenceItems(tx, created.id, input.evidence);
+    return created;
+  });
+  return {
+    ok: true as const,
+    idempotentReplay: false as const,
+    decision: serializeDecisionReviewRow(row),
+    warnings: evidenceCheck.warnings,
+  };
+}
+
+/**
+ * Append EvidenceItem rows to an existing DecisionReview. Looked up by id or by
+ * idempotencyKey within `branch` (default LIVE) — 404 when neither resolves a row.
+ * Additive, unlike upsertDecisionReview's evidence replace-on-replay.
+ */
+export async function addEvidence(input: AddEvidenceInput) {
+  const branch = input.branch ?? "LIVE";
+  // Same prefixing rule as upsertDecisionReview: the two branches replay the SAME routine
+  // with the same bare keys, so an unprefixed CANDIDATE lookup would resolve the LIVE row
+  // and append shadow evidence onto the real decision (and can flip its moveClass).
+  const rawKey = input.idempotencyKey?.trim() || null;
+  const idempotencyKey =
+    rawKey === null ? null : branch === "LIVE" ? rawKey : `${branch}:${rawKey}`;
+
+  const existing = input.decisionReviewId
+    ? await prisma.decisionReview.findUnique({ where: { id: input.decisionReviewId } })
+    : await prisma.decisionReview.findUnique({ where: { idempotencyKey: idempotencyKey! } });
+  // No cross-branch appends: the id path bypasses key prefixing entirely, so a row found
+  // on the other branch is reported as not-found rather than written to.
+  if (!existing || existing.branch !== branch) {
+    return {
+      ok: false as const,
+      status: 404 as const,
+      reason: "decision_review_not_found",
+      decisionReviewId: input.decisionReviewId ?? null,
+      idempotencyKey,
+      branch,
+    };
+  }
+
+  const rows = await prisma.evidenceItem.createManyAndReturn({
+    data: input.items.map((it) => ({
+      decisionReviewId: existing.id,
+      tier: it.tier,
+      kind: it.kind,
+      summary: it.summary,
+      sourceUrl: it.sourceUrl ?? null,
+      observedAt: new Date(it.observedAt),
+    })),
+  });
+
+  return {
+    ok: true as const,
+    decisionReviewId: existing.id,
+    added: rows.length,
+    items: rows.map((r) => ({
+      id: r.id,
+      tier: r.tier,
+      kind: r.kind,
+      summary: r.summary,
+      sourceUrl: r.sourceUrl,
+      observedAt: r.observedAt.toISOString(),
+    })),
+  };
 }
 
 export async function listDecisionReviews(query: ListDecisionReviewsQuery = {}) {
@@ -751,6 +988,8 @@ function mergeLimits(
   patch: NonNullable<PatchConfigInput["LIMITS"]>,
 ): LimitsConfig {
   return {
+    // Keys with no patch field (prose-derived thresholds) are carried over unchanged.
+    ...current,
     singlePositionPct: patch.singlePositionPct ?? current.singlePositionPct,
     themePct: patch.themePct ?? current.themePct,
     speculativeSleevePct:
@@ -765,12 +1004,119 @@ function mergeLimits(
   };
 }
 
+type ApplyLimitsResult =
+  | { ok: true; ruleVersionId: number | null }
+  | { ok: false; status: 409; reason: string; details?: unknown };
+
+/**
+ * Write a LIMITS change to BOTH surfaces that read caps.
+ *
+ * The agent plans against RuleVersion.limits while logTrade enforces Config.LIMITS, so a
+ * human patch that touched only Config would drift the two apart forever. When rule
+ * versions exist, one transaction retires the ACTIVE version and activates a HUMAN child
+ * carrying the merged limits (files copied verbatim) alongside the Config write. Before
+ * versioning exists, Config alone remains the source of truth.
+ */
+async function applyLimits(merged: LimitsConfig): Promise<ApplyLimitsResult> {
+  const active = await prisma.ruleVersion.findFirst({
+    where: { status: "ACTIVE" },
+    orderBy: { id: "desc" },
+  });
+
+  if (!active) {
+    const anyVersion = await prisma.ruleVersion.count();
+    if (anyVersion === 0) {
+      // Pre-versioning: Config is the only planning + enforcement surface.
+      await setConfig(CONFIG_KEYS.LIMITS, merged);
+      return { ok: true, ruleVersionId: null };
+    }
+    return {
+      ok: false,
+      status: 409,
+      reason: "no_active_rule_version",
+      details: { message: "RuleVersion rows exist but none is ACTIVE; refusing to patch LIMITS" },
+    };
+  }
+
+  const files = filesFromRow(active.files);
+  const gate = kernelGate(files);
+  if (!gate.ok) {
+    // Never activate a version whose kernel does not validate — not even a copy.
+    return {
+      ok: false,
+      status: 409,
+      reason: "kernel_violation",
+      details: { parentId: active.id, clauseIds: gate.clauseIds, violations: gate.violations },
+    };
+  }
+
+  const now = new Date();
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      // Retire first: the partial unique index allows only one ACTIVE row.
+      const retired = await tx.ruleVersion.updateMany({
+        where: { id: active.id, status: "ACTIVE" },
+        data: { status: "RETIRED", retiredAt: now },
+      });
+      if (retired.count !== 1) throw new Error("rule_version_race");
+
+      const row = await tx.ruleVersion.create({
+        data: {
+          status: "ACTIVE",
+          actor: "HUMAN",
+          parentId: active.id,
+          files: files as unknown as PrismaTypes.InputJsonValue,
+          fileShas: active.fileShas as PrismaTypes.InputJsonValue,
+          limits: merged as unknown as PrismaTypes.InputJsonValue,
+          changeSummary: "human LIMITS patch via /api/agent/config",
+          // Nothing before this instant counts as evidence for this version.
+          evidenceCutoff: now,
+          activatedAt: now,
+        },
+      });
+
+      // Same transaction: logTrade keeps enforcing Config.LIMITS, so the two stay in lockstep.
+      await tx.config.upsert({
+        where: { key: CONFIG_KEYS.LIMITS },
+        create: { key: CONFIG_KEYS.LIMITS, value: merged as unknown as PrismaTypes.InputJsonValue },
+        update: { value: merged as unknown as PrismaTypes.InputJsonValue },
+      });
+
+      return row;
+    });
+
+    clearRuleSetCache();
+    return { ok: true, ruleVersionId: created.id };
+  } catch (err) {
+    if (err instanceof Error && err.message === "rule_version_race") {
+      return {
+        ok: false,
+        status: 409,
+        reason: "rule_version_race",
+        details: { message: "ACTIVE rule version changed mid-patch; nothing was written" },
+      };
+    }
+    throw err;
+  }
+}
+
 /**
  * Patch safe Config keys (cash, FX, thresholds, tracked, LIMITS).
  * Never prompts. LIMITS patches are allowed but change hard caps — use sparingly.
  */
 export async function patchConfig(input: PatchConfigInput) {
   const updated: string[] = [];
+  let ruleVersionId: number | null = null;
+
+  // First: a LIMITS patch can be refused (kernel / no ACTIVE version), and refusing before
+  // any other key is written keeps the patch all-or-nothing from the caller's view.
+  if (input.LIMITS !== undefined) {
+    const current = await getLimits();
+    const result = await applyLimits(mergeLimits(current, input.LIMITS));
+    if (!result.ok) return result;
+    ruleVersionId = result.ruleVersionId;
+    updated.push(CONFIG_KEYS.LIMITS);
+  }
 
   if (input.CASH_POSITION_USD !== undefined) {
     await setConfig(CONFIG_KEYS.CASH_POSITION_USD, input.CASH_POSITION_USD);
@@ -834,12 +1180,6 @@ export async function patchConfig(input: PatchConfigInput) {
     }
   }
 
-  if (input.LIMITS !== undefined) {
-    const current = await getLimits();
-    await setConfig(CONFIG_KEYS.LIMITS, mergeLimits(current, input.LIMITS));
-    updated.push(CONFIG_KEYS.LIMITS);
-  }
-
   if (input.SENTIMENT_THRESHOLDS !== undefined) {
     const raw = await prisma.config.findUnique({
       where: { key: CONFIG_KEYS.SENTIMENT_THRESHOLDS },
@@ -885,5 +1225,6 @@ export async function patchConfig(input: PatchConfigInput) {
     updated.push(CONFIG_KEYS.TRACKED_TICKERS);
   }
 
-  return { ok: true as const, updated };
+  // Non-null only when a LIMITS patch created a new RuleVersion.
+  return { ok: true as const, updated, ruleVersionId };
 }

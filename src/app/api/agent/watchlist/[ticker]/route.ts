@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { requireAgentToken } from "@/lib/agent/auth";
+import { rejectBranchOr400 } from "@/lib/agent/http";
 import { deleteWatchlist } from "@/lib/agent/writes";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,10 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
   }
 
   const url = new URL(req.url);
+  // Real-book write: LIVE only — a ?branch= param is refused, not ignored.
+  const branchRejected = rejectBranchOr400(Object.fromEntries(url.searchParams.entries()));
+  if (branchRejected) return branchRejected;
+
   const hard = url.searchParams.get("hard") === "true";
   const actionParam = url.searchParams.get("action");
   const action = actionParam === "DROPPED" ? ("DROPPED" as const) : ("DEMOTED" as const);
