@@ -36,6 +36,12 @@ export const EVOLUTION_PROMOTE_KEY = "EVOLUTION_PROMOTE";
 export const MIN_RESOLVED_NONZERO_CREDITS_FOR_PROMOTE = 20;
 
 /**
+ * Hard readiness gate: do not promote while fill friction has never hit the fitness
+ * stream — otherwise the first hyperactive challenger wins on free trades.
+ */
+export const MIN_TURNOVER_SESSIONS_FOR_PROMOTE = 3;
+
+/**
  * True when promotion is intentionally frozen (re-replay in progress, or ops kill switch).
  * Env wins over Config: `EVOLUTION_PROMOTE=0` always pauses; Config `false`/`0` also pauses.
  */
@@ -62,6 +68,16 @@ export async function countResolvedNonZeroCredits(): Promise<number> {
   });
 }
 
+/** Sessions whose fitness row recorded a positive turnover tax (fill friction charged). */
+export async function countTurnoverSessions(branchId?: string): Promise<number> {
+  return prisma.fitnessSnapshot.count({
+    where: {
+      turnoverDelta: { gt: 0 },
+      ...(branchId ? { branchId } : {}),
+    },
+  });
+}
+
 export type EvolutionEvaluateDetail = {
   candidateId: number | null;
   skipped?: string;
@@ -79,6 +95,7 @@ export type EvolutionEvaluateDetail = {
   promotedVersionId?: number;
   retiredVersionId?: number;
   resolvedNonZeroCredits?: number;
+  turnoverSessions?: number;
 };
 
 export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult> {
@@ -168,6 +185,9 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
   }
 
   const dailyDeltas: number[] = [];
+  // Each snapshot stores rolling-window DD. The promote risk gate wants the WORST rolling
+  // DD during the paired trial (did the challenger ever print a bad 30-day trough?), not
+  // only the tip — a mid-trial blow-up that later rolls off must still block crowning.
   let candidateMaxDrawdown = 0;
   let liveMaxDrawdown = 0;
   for (const [session, cand] of candRows) {
@@ -246,7 +266,10 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
 
   if (verdict === "PROMOTE") {
     // Credit gate only blocks crowning — kills/reverts must still run while credit is dark.
-    const resolvedNonZeroCredits = await countResolvedNonZeroCredits();
+    const [resolvedNonZeroCredits, turnoverSessions] = await Promise.all([
+      countResolvedNonZeroCredits(),
+      countTurnoverSessions(liveBranch.id),
+    ]);
     if (resolvedNonZeroCredits < MIN_RESOLVED_NONZERO_CREDITS_FOR_PROMOTE) {
       return {
         done: true,
@@ -255,6 +278,19 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
           verdict: "CONTINUE",
           skipped: "counterfactual_credit_gate",
           resolvedNonZeroCredits,
+          turnoverSessions,
+        } as unknown as Prisma.InputJsonValue,
+      };
+    }
+    if (turnoverSessions < MIN_TURNOVER_SESSIONS_FOR_PROMOTE) {
+      return {
+        done: true,
+        detail: {
+          ...baseDetail,
+          verdict: "CONTINUE",
+          skipped: "turnover_not_charging",
+          resolvedNonZeroCredits,
+          turnoverSessions,
         } as unknown as Prisma.InputJsonValue,
       };
     }
@@ -277,6 +313,7 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
         promotedVersionId: candidate.id,
         retiredVersionId: active.id,
         resolvedNonZeroCredits,
+        turnoverSessions,
       } as unknown as Prisma.InputJsonValue,
     };
   }

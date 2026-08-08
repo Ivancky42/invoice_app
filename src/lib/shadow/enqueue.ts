@@ -29,6 +29,7 @@ import {
   ymd,
 } from "@/lib/shadow/sessions";
 import { buySizeFraction, sellSizeFraction } from "@/lib/shadow/sizing";
+import { filterDecisionsAfterReset } from "@/lib/shadow/tenure";
 import { decToNum } from "@/lib/stocks/format";
 
 /** Bounded backward scan — older decisions are never enqueued retroactively by the cron. */
@@ -223,7 +224,16 @@ async function enqueueForBranch(
   runDay: Date,
   budget: JobContext["budget"],
 ): Promise<BranchCounts & { truncated: boolean }> {
-  const since = new Date(runDay.getTime() - LOOKBACK_DAYS * 86_400_000);
+  const lookbackSince = new Date(runDay.getTime() - LOOKBACK_DAYS * 86_400_000);
+  // Never re-trade a previous tenure after promote/kill/propose: resetAt is the floor.
+  const branchMeta = await prisma.shadowBranch.findUnique({
+    where: { id: branchRow.id },
+    select: { resetAt: true },
+  });
+  const since =
+    branchMeta?.resetAt && branchMeta.resetAt > lookbackSince
+      ? branchMeta.resetAt
+      : lookbackSince;
 
   // Already-enqueued DRs (any age) — unique index is the backstop, but we also collect
   // notionIds already represented so a twin DR id cannot double-enter the book.
@@ -272,8 +282,12 @@ async function enqueueForBranch(
     take: MAX_DECISIONS_PER_BRANCH,
   });
 
-  const decisions = dedupeDecisionsForShadow(raw).filter(
-    (d) => !d.notionId || !enqueuedNotionIds.has(d.notionId),
+  const decisions = filterDecisionsAfterReset(
+    sessions,
+    dedupeDecisionsForShadow(raw).filter(
+      (d) => !d.notionId || !enqueuedNotionIds.has(d.notionId),
+    ),
+    branchMeta?.resetAt,
   );
 
   return enqueueDecisionsForBranch(branchRow, sessions, decisions, runDay, budget);

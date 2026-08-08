@@ -1,11 +1,13 @@
 /**
- * `shadow_fill`: fill PENDING paper orders at the NEXT session's OPEN.
+ * `shadow_fill`: fill PENDING paper orders at the NEXT session's OPEN, after adverse
+ * slippage ({@link applySlippage}).
  *
  * Invariants enforced in code (not just by convention):
  *  - `fillSession > decisionSession` — an order can never be filled on the bars the
  *    decision was made from (that would be lookahead).
- *  - `fillPrice` is always a `PriceHistory.open`. A missing open is never substituted
- *    with a close or a neighbouring session's price; the order waits, then is rejected.
+ *  - `fillPrice` is always a slipped `PriceHistory.open`. A missing open is never
+ *    substituted with a close or a neighbouring session's price; the order waits, then
+ *    is rejected.
  *  - Paper cash never goes negative: a buy larger than available cash fills partially.
  *
  * No real-book state (Portfolio / Trade / Config cash) is read or written here.
@@ -15,6 +17,7 @@ import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { prisma } from "@/lib/prisma";
 import { branchBook, ensureShadowBranches, listBranches } from "@/lib/shadow/branches";
 import { planBuy, planSell, roundMoney, weightedAvgCost } from "@/lib/shadow/fillMath";
+import { applySlippage } from "@/lib/shadow/slippage";
 import {
   latestSessionOnOrBeforeIn,
   loadSessions,
@@ -54,15 +57,29 @@ export function eligibleFillSessions(
   return out;
 }
 
-async function rejectOrder(orderId: string, reason: string, pendingSessions?: number) {
-  await prisma.shadowOrder.update({
-    where: { id: orderId },
+/** Reject only while still PENDING — loses the race to resetBranch / a concurrent fill. */
+async function rejectOrder(
+  orderId: string,
+  reason: string,
+  pendingSessions?: number,
+): Promise<boolean> {
+  const updated = await prisma.shadowOrder.updateMany({
+    where: { id: orderId, status: "PENDING" },
     data: {
       status: "REJECTED",
       rejectReason: reason,
       ...(pendingSessions === undefined ? {} : { pendingSessions }),
     },
   });
+  return updated.count === 1;
+}
+
+/** Concurrent resetBranch flipped PENDING → REJECTED; roll the book mutation back. */
+class OrderNoLongerPendingError extends Error {
+  constructor() {
+    super("shadow_fill: order no longer PENDING");
+    this.name = "OrderNoLongerPendingError";
+  }
 }
 
 async function fillBranch(
@@ -135,14 +152,13 @@ async function fillBranch(
     if (fillSessionDay === null || openPrice === null) {
       const elapsed = candidates.length;
       if (elapsed >= MAX_PENDING_SESSIONS) {
-        await rejectOrder(order.id, "no_open_price", elapsed);
-        rejected += 1;
+        if (await rejectOrder(order.id, "no_open_price", elapsed)) rejected += 1;
       } else {
-        await prisma.shadowOrder.update({
-          where: { id: order.id },
+        const touched = await prisma.shadowOrder.updateMany({
+          where: { id: order.id, status: "PENDING" },
           data: { pendingSessions: elapsed },
         });
-        waiting += 1;
+        if (touched.count === 1) waiting += 1;
       }
       continue;
     }
@@ -164,10 +180,11 @@ async function fillBranch(
       const valuationDay =
         previousSessionBeforeIn(sessions, fillSessionDay) ?? decisionSessionDay;
       const book = await branchBook(branchRow.id, valuationDay);
-      const plan = planBuy(sizeFraction * book.nav, book.cash, openPrice);
+      // Slippage first, then size: cash/shares/fillPrice all share the worse price.
+      const price = applySlippage(openPrice, "BUY");
+      const plan = planBuy(sizeFraction * book.nav, book.cash, price);
       if (!plan.ok) {
-        await rejectOrder(order.id, plan.reason);
-        rejected += 1;
+        if (await rejectOrder(order.id, plan.reason)) rejected += 1;
         continue;
       }
 
@@ -175,49 +192,54 @@ async function fillBranch(
         where: { branchId: branchRow.id, ticker: order.ticker, closedAt: null },
         select: { id: true, shares: true, avgCost: true },
       });
-      const price = openPrice;
       const { notional, shares } = plan;
 
-      await prisma.$transaction(async (tx) => {
-        if (existing) {
-          const openShares = decToNum(existing.shares) ?? 0;
-          const avgCost = weightedAvgCost(
-            openShares,
-            decToNum(existing.avgCost) ?? price,
-            shares,
-            price,
-          );
-          await tx.shadowPosition.update({
-            where: { id: existing.id },
-            data: { shares: { increment: shares }, avgCost },
-          });
-        } else {
-          await tx.shadowPosition.create({
-            data: {
-              branchId: branchRow.id,
-              ticker: order.ticker,
-              openedSession: fillSession,
+      try {
+        await prisma.$transaction(async (tx) => {
+          if (existing) {
+            const openShares = decToNum(existing.shares) ?? 0;
+            const avgCost = weightedAvgCost(
+              openShares,
+              decToNum(existing.avgCost) ?? price,
               shares,
-              avgCost: price,
+              price,
+            );
+            await tx.shadowPosition.update({
+              where: { id: existing.id },
+              data: { shares: { increment: shares }, avgCost },
+            });
+          } else {
+            await tx.shadowPosition.create({
+              data: {
+                branchId: branchRow.id,
+                ticker: order.ticker,
+                openedSession: fillSession,
+                shares,
+                avgCost: price,
+              },
+            });
+          }
+          await tx.shadowBranch.update({
+            where: { id: branchRow.id },
+            data: { cash: { decrement: notional } },
+          });
+          // Claim last: if resetBranch already REJECTED this row, roll the book back.
+          const claimed = await tx.shadowOrder.updateMany({
+            where: { id: order.id, status: "PENDING" },
+            data: {
+              status: "FILLED",
+              fillSession,
+              fillPrice: price,
+              notional,
+              shares,
             },
           });
-        }
-        await tx.shadowBranch.update({
-          where: { id: branchRow.id },
-          data: { cash: { decrement: notional } },
+          if (claimed.count !== 1) throw new OrderNoLongerPendingError();
         });
-        await tx.shadowOrder.update({
-          where: { id: order.id },
-          data: {
-            status: "FILLED",
-            fillSession,
-            fillPrice: price,
-            notional,
-            shares,
-          },
-        });
-      });
-      filled += 1;
+        filled += 1;
+      } catch (err) {
+        if (!(err instanceof OrderNoLongerPendingError)) throw err;
+      }
       continue;
     }
 
@@ -227,50 +249,53 @@ async function fillBranch(
       select: { id: true, shares: true, avgCost: true, realizedPnl: true },
     });
     if (!existing) {
-      await rejectOrder(order.id, "no_position");
-      rejected += 1;
+      if (await rejectOrder(order.id, "no_position")) rejected += 1;
       continue;
     }
 
+    const price = applySlippage(openPrice, "SELL");
     const plan = planSell(
       decToNum(existing.shares) ?? 0,
       decToNum(existing.avgCost) ?? 0,
       sizeFraction,
-      openPrice,
+      price,
     );
     if (!plan.ok) {
-      await rejectOrder(order.id, plan.reason);
-      rejected += 1;
+      if (await rejectOrder(order.id, plan.reason)) rejected += 1;
       continue;
     }
 
-    const price = openPrice;
     const priorRealized = decToNum(existing.realizedPnl) ?? 0;
-    await prisma.$transaction(async (tx) => {
-      await tx.shadowPosition.update({
-        where: { id: existing.id },
-        data: {
-          shares: plan.remainingShares,
-          realizedPnl: roundMoney(priorRealized + plan.realizedPnl),
-          ...(plan.closes ? { closedAt: new Date(), markStale: false } : {}),
-        },
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.shadowPosition.update({
+          where: { id: existing.id },
+          data: {
+            shares: plan.remainingShares,
+            realizedPnl: roundMoney(priorRealized + plan.realizedPnl),
+            ...(plan.closes ? { closedAt: new Date(), markStale: false } : {}),
+          },
+        });
+        await tx.shadowBranch.update({
+          where: { id: branchRow.id },
+          data: { cash: { increment: plan.proceeds } },
+        });
+        const claimed = await tx.shadowOrder.updateMany({
+          where: { id: order.id, status: "PENDING" },
+          data: {
+            status: "FILLED",
+            fillSession,
+            fillPrice: price,
+            notional: plan.proceeds,
+            shares: plan.sharesSold,
+          },
+        });
+        if (claimed.count !== 1) throw new OrderNoLongerPendingError();
       });
-      await tx.shadowBranch.update({
-        where: { id: branchRow.id },
-        data: { cash: { increment: plan.proceeds } },
-      });
-      await tx.shadowOrder.update({
-        where: { id: order.id },
-        data: {
-          status: "FILLED",
-          fillSession,
-          fillPrice: price,
-          notional: plan.proceeds,
-          shares: plan.sharesSold,
-        },
-      });
-    });
-    filled += 1;
+      filled += 1;
+    } catch (err) {
+      if (!(err instanceof OrderNoLongerPendingError)) throw err;
+    }
   }
 
   return { filled, rejected, waiting, truncated: false };

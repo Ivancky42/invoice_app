@@ -62,7 +62,6 @@ async function patchBranch(
       dailyIncrement: true,
       benchmarkIncrement: true,
       turnoverDelta: true,
-      maxDrawdown: true,
     },
   });
 
@@ -74,6 +73,7 @@ async function patchBranch(
     turnoverDelta: number;
     fitnessIncrement: number | null;
     windowFitness: number | null;
+    maxDrawdown: number;
   }[] = [];
 
   for (let i = 0; i < rows.length; i++) {
@@ -108,6 +108,12 @@ async function patchBranch(
             dailyIncrement + avoidedCreditDelta - turnoverDelta - benchmarkIncrement,
           );
 
+    const rollingNavs = [
+      ...patched.map((p) => p.nav),
+      nav,
+    ].slice(-FITNESS_WINDOW_SESSIONS);
+    const rowMaxDrawdown = maxDrawdown(rollingNavs);
+
     patched.push({
       session,
       nav,
@@ -115,6 +121,7 @@ async function patchBranch(
       turnoverDelta,
       fitnessIncrement,
       windowFitness: null,
+      maxDrawdown: rowMaxDrawdown,
     });
 
     // Trailing window including this row; same span rule as snapshot.ts.
@@ -147,7 +154,8 @@ async function patchBranch(
           avoidedCreditDelta,
           fitnessIncrement,
           windowFitness,
-          // Preserve nav, dailyIncrement, turnoverDelta, maxDrawdown, quality, etc.
+          maxDrawdown: rowMaxDrawdown,
+          // Preserve nav / turnoverDelta / dailyIncrement — book path untouched.
         },
       });
     }

@@ -403,7 +403,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get shadow fitness",
       description:
-        "Daily fitness snapshots for a shadow branch (default LIVE), newest session first. All values are FRACTIONS (0.03 = 3%). avoidedCreditDelta is SIGNED: refusing a name that fell credits, refusing one that rose debits. Default limit 30 (max 90).",
+        "Daily fitness snapshots for a shadow branch (default LIVE), newest session first. All values are FRACTIONS (0.03 = 3%). avoidedCreditDelta is SIGNED: refusing a name that fell credits, refusing one that rose debits. turnoverDelta is fill-friction only (0 on hold days). maxDrawdown is rolling 30-session peak-to-trough, not lifetime HWM. Default limit 30 (max 90).",
       inputSchema: getShadowFitnessInputSchema.shape,
     },
     async (args, extra) => {
@@ -420,7 +420,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List counterfactuals",
       description:
-        "List what NOT-taken decisions (AVOID / WAIT / DO_NOT_AVERAGE_DOWN) would have been worth for a shadow branch (default LIVE), newest decision first. `credit` is SIGNED and in NAV fractions. Optional status filter; default limit 50 (max 200).",
+        "List what NOT-taken decisions (AVOID / WAIT / DO_NOT_AVERAGE_DOWN) would have been worth for a shadow branch (default LIVE), newest decision first. Rows exist at dual horizons (21 interim for loop speed, 63 full-quarter residual). `credit` is SIGNED and in NAV fractions. Optional status filter; default limit 50 (max 200).",
       inputSchema: listCounterfactualsInputSchema.shape,
     },
     async (args, extra) => {

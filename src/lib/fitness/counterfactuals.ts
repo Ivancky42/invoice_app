@@ -9,7 +9,9 @@
  * Dual horizons: interim credit enters fitness ~3 weeks after the decision so defensive
  * refusals are not dark for a full quarter; the full-horizon row stores the residual
  * (raw_63 − already-recognized shorter credits) so lifetime sum equals the quarter
- * measure without double-counting.
+ * measure without double-counting. Score the loop on 21 for speed; keep 63 alongside and
+ * compare them quarterly — systematic disagreement is itself a lesson (e.g. bounce-then-
+ * fade names like BULL debiting at 21 while the round trip looks different at 63).
  *
  * Reads PriceHistory, DecisionReview, the shadow ledger and the branch ruleset only. No
  * Portfolio / Trade / Config state is consulted: a paper book must stay uncontaminated.
@@ -30,6 +32,7 @@ import {
   sessionOffsetIn,
   ymd,
 } from "@/lib/shadow/sessions";
+import { filterDecisionsAfterReset } from "@/lib/shadow/tenure";
 import { roundFraction } from "@/lib/shadow/sizing";
 import { decToNum } from "@/lib/stocks/format";
 
@@ -263,7 +266,17 @@ async function seedForBranch(
   runDay: Date,
   budget: JobContext["budget"],
 ): Promise<{ seeded: number; skipped: number; truncated: boolean }> {
-  const since = new Date(runDay.getTime() - LOOKBACK_DAYS * 86_400_000);
+  const lookbackSince = new Date(runDay.getTime() - LOOKBACK_DAYS * 86_400_000);
+  // Same tenure floor as enqueue: after reset, do not re-seed the previous book's refusals
+  // (their horizons may already have elapsed and would dump credit into day one).
+  const branchMeta = await prisma.shadowBranch.findUnique({
+    where: { id: branchRow.id },
+    select: { resetAt: true },
+  });
+  const since =
+    branchMeta?.resetAt && branchMeta.resetAt > lookbackSince
+      ? branchMeta.resetAt
+      : lookbackSince;
   const raw = await prisma.decisionReview.findMany({
     where: {
       branch: branchRow.branch,
@@ -288,7 +301,7 @@ async function seedForBranch(
   return seedCounterfactualsForBranch(
     branchRow,
     sessions,
-    dedupeDecisionsForShadow(raw),
+    filterDecisionsAfterReset(sessions, dedupeDecisionsForShadow(raw), branchMeta?.resetAt),
     runDay,
     budget,
   );
@@ -403,8 +416,13 @@ export async function resolvePendingCounterfactuals(
     }
 
     if (!priced) {
-      // Only give up once the whole walk has actually elapsed; otherwise wait for it.
-      const walkElapsed = plan.candidates.length > HORIZON_WALK_SESSIONS;
+      // Give up only once the full forward walk has elapsed; otherwise wait for more bars.
+      const walkEndDay = sessionOffsetIn(
+        sessions,
+        ymd(row.decisionSession),
+        row.horizonSessions + HORIZON_WALK_SESSIONS,
+      );
+      const walkElapsed = walkEndDay !== null && walkEndDay <= latestSessionDay;
       if (!walkElapsed) continue;
       await prisma.counterfactual.updateMany({
         where: { id: row.id, status: "PENDING" },

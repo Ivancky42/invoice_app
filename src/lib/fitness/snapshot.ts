@@ -10,7 +10,9 @@
  *                       (prior.session, session]. A credit is already permittedSize (a NAV
  *                       fraction) times a return (a fraction). Logical session attribution
  *                       (not wall-clock resolve time) so replay/backfill and daily cron agree.
- *   turnoverDelta       frictional cost of that session's fills.
+ *   turnoverDelta       frictional cost of that session's fills (commission/hyperactivity
+ *                       tax on Σ|notional| / startNav). Separate from fill-path slippage,
+ *                       which already worsens cash/avgCost in the paper book.
  *   benchmarkIncrement  CSPX's session return, SUBTRACTED so a rising tide is not skill.
  *
  * The drawdown penalty is deliberately NOT in the daily term: a drawdown is a property of
@@ -23,6 +25,9 @@
  * where both Σ run over rows 1..29 of the 30-row window, NOT all 30: windowReturn and the
  * benchmark term span the 29 intervals AFTER row 0's nav, and every term in one sum has to
  * cover the same span or the level is a mix of two different windows.
+ *
+ * `maxDrawdown` on the row is the rolling peak-to-trough over the same trailing window
+ * (or the available history until the window is full) — not a lifetime high-water mark.
  *
  * Reads the shadow ledger, Counterfactual and PriceHistory only — no real-book state.
  */
@@ -55,8 +60,8 @@ export const BENCHMARK_CARRY_SESSIONS = 3;
 /** Stale-mark share above which a snapshot's evidence is DEGRADED. */
 export const STALE_MARK_DEGRADED_RATIO = 0.2;
 
-/** Frictional cost of a fill, as a fraction of its notional. */
-const TURNOVER_RATE = 0.001;
+/** Frictional fitness tax on a fill, as a fraction of its notional (10 bps). */
+export const TURNOVER_RATE = 0.001;
 
 export type FitnessSnapshotBranchDetail = {
   session: string;
@@ -154,7 +159,6 @@ async function snapshotBranch(
         openPositions: true,
         staleMarks: true,
         quality: true,
-        maxDrawdown: true,
       },
     }),
     // Scoped to the current book exactly as the drawdown/window history below is: after a
@@ -196,6 +200,9 @@ async function snapshotBranch(
   // resolve-at-end stamped every credit after every snapshot's createdAt, so
   // avoidedCreditDelta stayed 0 forever. horizonSession span is idempotent under re-run
   // and matches the same (prior.session, session] gap-fill rule as turnover.
+  // Tenure isolation: resetBranch deleteMany's CFs before stamping resetAt. Do not also
+  // filter createdAt >= resetAt — app-clock resetAt vs DB createdAt skew can drop a
+  // valid post-reset credit on the first snapshot.
   const resolvedCredits = await prisma.counterfactual.findMany({
     where: {
       branchId: branchRow.id,
@@ -269,7 +276,9 @@ async function snapshotBranch(
     },
   });
   const navSeries = [...history.map((h) => decToNum(h.nav) ?? 0), nav];
-  const branchMaxDrawdown = maxDrawdown(navSeries);
+  // Rolling window peak-to-trough (lifetime HWM froze across sessions while NAV moved).
+  const rollingNavs = navSeries.slice(-FITNESS_WINDOW_SESSIONS);
+  const branchMaxDrawdown = maxDrawdown(rollingNavs);
 
   // Trailing window INCLUDING this session; null until it is actually full.
   const windowRows = [
@@ -312,11 +321,6 @@ async function snapshotBranch(
     : openPositions > 0 && staleMarks / openPositions > STALE_MARK_DEGRADED_RATIO
       ? "DEGRADED"
       : "OK";
-  // Historical re-runs keep the recorded path peak; recomputing from preserved navs is
-  // equivalent, but trusting the stored value avoids churn if history rows were patched.
-  const maxDrawdownOut = stored
-    ? (decToNum(stored.maxDrawdown) ?? branchMaxDrawdown)
-    : branchMaxDrawdown;
 
   const data = {
     nav,
@@ -325,7 +329,7 @@ async function snapshotBranch(
     benchmarkIncrement,
     fitnessIncrement,
     windowFitness,
-    maxDrawdown: maxDrawdownOut,
+    maxDrawdown: branchMaxDrawdown,
     turnoverDelta,
     quality,
     staleMarks,
@@ -346,7 +350,7 @@ async function snapshotBranch(
     benchmarkIncrement,
     fitnessIncrement,
     windowFitness,
-    maxDrawdown: maxDrawdownOut,
+    maxDrawdown: branchMaxDrawdown,
     turnoverDelta,
     quality,
   };

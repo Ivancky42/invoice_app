@@ -243,6 +243,10 @@ export async function branchNav(branchId: string, session: string | Date): Promi
  * Close every open paper position and restart the book at {@link SHADOW_INITIAL_NAV}
  * under `ruleVersionId`. Used when a candidate is promoted — the new ruleset must not
  * inherit the previous one's positions or its high-water mark.
+ *
+ * Orders are REJECTED in place (not deleted): the `(branchId, decisionReviewId, side)`
+ * unique rows are the enqueue idempotency markers. Deleting them let the next cron
+ * re-trade the previous tenure's DecisionReviews into the fresh book.
  */
 export async function resetBranch(branch: Branch, ruleVersionId: number): Promise<void> {
   const row = await prisma.shadowBranch.findUnique({
@@ -251,21 +255,32 @@ export async function resetBranch(branch: Branch, ruleVersionId: number): Promis
   });
   if (!row) return;
 
-  const now = new Date();
+  // Stamp tenure boundary with the DB clock so fill/credit filters that compare to
+  // Postgres createdAt/updatedAt cannot miss rows under app-vs-DB skew.
+  const [{ now }] = await prisma.$queryRaw<[{ now: Date }]>`SELECT NOW() AS now`;
   await prisma.$transaction([
     // Derived series belongs to the old book. Leaving it would let the first post-reset
     // fitness snapshot (prior=null) sum every historical RESOLVED credit into day one.
     prisma.counterfactual.deleteMany({ where: { branchId: row.id } }),
     prisma.fitnessSnapshot.deleteMany({ where: { branchId: row.id } }),
+    // Keep rows as REJECTED markers so enqueue cannot recreate them; clear fill fields so
+    // status=FILLED notionals cannot leak into a post-reset turnover span.
+    prisma.shadowOrder.updateMany({
+      where: { branchId: row.id },
+      data: {
+        status: "REJECTED",
+        rejectReason: "branch_reset",
+        fillSession: null,
+        fillPrice: null,
+        notional: null,
+        shares: null,
+      },
+    }),
     prisma.shadowPosition.updateMany({
       where: { branchId: row.id, closedAt: null },
       data: { closedAt: now, shares: 0, markStale: false },
     }),
-    // Orders enqueued under the old ruleset must not fill into the new book.
-    prisma.shadowOrder.updateMany({
-      where: { branchId: row.id, status: "PENDING" },
-      data: { status: "REJECTED", rejectReason: "branch_reset" },
-    }),
+    prisma.shadowPosition.deleteMany({ where: { branchId: row.id } }),
     prisma.shadowBranch.update({
       where: { id: row.id },
       data: {

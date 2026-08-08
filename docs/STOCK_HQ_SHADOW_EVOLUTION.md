@@ -198,7 +198,9 @@ grepping those modules for the real-book model names).
   session's close, carrying the prior mark forward (flagged `markStale`) when a bar is
   missing.
 - `src/lib/shadow/branches.ts` also owns `resetBranch(branch, ruleVersionId)`: closes every
-  open position, rejects pending orders (`branch_reset`), and restarts the book at
+  open position, rejects **all** orders in place (`branch_reset` — rows stay as enqueue
+  idempotency markers; fill fields cleared), deletes fitness/counterfactual rows, and
+  restarts the book at
   `SHADOW_INITIAL_NAV` under the new ruleset. Used on every promotion and every kill —
   a challenger's book, win or lose, never carries positions or drawdown history into the
   next experiment.

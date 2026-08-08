@@ -310,7 +310,7 @@ export default async function ShadowMonitorPage({ searchParams }: PageProps) {
             label: "Max drawdown",
             value: latest?.maxDrawdown != null ? fmtPct(latest.maxDrawdown) : "—",
             tone: latest?.maxDrawdown != null ? -Math.abs(latest.maxDrawdown) : null,
-            hint: latest?.session ? `As of ${latest.session}` : "No snapshots yet",
+            hint: "Rolling 30-session peak-to-trough",
           },
         ].map((m) => (
           <div key={m.label} className="card p-4">

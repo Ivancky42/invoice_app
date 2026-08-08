@@ -308,4 +308,6 @@ DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/rebuild-fitness-series.ts --c
 ```
 
 Keep `EVOLUTION_PROMOTE=0` until the sample counterfactual prices match DR decision-day
-closes (not the sync-day close). Then clear the env var (or set `1`) and redeploy.
+closes (not the sync-day close), **and** until fill-day `turnoverDelta` is non-zero on the
+LIVE series (promotion also hard-gates on `turnover_not_charging`). Then clear the env var
+(or set `1`) and redeploy.
