@@ -25,4 +25,11 @@ jobs:
 
       - run: pnpm typecheck
 
+      - name: Refuse destructive shadow SQL in migrations
+        run: |
+          if rg -n 'DELETE FROM "(FitnessSnapshot|Counterfactual|ShadowOrder|ShadowPosition|ShadowBranch)"|TRUNCATE TABLE "(FitnessSnapshot|Counterfactual|ShadowOrder|ShadowPosition|ShadowBranch)"' prisma/migrations; then
+            echo "::error::Migrations must not wipe shadow/fitness tables — use an offline guarded script instead."
+            exit 1
+          fi
+
       - run: pnpm test

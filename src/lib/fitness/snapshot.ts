@@ -6,11 +6,10 @@
  *   fitnessIncrement = dailyIncrement + avoidedCreditDelta − turnoverDelta − benchmarkIncrement
  *
  *   dailyIncrement      what the book actually made that session (nav / prevNav − 1).
- *   avoidedCreditDelta  Σ SIGNED credits of counterfactuals that resolved since the last
- *                       snapshot. A credit is already permittedSize (a NAV fraction) times
- *                       a return (a fraction), i.e. exactly the NAV move the branch would
- *                       have taken had it acted — so it adds straight onto dailyIncrement
- *                       with no re-normalisation.
+ *   avoidedCreditDelta  Σ SIGNED credits of counterfactuals whose horizonSession falls in
+ *                       (prior.session, session]. A credit is already permittedSize (a NAV
+ *                       fraction) times a return (a fraction). Logical session attribution
+ *                       (not wall-clock resolve time) so replay/backfill and daily cron agree.
  *   turnoverDelta       frictional cost of that session's fills.
  *   benchmarkIncrement  CSPX's session return, SUBTRACTED so a rising tide is not skill.
  *
@@ -84,6 +83,18 @@ function roundFraction(value: number): number {
 }
 
 /**
+ * True when an existing snapshot's book-derived fields must be kept.
+ * Historical re-snaps must not re-mark today's open positions at an old close.
+ */
+export function shouldPreserveBookFields(
+  sessionDay: string,
+  calendarTip: string,
+  hasExisting: boolean,
+): boolean {
+  return hasExisting && sessionDay < calendarTip;
+}
+
+/**
  * CSPX close at `day`, carried back at most {@link BENCHMARK_CARRY_SESSIONS} sessions.
  *
  * The benchmark is a London-listed ETF: its holiday calendar does not match the US session
@@ -110,7 +121,6 @@ export function benchmarkCloseAt(
 type PriorSnapshot = {
   session: Date;
   nav: number;
-  createdAt: Date;
 };
 
 async function snapshotBranch(
@@ -120,6 +130,10 @@ async function snapshotBranch(
   cspxCloseByDay: Map<string, number>,
 ): Promise<FitnessSnapshotBranchDetail> {
   const session = sessionDate(sessionDay);
+  // Calendar tip: anything strictly before this is historical. Re-snapping a historical
+  // session via branchBook would mark TODAY's open positions at THAT day's closes and
+  // overwrite the true path — the bug that corrupted prod during a naive rebuild.
+  const calendarTip = sessions[sessions.length - 1] ?? sessionDay;
 
   // resetAt is needed BEFORE the prior-snapshot lookup, so it cannot ride in the batch
   // below: every "since the last snapshot" term must be scoped to the current book.
@@ -134,7 +148,14 @@ async function snapshotBranch(
     branchBook(branchRow.id, sessionDay),
     prisma.fitnessSnapshot.findUnique({
       where: { branchId_session: { branchId: branchRow.id, session } },
-      select: { id: true, createdAt: true },
+      select: {
+        nav: true,
+        dailyIncrement: true,
+        openPositions: true,
+        staleMarks: true,
+        quality: true,
+        maxDrawdown: true,
+      },
     }),
     // Scoped to the current book exactly as the drawdown/window history below is: after a
     // promotion reset (say 130k → 100k) an unscoped prior would fabricate a −23% daily
@@ -144,7 +165,7 @@ async function snapshotBranch(
     prisma.fitnessSnapshot.findFirst({
       where: { branchId: branchRow.id, session: { lt: session }, ...sinceReset },
       orderBy: { session: "desc" },
-      select: { session: true, nav: true, createdAt: true },
+      select: { session: true, nav: true },
     }),
   ]);
 
@@ -152,29 +173,37 @@ async function snapshotBranch(
     ? {
         session: priorRow.session,
         nav: decToNum(priorRow.nav) ?? 0,
-        createdAt: priorRow.createdAt,
       }
     : null;
 
-  const nav = book.nav;
-  const dailyIncrement =
-    prior && prior.nav > 0 ? roundFraction(nav / prior.nav - 1) : null;
+  // Preserve book-derived fields on historical re-runs. Create path (replay after wipe)
+  // and the calendar-tip session (daily cron) still take a fresh mark from branchBook.
+  const preserveBook = shouldPreserveBookFields(
+    sessionDay,
+    calendarTip,
+    existing != null,
+  );
+  const stored = preserveBook ? existing! : null;
+  const nav = stored ? (decToNum(stored.nav) ?? 0) : book.nav;
+  const dailyIncrement = stored
+    ? decToNum(stored.dailyIncrement)
+    : prior && prior.nav > 0
+      ? roundFraction(nav / prior.nav - 1)
+      : null;
 
-  // Credits are attributed by RESOLUTION TIME, windowed by the previous snapshot's
-  // createdAt (exclusive) and this snapshot's own createdAt (inclusive). Re-running the
-  // job for the same session therefore recomputes the SAME set — a wall-clock upper bound
-  // would let a credit that resolved after this row was first written be counted here on
-  // a re-run and again in the next session's snapshot.
-  const resolvedCutoff = existing?.createdAt ?? new Date();
+  // Credits are attributed by LOGICAL horizon session (when the refusal's window elapsed),
+  // not wall-clock resolve time. Wall-clock windows broke historical replay/backfill:
+  // resolve-at-end stamped every credit after every snapshot's createdAt, so
+  // avoidedCreditDelta stayed 0 forever. horizonSession span is idempotent under re-run
+  // and matches the same (prior.session, session] gap-fill rule as turnover.
   const resolvedCredits = await prisma.counterfactual.findMany({
     where: {
       branchId: branchRow.id,
       status: "RESOLVED",
       credit: { not: null },
-      updatedAt: {
-        ...(prior ? { gt: prior.createdAt } : {}),
-        lte: resolvedCutoff,
-      },
+      horizonSession: prior
+        ? { gt: prior.session, lte: session }
+        : { lte: session },
     },
     select: { credit: true },
   });
@@ -276,12 +305,18 @@ async function snapshotBranch(
     }
   }
 
-  const openPositions = book.positions.length;
-  const staleMarks = book.staleMarks;
-  const quality =
-    openPositions > 0 && staleMarks / openPositions > STALE_MARK_DEGRADED_RATIO
+  const openPositions = stored ? stored.openPositions : book.positions.length;
+  const staleMarks = stored ? stored.staleMarks : book.staleMarks;
+  const quality = stored
+    ? stored.quality
+    : openPositions > 0 && staleMarks / openPositions > STALE_MARK_DEGRADED_RATIO
       ? "DEGRADED"
       : "OK";
+  // Historical re-runs keep the recorded path peak; recomputing from preserved navs is
+  // equivalent, but trusting the stored value avoids churn if history rows were patched.
+  const maxDrawdownOut = stored
+    ? (decToNum(stored.maxDrawdown) ?? branchMaxDrawdown)
+    : branchMaxDrawdown;
 
   const data = {
     nav,
@@ -290,22 +325,16 @@ async function snapshotBranch(
     benchmarkIncrement,
     fitnessIncrement,
     windowFitness,
-    maxDrawdown: branchMaxDrawdown,
+    maxDrawdown: maxDrawdownOut,
     turnoverDelta,
     quality,
     staleMarks,
     openPositions,
   } as const;
 
-  // ALIGNMENT INVARIANT: the row's createdAt IS the credit window's upper bound. Letting
-  // the DB default stamp it would place the stamp several awaits after `resolvedCutoff`,
-  // and a counterfactual resolving in that gap would fall through every window — excluded
-  // here by the cutoff, and excluded next session because the lower bound is this row's
-  // (later) createdAt. The re-run path already reuses existing.createdAt for the same
-  // reason, so on CREATE we write the sampled instant explicitly.
   await prisma.fitnessSnapshot.upsert({
     where: { branchId_session: { branchId: branchRow.id, session } },
-    create: { branchId: branchRow.id, session, createdAt: resolvedCutoff, ...data },
+    create: { branchId: branchRow.id, session, ...data },
     update: data,
   });
 
@@ -317,7 +346,7 @@ async function snapshotBranch(
     benchmarkIncrement,
     fitnessIncrement,
     windowFitness,
-    maxDrawdown: branchMaxDrawdown,
+    maxDrawdown: maxDrawdownOut,
     turnoverDelta,
     quality,
   };

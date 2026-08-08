@@ -253,6 +253,10 @@ export async function resetBranch(branch: Branch, ruleVersionId: number): Promis
 
   const now = new Date();
   await prisma.$transaction([
+    // Derived series belongs to the old book. Leaving it would let the first post-reset
+    // fitness snapshot (prior=null) sum every historical RESOLVED credit into day one.
+    prisma.counterfactual.deleteMany({ where: { branchId: row.id } }),
+    prisma.fitnessSnapshot.deleteMany({ where: { branchId: row.id } }),
     prisma.shadowPosition.updateMany({
       where: { branchId: row.id, closedAt: null },
       data: { closedAt: now, shares: 0, markStale: false },

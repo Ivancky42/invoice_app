@@ -48,9 +48,13 @@ happens on first deploy, in order:
    These are all additive, hand-written idempotent SQL (`ADD COLUMN IF NOT EXISTS`,
    `CREATE INDEX IF NOT EXISTS`, plus the raw partial-unique-index / append-only `RULE` on
    `EvolutionEvent`) — the raw constraints **ship inside the migrations themselves**, so
-   prod needs **no extra step** beyond `migrate deploy`. (`scripts/apply-raw-constraints.ts`
-   is chained into `pnpm db:push` for local Docker only, where `db push` bypasses
-   migrations entirely — prod never runs it.)
+   they apply on Neon too and prod needs **no extra step** beyond `migrate deploy`.
+   (`scripts/apply-raw-constraints.ts` is chained into `pnpm db:push` for local Docker only,
+   where `db push` bypasses migrations entirely — prod never runs it.)
+
+   **Migrations must never `DELETE`/`TRUNCATE` shadow or fitness tables** (CI greps for
+   this). Wipes belong in `scripts/replay-shadow-history.ts` behind `--confirm-destructive`,
+   never in `pnpm build`.
 
    Only run a `db:resolve-*-prod` helper if `migrate deploy` reports that a migration's
    objects already exist (P3005-style drift) — normally none of them are needed on a clean
@@ -291,8 +295,16 @@ replay is still required so historical buys fill before later sells:
 # Dry-run first — prints dated sample rows, writes nothing
 DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/replay-shadow-history.ts --dry-run
 
-# Wipe shadow ledger for both branches and walk the session calendar
-DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/replay-shadow-history.ts
+# Wipe shadow ledger for both branches and walk the session calendar.
+# Remote/prod requires an explicit confirm so a stray .env cannot wipe Neon.
+DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/replay-shadow-history.ts --confirm-destructive
+```
+
+To refresh credits only (no wipe) after a horizon/attribution fix:
+
+```bash
+DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/rebuild-fitness-series.ts --dry-run
+DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/rebuild-fitness-series.ts --confirm-write
 ```
 
 Keep `EVOLUTION_PROMOTE=0` until the sample counterfactual prices match DR decision-day

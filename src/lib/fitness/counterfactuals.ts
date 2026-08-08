@@ -319,6 +319,7 @@ export async function resolvePendingCounterfactuals(
   sessions: string[],
   runDay: Date,
   budget: JobContext["budget"],
+  opts?: { onlyBranchIds?: string[] },
 ): Promise<{ resolved: number; unresolved: number; truncated: boolean }> {
   let resolved = 0;
   let unresolved = 0;
@@ -327,7 +328,12 @@ export async function resolvePendingCounterfactuals(
   if (!latestSessionDay) return { resolved, unresolved, truncated: false };
 
   const rows = await prisma.counterfactual.findMany({
-    where: { status: "PENDING" },
+    where: {
+      status: "PENDING",
+      ...(opts?.onlyBranchIds?.length
+        ? { branchId: { in: opts.onlyBranchIds } }
+        : {}),
+    },
     // Shorter horizons first: if 21 and 63 both elapse in the same run, interim must
     // resolve before full computes its residual — otherwise full stores raw_63 and
     // interim later adds raw_21 → double-count in fitness.

@@ -6,9 +6,10 @@
  * pass. This script walks the session calendar so fills precede later sells.
  *
  * Usage:
- *   npx tsx scripts/replay-shadow-history.ts [--dry-run] [--branch=LIVE|CANDIDATE|ALL]
+ *   npx tsx scripts/replay-shadow-history.ts --dry-run [--branch=LIVE|CANDIDATE|ALL]
+ *   npx tsx scripts/replay-shadow-history.ts --confirm-destructive [--branch=…]
  *
- * Point DATABASE_URL at the target DB (local Docker or prod Neon). Never commit prod URLs.
+ * Remote/prod DATABASE_URL requires `--confirm-destructive`. Never commit prod URLs.
  */
 import "dotenv/config";
 import type { Branch } from "../src/generated/prisma/client";
@@ -39,6 +40,7 @@ import {
   ymd,
 } from "../src/lib/shadow/sessions";
 import { decToNum } from "../src/lib/stocks/format";
+import { assertDestructiveAllowed } from "./lib/db-target-guard";
 
 const ORDER_TYPES = ["BUY", "ADD", "AVERAGE_DOWN", "REDUCE", "EXIT"] as const;
 const SEEDABLE_TYPES = ["AVOID", "WAIT", "DO_NOT_AVERAGE_DOWN"] as const;
@@ -239,6 +241,8 @@ async function main() {
     return;
   }
 
+  assertDestructiveAllowed("wipe + re-replay the shadow ledger");
+
   for (const branchRow of branches) {
     await wipeBranch(branchRow.id, branchRow.branch);
   }
@@ -248,6 +252,8 @@ async function main() {
   let filledTotal = 0;
   let enqueuedTotal = 0;
   let seededTotal = 0;
+  let resolvedTotal = 0;
+  let unresolvedTotal = 0;
 
   for (const sessionDay of walk) {
     const runDay = sessionDate(sessionDay);
@@ -292,18 +298,22 @@ async function main() {
       }
     }
 
+    // Resolve BEFORE the snapshot so credits whose horizon elapsed on this session (or in
+    // a cron gap ending here) land in this row's avoidedCreditDelta. Resolve-at-end left
+    // every historical snapshot at credit 0. Scope to wiped branches so a LIVE-only
+    // replay cannot resolve (and stamp) CANDIDATE counterfactuals.
+    const dayResolution = await resolvePendingCounterfactuals(sessions, runDay, budget, {
+      onlyBranchIds,
+    });
+    resolvedTotal += dayResolution.resolved;
+    unresolvedTotal += dayResolution.unresolved;
+
     await runFitnessSnapshot({ runDay, cursor: null, budget }, { onlyBranchIds });
   }
 
-  const resolution = await resolvePendingCounterfactuals(
-    sessions,
-    sessionDate(latest),
-    budget,
-  );
-
   console.log(
     `\nDone. filled≈${filledTotal} enqueued=${enqueuedTotal} seeded=${seededTotal}` +
-      ` resolved=${resolution.resolved} unresolved=${resolution.unresolved}`,
+      ` resolved=${resolvedTotal} unresolved=${unresolvedTotal}`,
   );
   await printSummary(branches.map((b) => b.id));
   console.log(
