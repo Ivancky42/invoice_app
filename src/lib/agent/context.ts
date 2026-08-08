@@ -629,6 +629,50 @@ export async function listStockReportItems(opts?: {
   return rows.map(serializeStockReportRow);
 }
 
+export function serializePriceHistoryRow(row: {
+  ticker: string;
+  date: Date;
+  open: Decimal | null;
+  close: Decimal;
+  adjClose: Decimal | null;
+  volume: bigint | null;
+  source: string;
+}) {
+  return {
+    ticker: row.ticker,
+    date: iso(row.date)!.slice(0, 10),
+    open: decToNum(row.open),
+    close: decToNum(row.close),
+    adjClose: decToNum(row.adjClose),
+    volume: row.volume === null ? null : Number(row.volume),
+    source: row.source,
+  };
+}
+
+export async function listPriceHistoryItems(opts: {
+  ticker: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}) {
+  const limit = opts.limit ?? 120;
+  const where: {
+    ticker: string;
+    date?: { gte?: Date; lte?: Date };
+  } = { ticker: opts.ticker.trim().toUpperCase() };
+  if (opts.from || opts.to) {
+    where.date = {};
+    if (opts.from) where.date.gte = new Date(`${opts.from}T00:00:00.000Z`);
+    if (opts.to) where.date.lte = new Date(`${opts.to}T00:00:00.000Z`);
+  }
+  const rows = await prisma.priceHistory.findMany({
+    where,
+    orderBy: { date: "desc" },
+    take: limit,
+  });
+  return rows.map(serializePriceHistoryRow);
+}
+
 export async function listTrendItems(detail = true) {
   const rows = await getTrends();
   return rows.map((t) => serializeTrendRow(t, detail));

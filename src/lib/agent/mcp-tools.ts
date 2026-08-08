@@ -9,6 +9,7 @@ import {
   listDailyLogItems,
   listIdeaItems,
   listPortfolioPositions,
+  listPriceHistoryItems,
   listStockReportItems,
   listTradeItems,
   listTrendItems,
@@ -20,6 +21,7 @@ import { logTrade } from "@/lib/agent/logTrade";
 import {
   dailyLogInputSchema,
   getContentPageInputSchema,
+  getPriceHistoryInputSchema,
   listDailyLogsQuerySchema,
   listDecisionReviewsQuerySchema,
   listReportsQuerySchema,
@@ -210,6 +212,21 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       const parsed = parseTool(listReportsQuerySchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       return textJson(await listStockReportItems(parsed));
+    },
+  );
+
+  server.registerTool(
+    "get_price_history",
+    {
+      title: "Get daily price history",
+      description:
+        "List PriceHistory daily OHLC bars for one ticker, newest first. Optional from/to YYYY-MM-DD; default limit 120 (max 500).",
+      inputSchema: getPriceHistoryInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(getPriceHistoryInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await listPriceHistoryItems(parsed));
     },
   );
 

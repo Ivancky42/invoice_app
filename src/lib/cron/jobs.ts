@@ -7,6 +7,7 @@ import {
   toPriceSyncLedgerDetail,
 } from "@/lib/cron/priceSyncJob";
 import type { Cadence } from "@/lib/cron/schedule";
+import { runPriceHistorySync } from "@/lib/pricehistory/sync";
 
 /** Remaining wall-clock the tick is willing to spend, checked by long jobs. */
 export type Budget = {
@@ -37,6 +38,7 @@ export type CronJob = {
 
 export const PRICE_SYNC_JOB = "price_sync";
 export const PORTFOLIO_SNAPSHOT_JOB = "portfolio_snapshot";
+export const PRICE_HISTORY_JOB = "price_history";
 
 /**
  * Ordered cron registry. Later commits append jobs here; order is the run
@@ -81,6 +83,14 @@ export const CRON_JOBS: CronJob[] = [
           failedTickers: outcome.failedTickers,
         },
       };
+    },
+  },
+  {
+    job: PRICE_HISTORY_JOB,
+    cadence: "daily",
+    dependsOn: [PRICE_SYNC_JOB],
+    async run(ctx) {
+      return runPriceHistorySync(ctx);
     },
   },
 ];

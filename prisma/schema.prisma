@@ -691,3 +691,32 @@ model JobRun {
   @@unique([job, runDay])
   @@index([runDay])
 }
+
+/// Permanent daily OHLC bar store — trading-session calendar and mark source
+/// for the shadow ledger. Never overwritten in place like Portfolio.currentPrice.
+model PriceHistory {
+  ticker    String
+  /// US session date (not the fetch timestamp).
+  date      DateTime @db.Date
+  open      Decimal? @db.Decimal(14, 4)
+  close     Decimal  @db.Decimal(14, 4)
+  adjClose  Decimal? @db.Decimal(14, 4)
+  volume    BigInt?
+  /// "finnhub" | "eodhd" | "stooq"
+  source    String
+  createdAt DateTime @default(now())
+
+  @@id([ticker, date])
+  @@index([date])
+}
+
+/// Per-ticker health of the daily price-history sync (last success/failure, streak).
+model TickerPriceStatus {
+  ticker              String    @id
+  lastSuccessAt       DateTime?
+  lastAttemptAt       DateTime?
+  lastSource          String?
+  lastError           String?
+  consecutiveFailures Int       @default(0)
+  updatedAt           DateTime  @updatedAt
+}

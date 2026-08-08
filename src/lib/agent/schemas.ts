@@ -232,6 +232,13 @@ export const upsertDecisionReviewInputSchema = z.object({
   rulesVersion: z.string().max(64).nullable().optional(),
 });
 
+export const getPriceHistoryInputSchema = z.object({
+  ticker: z.string().min(1).max(32),
+  from: dateYmd.optional(),
+  to: dateYmd.optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+
 export const listDecisionReviewsQuerySchema = z.object({
   ticker: z.string().min(1).max(32).optional(),
   reviewStatus: z.enum(enumValues(DecisionReviewStatus)).optional(),

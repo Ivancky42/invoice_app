@@ -42,7 +42,8 @@ function isCurrentClient(client: PrismaClient | undefined): client is PrismaClie
   return (
     typeof (client as { decisionReview?: unknown }).decisionReview !== "undefined" &&
     typeof (client as { contentPage?: unknown }).contentPage !== "undefined" &&
-    typeof (client as { jobRun?: unknown }).jobRun !== "undefined"
+    typeof (client as { jobRun?: unknown }).jobRun !== "undefined" &&
+    typeof (client as { priceHistory?: unknown }).priceHistory !== "undefined"
   );
 }
 

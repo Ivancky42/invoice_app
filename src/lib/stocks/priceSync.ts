@@ -39,7 +39,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Clean US-style ticker for Finnhub (Portfolio / Watchlist). */
-function stockSymbol(raw: string | null | undefined): string | null {
+export function stockSymbol(raw: string | null | undefined): string | null {
   const s = raw?.trim();
   if (!s) return null;
   if (isPriceSyncExcludedTicker(s)) return null;

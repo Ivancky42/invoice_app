@@ -17,6 +17,7 @@
     "db:resolve-portfolio-snapshot-breakdown-prod": "prisma migrate resolve --applied 20250527150000_portfolio_snapshot_breakdown --config prisma.config.ts",
     "db:repair-prod-migrations": "prisma migrate resolve --applied 20250527150000_portfolio_snapshot_breakdown --config prisma.config.ts && prisma migrate deploy --config prisma.config.ts",
     "db:resolve-cron-job-ledger-prod": "prisma migrate resolve --applied 20260808120000_cron_job_ledger --config prisma.config.ts",
+    "db:resolve-price-history-prod": "prisma migrate resolve --applied 20260808130000_price_history --config prisma.config.ts",
     "db:migrate-prod": "prisma migrate deploy --config prisma.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
