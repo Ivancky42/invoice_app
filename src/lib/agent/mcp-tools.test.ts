@@ -8,6 +8,7 @@ import { registerAgentMcpTools } from "@/lib/agent/mcp-tools";
  * can reach is security-relevant, not an implementation detail.
  */
 const EXPECTED_TOOL_NAMES = [
+  "add_evidence",
   "append_page_notes",
   "delete_watchlist",
   "get_config",

@@ -51,6 +51,36 @@ function directionalBreadth(
   return 0;
 }
 
+/**
+ * decisionReviewId → newest `observedAt` among its EvidenceItems of tier T1/T2 whose kind
+ * is not PRICE_ACTION/INFERENCE (those kinds satisfy nothing — src/lib/evidence/rules.ts).
+ * One query for the whole batch, not one per decision.
+ *
+ * Staleness is deliberately NOT filtered here: `evidenceStaleDays` is a per-branch limit
+ * resolved inside the loop below, so the cutoff is applied per-DR against this timestamp —
+ * simpler and exactly correct, versus a batch-wide max staleDays that would over-admit
+ * evidence for the stricter branch.
+ */
+async function loadLatestTier12EvidenceAt(
+  decisionReviewIds: string[],
+): Promise<Map<string, Date>> {
+  if (decisionReviewIds.length === 0) return new Map();
+  const rows = await prisma.evidenceItem.findMany({
+    where: {
+      decisionReviewId: { in: decisionReviewIds },
+      tier: { in: ["T1", "T2"] },
+      kind: { notIn: ["PRICE_ACTION", "INFERENCE"] },
+    },
+    select: { decisionReviewId: true, observedAt: true },
+    orderBy: { observedAt: "desc" },
+  });
+  const latest = new Map<string, Date>();
+  for (const r of rows) {
+    if (!latest.has(r.decisionReviewId)) latest.set(r.decisionReviewId, r.observedAt);
+  }
+  return latest;
+}
+
 export async function runBreadthClassify(ctx: JobContext): Promise<JobResult> {
   const detail: BreadthClassifyDetail = {
     classified: 0,
@@ -72,7 +102,11 @@ export async function runBreadthClassify(ctx: JobContext): Promise<JobResult> {
   });
   if (decisions.length === 0) return { done: true, detail: detail as unknown as Prisma.InputJsonValue };
 
-  const [sessions, themeOf] = await Promise.all([loadSessions(), loadThemeByTicker()]);
+  const [sessions, themeOf, latestTier12ByDecision] = await Promise.all([
+    loadSessions(),
+    loadThemeByTicker(),
+    loadLatestTier12EvidenceAt(decisions.map((d) => d.id)),
+  ]);
 
   // One breadth computation per distinct decisionSession, not per decision.
   const breadthBySession = new Map<string, SessionBreadth | null>();
@@ -149,9 +183,14 @@ export async function runBreadthClassify(ctx: JobContext): Promise<JobResult> {
     const themeBreadthRaw = themeBreadthFor(ticker, sessionBreadth.byTicker, themeOf);
     const excessMove = excessMoveOf(tickerReturn, sessionBreadth.medianReturn);
 
-    // EvidenceItem (tier-1/2 primary-source evidence) lands in a later commit; until then
-    // this is always false, so IDIOSYNCRATIC is only ever reached via excessMove here.
-    const hasTier12Evidence = false;
+    // True when the DR has a T1/T2 EvidenceItem whose kind is not PRICE_ACTION/INFERENCE
+    // (those kinds satisfy nothing per src/lib/evidence/rules.ts — same exclusion here)
+    // AND it is not stale: past `evidenceStaleDays` an item satisfies nothing there
+    // either, so counting it would mislabel the move IDIOSYNCRATIC and permanently
+    // disarm MOVE_CLASS_BLOCKS_THESIS_CHANGE for the name.
+    const latestTier12At = latestTier12ByDecision.get(dr.id) ?? null;
+    const staleCutoff = new Date(ctx.runDay.getTime() - limits.evidenceStaleDays * 86_400_000);
+    const hasTier12Evidence = latestTier12At !== null && latestTier12At >= staleCutoff;
 
     const moveClass = classifyMove({
       breadth,

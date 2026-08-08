@@ -34,6 +34,8 @@ import {
   logTradeInputSchema,
   patchPortfolioInputSchema,
   appendPageNotesInputSchema,
+  addEvidenceFieldsSchema,
+  addEvidenceInputSchema,
   getPageNotesInputSchema,
   stockReportInputSchema,
   upsertContentPageInputSchema,
@@ -46,6 +48,7 @@ import {
   validationFailure,
 } from "@/lib/agent/schemas";
 import {
+  addEvidence,
   appendPageNotes,
   deleteWatchlist,
   getContentPage,
@@ -500,7 +503,30 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     async (args) => {
       const parsed = parseTool(upsertDecisionReviewInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson(await upsertDecisionReview(parsed));
+      const result = await upsertDecisionReview(parsed);
+      if (!result.ok) {
+        return { ...textJson(result), isError: true as const };
+      }
+      return textJson(result);
+    },
+  );
+
+  server.registerTool(
+    "add_evidence",
+    {
+      title: "Add evidence",
+      description:
+        "Append EvidenceItem rows to an existing Decision Review (by decisionReviewId or idempotencyKey, within branch — default LIVE). Additive — use upsert_decision_review's evidence[] to replace-on-replay instead. 404 when the DR is not found on that branch.",
+      inputSchema: addEvidenceFieldsSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(addEvidenceInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      const result = await addEvidence(parsed);
+      if (!result.ok) {
+        return { ...textJson(result), isError: true as const };
+      }
+      return textJson(result);
     },
   );
 

@@ -21,6 +21,7 @@ import {
   serializeWatchlistRow,
 } from "@/lib/agent/context";
 import type {
+  addEvidenceInputSchema,
   appendPageNotesInputSchema,
   dailyLogInputSchema,
   listDecisionReviewsQuerySchema,
@@ -43,6 +44,7 @@ import {
   getRuleSet,
   kernelGate,
 } from "@/lib/rules/resolve";
+import { checkEvidence, type EvidenceEnforcement } from "@/lib/evidence/rules";
 
 type DailyLogInput = z.infer<typeof dailyLogInputSchema>;
 type StockReportInput = z.infer<typeof stockReportInputSchema>;
@@ -55,6 +57,7 @@ type AppendPageNotesInput = z.infer<typeof appendPageNotesInputSchema>;
 type UpsertDecisionReviewInput = z.infer<typeof upsertDecisionReviewInputSchema>;
 type ListDecisionReviewsQuery = z.infer<typeof listDecisionReviewsQuerySchema>;
 type UpsertContentPageInput = z.infer<typeof upsertContentPageInputSchema>;
+type AddEvidenceInput = z.infer<typeof addEvidenceInputSchema>;
 
 function parseYmdNoon(ymd: string): Date {
   return new Date(`${ymd}T12:00:00.000Z`);
@@ -543,6 +546,37 @@ export async function getPageNotes(input: {
   };
 }
 
+/** `EVIDENCE_ENFORCEMENT` env — anything other than "strict" is the warn-only default. */
+function evidenceEnforcementMode(): EvidenceEnforcement {
+  return process.env.EVIDENCE_ENFORCEMENT === "strict" ? "strict" : "warn";
+}
+
+/**
+ * Replace-on-replay: delete existing EvidenceItem rows for the DR then recreate from
+ * `items` — idempotent, so a replayed upsert_decision_review call converges rather than
+ * appending duplicates. `undefined` (caller omitted `evidence` entirely) leaves whatever
+ * was previously persisted untouched — only an explicit (possibly empty) array clears it.
+ */
+async function replaceEvidenceItems(
+  tx: PrismaTypes.TransactionClient,
+  decisionReviewId: string,
+  items: UpsertDecisionReviewInput["evidence"],
+): Promise<void> {
+  if (items === undefined) return;
+  await tx.evidenceItem.deleteMany({ where: { decisionReviewId } });
+  if (items.length === 0) return;
+  await tx.evidenceItem.createMany({
+    data: items.map((it) => ({
+      decisionReviewId,
+      tier: it.tier,
+      kind: it.kind,
+      summary: it.summary,
+      sourceUrl: it.sourceUrl ?? null,
+      observedAt: new Date(it.observedAt),
+    })),
+  });
+}
+
 export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
   const ticker = input.ticker?.trim().toUpperCase() || null;
   const branch = input.branch ?? "LIVE";
@@ -564,6 +598,73 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
       : input.catalystDate === null
         ? null
         : parseYmdNoon(input.catalystDate);
+
+  // Looked up once, ahead of the write, so the evidence check below can see the row the
+  // write will actually replay onto (fresh creates never have one).
+  const existing = idempotencyKey
+    ? await prisma.decisionReview.findUnique({ where: { idempotencyKey } })
+    : null;
+
+  // Mirror the server-derived priorThesisState logic further down (a caller-omitted or
+  // stale prior must not desync from what the write will actually persist). Both an
+  // omitted AND an explicit null fall back to the existing row: the write below maps
+  // null to `undefined` (Prisma no-op), so the row keeps its current value and the check
+  // must be run against that value, not against a null the write never persists.
+  const decisionTypeForCheck = input.decisionType ?? existing?.decisionType ?? null;
+  const thesisStateForCheck = input.thesisState ?? existing?.thesisState ?? null;
+  const priorThesisStateForCheck =
+    existing && input.thesisState != null && input.thesisState !== existing.thesisState
+      ? existing.thesisState
+      : (input.priorThesisState ?? existing?.priorThesisState ?? null);
+  // moveClass is server-computed by breadth_classify and never accepted from the caller.
+  // On replay the existing row's value is authoritative; a fresh DR has none yet — null
+  // moveClass is the bootstrap case and simply skips the move-class rule in checkEvidence.
+  const moveClassForCheck = existing?.moveClass ?? null;
+
+  // Same rule as replaceEvidenceItems: an omitted `evidence` leaves the persisted items
+  // untouched, so the check must run against THOSE rows — otherwise a replay that carries
+  // no evidence (the standard outcome-review shape) is judged as zero evidence and gets
+  // rejected in strict mode / warned on every time. An explicit array is the replacement
+  // and is checked as-is — including an explicit `[]`, which deliberately clears the
+  // evidence and therefore legitimately fails an exposure DR in strict mode.
+  const evidenceForCheck =
+    input.evidence !== undefined
+      ? input.evidence.map((e) => ({
+          tier: e.tier,
+          kind: e.kind,
+          observedAt: new Date(e.observedAt),
+        }))
+      : existing
+        ? await prisma.evidenceItem.findMany({
+            where: { decisionReviewId: existing.id },
+            select: { tier: true, kind: true, observedAt: true },
+          })
+        : [];
+
+  const limits = (await getRuleSet(branch)).limits;
+  const enforcement = evidenceEnforcementMode();
+  const evidenceCheck = checkEvidence({
+    decisionType: decisionTypeForCheck,
+    thesisState: thesisStateForCheck,
+    priorThesisState: priorThesisStateForCheck,
+    moveClass: moveClassForCheck,
+    evidence: evidenceForCheck,
+    now: new Date(),
+    limits: {
+      evidenceRecencyDays: limits.evidenceRecencyDays,
+      evidenceStaleDays: limits.evidenceStaleDays,
+    },
+    enforcement,
+  });
+
+  if (enforcement === "strict" && evidenceCheck.failures.length > 0) {
+    // Hard failure: writes NOTHING (mirrors logTrade's 409-style shape).
+    return {
+      ok: false as const,
+      error: "evidence_insufficient" as const,
+      failures: evidenceCheck.failures,
+    };
+  }
 
   const data: PrismaTypes.DecisionReviewUncheckedCreateInput = {
     title: input.title.trim(),
@@ -609,36 +710,102 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
     idempotencyKey: idempotencyKey ?? undefined,
   };
 
-  if (idempotencyKey) {
-    const key = idempotencyKey;
-    const existing = await prisma.decisionReview.findUnique({
-      where: { idempotencyKey: key },
-    });
-    if (existing) {
-      // `branch` is dropped alongside `idempotencyKey`: a replay updates the row the key
-      // already identifies and must never move it across branches — that would flip a
-      // CANDIDATE decision to LIVE (and let it enqueue into the real branch's book).
-      const { idempotencyKey: _k, branch: _b, ...update } = data;
-      // Server-derived on the update path (same pattern as ruleVersionId above): when
-      // the replay changes thesisState, priorThesisState must be the state actually
-      // being replaced — a caller-omitted (or stale) value would preserve an old prior
-      // and desync the pair, e.g. (BROKEN, INTACT) erasing the WEAKENING step. On
-      // fresh create the caller's value stands.
-      if (input.thesisState != null && input.thesisState !== existing.thesisState) {
-        update.priorThesisState = existing.thesisState;
-      }
-      const row = await prisma.decisionReview.update({
+  if (idempotencyKey && existing) {
+    // `branch` is dropped alongside `idempotencyKey`: a replay updates the row the key
+    // already identifies and must never move it across branches — that would flip a
+    // CANDIDATE decision to LIVE (and let it enqueue into the real branch's book).
+    const { idempotencyKey: _k, branch: _b, ...update } = data;
+    // Server-derived on the update path (same pattern as ruleVersionId above): when
+    // the replay changes thesisState, priorThesisState must be the state actually
+    // being replaced — a caller-omitted (or stale) value would preserve an old prior
+    // and desync the pair, e.g. (BROKEN, INTACT) erasing the WEAKENING step. On
+    // fresh create the caller's value stands.
+    if (input.thesisState != null && input.thesisState !== existing.thesisState) {
+      update.priorThesisState = existing.thesisState;
+    }
+    const row = await prisma.$transaction(async (tx) => {
+      const updated = await tx.decisionReview.update({
         where: { id: existing.id },
         data: update,
       });
-      return { ok: true as const, idempotentReplay: true as const, decision: serializeDecisionReviewRow(row) };
-    }
-    const row = await prisma.decisionReview.create({ data });
-    return { ok: true as const, idempotentReplay: false as const, decision: serializeDecisionReviewRow(row) };
+      await replaceEvidenceItems(tx, updated.id, input.evidence);
+      return updated;
+    });
+    return {
+      ok: true as const,
+      idempotentReplay: true as const,
+      decision: serializeDecisionReviewRow(row),
+      warnings: evidenceCheck.warnings,
+    };
   }
 
-  const row = await prisma.decisionReview.create({ data });
-  return { ok: true as const, idempotentReplay: false as const, decision: serializeDecisionReviewRow(row) };
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.decisionReview.create({ data });
+    await replaceEvidenceItems(tx, created.id, input.evidence);
+    return created;
+  });
+  return {
+    ok: true as const,
+    idempotentReplay: false as const,
+    decision: serializeDecisionReviewRow(row),
+    warnings: evidenceCheck.warnings,
+  };
+}
+
+/**
+ * Append EvidenceItem rows to an existing DecisionReview. Looked up by id or by
+ * idempotencyKey within `branch` (default LIVE) — 404 when neither resolves a row.
+ * Additive, unlike upsertDecisionReview's evidence replace-on-replay.
+ */
+export async function addEvidence(input: AddEvidenceInput) {
+  const branch = input.branch ?? "LIVE";
+  // Same prefixing rule as upsertDecisionReview: the two branches replay the SAME routine
+  // with the same bare keys, so an unprefixed CANDIDATE lookup would resolve the LIVE row
+  // and append shadow evidence onto the real decision (and can flip its moveClass).
+  const rawKey = input.idempotencyKey?.trim() || null;
+  const idempotencyKey =
+    rawKey === null ? null : branch === "LIVE" ? rawKey : `${branch}:${rawKey}`;
+
+  const existing = input.decisionReviewId
+    ? await prisma.decisionReview.findUnique({ where: { id: input.decisionReviewId } })
+    : await prisma.decisionReview.findUnique({ where: { idempotencyKey: idempotencyKey! } });
+  // No cross-branch appends: the id path bypasses key prefixing entirely, so a row found
+  // on the other branch is reported as not-found rather than written to.
+  if (!existing || existing.branch !== branch) {
+    return {
+      ok: false as const,
+      status: 404 as const,
+      reason: "decision_review_not_found",
+      decisionReviewId: input.decisionReviewId ?? null,
+      idempotencyKey,
+      branch,
+    };
+  }
+
+  const rows = await prisma.evidenceItem.createManyAndReturn({
+    data: input.items.map((it) => ({
+      decisionReviewId: existing.id,
+      tier: it.tier,
+      kind: it.kind,
+      summary: it.summary,
+      sourceUrl: it.sourceUrl ?? null,
+      observedAt: new Date(it.observedAt),
+    })),
+  });
+
+  return {
+    ok: true as const,
+    decisionReviewId: existing.id,
+    added: rows.length,
+    items: rows.map((r) => ({
+      id: r.id,
+      tier: r.tier,
+      kind: r.kind,
+      summary: r.summary,
+      sourceUrl: r.sourceUrl,
+      observedAt: r.observedAt.toISOString(),
+    })),
+  };
 }
 
 export async function listDecisionReviews(query: ListDecisionReviewsQuery = {}) {

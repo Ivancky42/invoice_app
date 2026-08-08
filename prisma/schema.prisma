@@ -685,6 +685,52 @@ model DecisionReview {
   @@index([branch])
 }
 
+/// Evidence source strength, weakest→strongest is T4→T1 (Cowork §9 signal-tier semantics,
+/// mapped onto evidence sourcing: T1/T2 = primary-source ("tier-1/2" evidence — see
+/// hasTier12Evidence in src/lib/fitness/math.ts); T3 = credible secondary reporting;
+/// T4 = never sufficient alone (see EvidenceKind for the kind→tier convention).
+enum EvidenceTier {
+  T1
+  T2
+  T3
+  T4
+}
+
+/// Source kind for one EvidenceItem. Conventional tier alignment (not DB-enforced):
+/// T1 — FILING, EARNINGS_CALL, MANAGEMENT_GUIDANCE, PRIMARY_DATA (primary source, verifiable).
+/// T2 — NEWS_REPORT, ANALYST_NOTE (credible secondary reporting on primary events).
+/// T3 — SOCIAL_SENTIMENT (crowd/unverified signal).
+/// T4 — PRICE_ACTION, INFERENCE, OTHER (never sufficient alone — see rules.ts).
+enum EvidenceKind {
+  FILING
+  EARNINGS_CALL
+  MANAGEMENT_GUIDANCE
+  PRIMARY_DATA
+  NEWS_REPORT
+  ANALYST_NOTE
+  SOCIAL_SENTIMENT
+  PRICE_ACTION
+  INFERENCE
+  OTHER
+}
+
+/// Evidence cited for one DecisionReview (Commit 8 — warn-only enforcement via
+/// EVIDENCE_ENFORCEMENT; see src/lib/evidence/rules.ts). Plain FK, no Prisma relation —
+/// matches ShadowOrder/Counterfactual's decisionReviewId convention.
+model EvidenceItem {
+  id               String       @id @default(cuid())
+  decisionReviewId String
+  tier             EvidenceTier
+  kind             EvidenceKind
+  summary          String
+  sourceUrl        String?
+  /// When the evidence became knowable (not when it was logged).
+  observedAt       DateTime
+  createdAt        DateTime     @default(now())
+
+  @@index([decisionReviewId])
+}
+
 /// Living strategy docs (Cowork Strategy Lessons Summary + Investment Style Profile).
 /// Neon SoT so monthly routines can update; seeded from Notion pages.
 enum ContentPageKey {

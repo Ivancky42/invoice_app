@@ -22,6 +22,7 @@
     "db:resolve-shadow-ledger-prod": "prisma migrate resolve --applied 20260808150000_shadow_ledger --config prisma.config.ts",
     "db:resolve-fitness-prod": "prisma migrate resolve --applied 20260808160000_fitness --config prisma.config.ts",
     "db:resolve-noise-thesis-prod": "prisma migrate resolve --applied 20260808170000_noise_thesis --config prisma.config.ts",
+    "db:resolve-evidence-prod": "prisma migrate resolve --applied 20260808180000_evidence --config prisma.config.ts",
     "db:migrate-prod": "prisma migrate deploy --config prisma.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

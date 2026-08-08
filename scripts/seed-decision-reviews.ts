@@ -86,6 +86,11 @@ async function main() {
 			...seed,
 			rulesVersion,
 		});
+		if (!result.ok) {
+			throw new Error(
+				`${seed.ticker} ${seed.decisionType}: evidence_insufficient — ${JSON.stringify(result.failures)}`,
+			);
+		}
 		console.log(
 			`${seed.ticker} ${seed.decisionType}:`,
 			result.idempotentReplay ? "already seeded (updated)" : "created",

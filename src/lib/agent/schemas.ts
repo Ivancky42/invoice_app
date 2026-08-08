@@ -9,6 +9,8 @@ import {
   DecisionType,
   DecisionVerdict,
   DiscoveredVia,
+  EvidenceKind,
+  EvidenceTier,
   IdeaStage,
   IdeaStatus,
   MarketCapBucket,
@@ -232,6 +234,43 @@ const decisionIdempotencyKeySchema = z
     message: "reserved_idempotency_key_prefix",
   });
 
+/** Accepts YYYY-MM-DD or a full ISO datetime — evidence observedAt granularity varies. */
+const observedAtSchema = z
+  .string()
+  .min(1)
+  .max(40)
+  .refine((v) => !Number.isNaN(Date.parse(v)), { message: "observedAt must be a valid date" });
+
+export const evidenceItemInputSchema = z.object({
+  tier: z.enum(enumValues(EvidenceTier)),
+  kind: z.enum(enumValues(EvidenceKind)),
+  summary: z.string().min(10).max(2000),
+  sourceUrl: z.string().max(2000).nullable().optional(),
+  observedAt: observedAtSchema,
+});
+
+export const evidenceItemsInputSchema = z.array(evidenceItemInputSchema).max(20);
+
+/**
+ * `add_evidence` — append evidence to an existing DecisionReview.
+ *
+ * `branch` (default LIVE) selects which branch's DR is addressed: the server applies the
+ * same CANDIDATE key prefixing as upsert_decision_review, so a CANDIDATE routine replaying
+ * a shared routine with its BARE key appends to the CANDIDATE decision, not the LIVE one.
+ * The id path is branch-checked server-side for the same reason.
+ */
+export const addEvidenceFieldsSchema = z.object({
+  decisionReviewId: z.string().min(1).max(64).optional(),
+  idempotencyKey: decisionIdempotencyKeySchema.optional(),
+  items: evidenceItemsInputSchema.min(1),
+  branch: branchInputSchema,
+});
+
+export const addEvidenceInputSchema = addEvidenceFieldsSchema.refine(
+  (v) => Boolean(v.decisionReviewId?.trim() || v.idempotencyKey?.trim()),
+  { message: "decisionReviewId or idempotencyKey is required" },
+);
+
 export const upsertDecisionReviewInputSchema = z.object({
   idempotencyKey: decisionIdempotencyKeySchema.optional(),
   title: z.string().min(1).max(500),
@@ -273,6 +312,8 @@ export const upsertDecisionReviewInputSchema = z.object({
   lessonLearned: z.string().max(8000).nullable().optional(),
   updateStrategy: z.boolean().nullable().optional(),
   rulesVersion: z.string().max(64).nullable().optional(),
+  /** Evidence cited for this decision; checked (warn/strict) in upsertDecisionReview. */
+  evidence: evidenceItemsInputSchema.optional(),
   branch: branchInputSchema,
 });
 
