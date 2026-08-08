@@ -41,7 +41,8 @@ function isCurrentClient(client: PrismaClient | undefined): client is PrismaClie
   // Probe the newest models — an older singleton may still expose older delegates.
   return (
     typeof (client as { decisionReview?: unknown }).decisionReview !== "undefined" &&
-    typeof (client as { contentPage?: unknown }).contentPage !== "undefined"
+    typeof (client as { contentPage?: unknown }).contentPage !== "undefined" &&
+    typeof (client as { jobRun?: unknown }).jobRun !== "undefined"
   );
 }
 

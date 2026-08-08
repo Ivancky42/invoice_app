@@ -658,3 +658,36 @@ model ContentPage {
   syncedAt     DateTime?
   updatedAt    DateTime       @updatedAt
 }
+
+/// Lifecycle of one entry in the cron job ledger.
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+/// Cron dispatcher ledger — one row per (job, UTC run day).
+/// The reserved `__tick` job holds the dispatcher lease for the day.
+model JobRun {
+  id         String    @id @default(cuid())
+  job        String
+  /// UTC calendar date of the tick invocation.
+  runDay     DateTime  @db.Date
+  status     JobStatus
+  startedAt  DateTime?
+  finishedAt DateTime?
+  /// Lease expiry while status is RUNNING; stale leases can be reclaimed.
+  leaseUntil DateTime?
+  /// Resume point for jobs that return `{ done: false }`.
+  cursor     Json?
+  error      String?
+  /// Job-specific summary handed to later jobs / ops.
+  detail     Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([job, runDay])
+  @@index([runDay])
+}
