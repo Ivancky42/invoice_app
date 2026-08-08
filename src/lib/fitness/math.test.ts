@@ -135,6 +135,46 @@ describe("permittedSize", () => {
       permittedSize({ limits, decisionType: "DO_NOT_AVERAGE_DOWN", currentWeight: 0.08 }),
     ).toBe(0);
   });
+
+  it("returns 0 for DO_NOT_AVERAGE_DOWN when there is no open weight (no phantom add)", () => {
+    // BULL-shaped: DNAD with held=0 used to return the full confirmation band (0.06).
+    expect(
+      permittedSize({ limits, decisionType: "DO_NOT_AVERAGE_DOWN", currentWeight: 0 }),
+    ).toBe(0);
+    expect(permittedSize({ limits, decisionType: "DO_NOT_AVERAGE_DOWN" })).toBe(0);
+  });
+
+  it("zeros size when already at/over the single-name cap even if the tier band is large", () => {
+    expect(
+      permittedSize({
+        limits,
+        decisionType: "AVOID",
+        conviction: 5,
+        currentWeight: 0.15,
+      }),
+    ).toBe(0);
+    expect(
+      permittedSize({
+        limits,
+        decisionType: "AVOID",
+        conviction: 5,
+        currentWeight: 0.2,
+      }),
+    ).toBe(0);
+  });
+
+  it("zeros a SPECULATIVE add when the sleeve is already at/over its cap", () => {
+    expect(
+      permittedSize({
+        limits,
+        decisionType: "AVOID",
+        conviction: 2,
+        sleeve: "SPECULATIVE",
+        currentWeight: 0.02,
+        speculativeSleeveWeight: limits.speculativeSleevePct,
+      }),
+    ).toBe(0);
+  });
 });
 
 describe("windowReturn / maxDrawdown", () => {

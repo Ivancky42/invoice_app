@@ -10,16 +10,18 @@
  * refusals are not dark for a full quarter; the full-horizon row stores the residual
  * (raw_63 − already-recognized shorter credits) so lifetime sum equals the quarter
  * measure without double-counting. Score the loop on 21 for speed; keep 63 alongside and
- * compare them quarterly — systematic disagreement is itself a lesson (e.g. bounce-then-
- * fade names like BULL debiting at 21 while the round trip looks different at 63).
+ * compare them quarterly — disagreement is a lesson, but not every debit is a horizon
+ * artifact (check permittedSize headroom first).
  *
- * Reads PriceHistory, DecisionReview, the shadow ledger and the branch ruleset only. No
- * Portfolio / Trade / Config state is consulted: a paper book must stay uncontaminated.
+ * LIVE seeds size against the real book (the book those refusals were about). CANDIDATE
+ * seeds size against the paper book only. Reads PriceHistory, DecisionReview, ruleset,
+ * shadow ledger; LIVE sizing also reads Portfolio/Trade for headroom — never writes them.
  */
 import type { Prisma } from "@/generated/prisma/client";
 import type { DecisionType } from "@/generated/prisma/client";
 import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { counterfactualCredit, permittedSize } from "@/lib/fitness/math";
+import { loadLiveBookExposure } from "@/lib/fitness/liveBookExposure";
 import { prisma } from "@/lib/prisma";
 import { getRuleSet } from "@/lib/rules/resolve";
 import { branchBook, ensureShadowBranches, listBranches } from "@/lib/shadow/branches";
@@ -141,13 +143,16 @@ export async function seedCounterfactualsForBranch(
   const latestSession = latestSessionOnOrBeforeIn(sessions, ymd(runDay));
   if (!latestSession) return { seeded, skipped: decisions.length, truncated: false };
 
-  const [book, ruleSet] = await Promise.all([
+  const [book, ruleSet, liveExposure] = await Promise.all([
     branchBook(branchRow.id, latestSession),
     getRuleSet(branchRow.branch),
+    // LIVE refusals are about the real book; paper weights alone invent phantom adds
+    // (BULL DNAD at permittedSize 0.06 while already over the Speculative band).
+    branchRow.branch === "LIVE" ? loadLiveBookExposure() : Promise.resolve(null),
   ]);
 
-  // Open shadow weights: the DNAD sizer needs the position it declined to add to, and
-  // the WAIT double-count guard needs to know the branch already owns the name.
+  // Open shadow weights: WAIT-on-held double-count guard is paper-only; DNAD/AVOID size
+  // for LIVE prefers real-book weight below.
   const weightByTicker = new Map<string, number>();
   for (const position of book.positions) {
     const value = position.mark === null ? 0 : position.shares * position.mark;
@@ -196,11 +201,15 @@ export async function seedCounterfactualsForBranch(
 
     const ticker = dr.ticker!.trim().toUpperCase();
     const decisionType = dr.decisionType!;
-    const heldWeight = weightByTicker.get(ticker) ?? 0;
+    const paperWeight = weightByTicker.get(ticker) ?? 0;
+    const heldWeight = liveExposure?.weightByTicker.get(ticker) ?? paperWeight;
+    const sleeve = liveExposure?.sleeveByTicker.get(ticker) ?? null;
+    const speculativeSleeveWeight = liveExposure?.speculativeSleeveWeight ?? 0;
 
     // WAIT on a name the branch ALREADY HOLDS is a HOLD, not a refusal to deploy: the
     // position's own P&L is already in NAV, so crediting it again would double-count the
     // same price move (once in the book, once as avoided loss). No counterfactual.
+    // Paper hold is the double-count trigger; real-only hold still sizes via headroom.
     if (decisionType === "WAIT" && weightByTicker.has(ticker)) {
       skipped += 1;
       continue;
@@ -224,12 +233,16 @@ export async function seedCounterfactualsForBranch(
       limits: ruleSet.limits,
       decisionType,
       conviction: dr.convictionScore,
-      // Sleeve is unknown here: DecisionReview does not carry one and the sleeve lives on
-      // the REAL book, which the shadow ledger must not read. The sleeve cap therefore
-      // only ever tightens sizes when a caller can supply it.
-      sleeve: null,
+      sleeve,
       currentWeight: heldWeight,
+      speculativeSleeveWeight,
     });
+    // Zero headroom → nothing was refused; do not seed a row that would resolve to 0
+    // credit and inflate "resolved" counts without information.
+    if (size <= 0) {
+      skipped += 1;
+      continue;
+    }
 
     for (const horizonSessions of COUNTERFACTUAL_HORIZONS) {
       if (seededKeys.has(`${dr.id}:${horizonSessions}`)) continue;

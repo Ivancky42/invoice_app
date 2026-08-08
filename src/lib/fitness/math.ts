@@ -101,13 +101,16 @@ function bandForConviction(
  *
  * DO_NOT_AVERAGE_DOWN is sized as the INCREMENTAL add it refused, not as a fresh position:
  * the branch already holds `currentWeight`, so the only thing it declined was the top-up
- * to the confirmation band. Sizing it as a full position roughly TRIPLES every DNAD credit
- * (and debit) and would let one rule dominate the fitness signal.
+ * toward the confirmation band. Sizing it as a full position roughly TRIPLES every DNAD
+ * credit (and debit) and would let one rule dominate the fitness signal. If
+ * `currentWeight` is 0, there is no position to average into — permitted size is 0 (a
+ * phantom 6% "add" would invent a trade the rules never faced).
  *
- * The single-position cap is applied as HEADROOM (cap − currentWeight) for EVERY decision
- * type, matching how a real buy is sized (src/lib/shadow/sizing.ts `buySizeFraction`):
- * refusing a name already held at 0.10 under a 0.15 cap only declined the 0.05 top-up, so
- * treating the cap as an absolute would over-credit (and over-debit) every held name.
+ * Binding headroom is applied for EVERY decision type:
+ *   min(tierOrIncremental, singlePositionPct − held, speculativeSleevePct − sleeveHeld)
+ * matching how a real buy is sized (`buySizeFraction`). Refusing a name already at/over
+ * the cap declined nothing, so credit must be zero — otherwise the ledger charges itself
+ * for foregone gains on trades it was never permitted to make.
  */
 export function permittedSize({
   limits,
@@ -119,10 +122,15 @@ export function permittedSize({
 }: PermittedSizeInput): number {
   const held = Math.max(0, Number.isFinite(currentWeight) ? currentWeight : 0);
 
-  let size =
-    decisionType === "DO_NOT_AVERAGE_DOWN"
-      ? Math.max(0, limits.tierBands.CONFIRMATION[1] - held)
-      : bandForConviction(conviction, limits);
+  let size: number;
+  if (decisionType === "DO_NOT_AVERAGE_DOWN") {
+    // No open weight → this is not an average-down the sizer can price; do not invent a
+    // full confirmation-band open (that was the BULL debit bug).
+    if (held <= 0) return 0;
+    size = Math.max(0, limits.tierBands.CONFIRMATION[1] - held);
+  } else {
+    size = bandForConviction(conviction, limits);
+  }
 
   size = Math.min(size, Math.max(0, limits.singlePositionPct - held));
 

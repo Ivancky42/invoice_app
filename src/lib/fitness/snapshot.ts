@@ -276,7 +276,10 @@ async function snapshotBranch(
     },
   });
   const navSeries = [...history.map((h) => decToNum(h.nav) ?? 0), nav];
-  // Rolling window peak-to-trough (lifetime HWM froze across sessions while NAV moved).
+  // Rolling window peak-to-trough of the REALIZED paper NAV path only. Counterfactual
+  // credits are a flat additive term and do not deepen this drawdown — a refused volatile
+  // add is debited for return without a matching risk penalty. That gap is deliberate for
+  // now (kernel fitness uses shadow DD); do not fold CF notionals into navSeries here.
   const rollingNavs = navSeries.slice(-FITNESS_WINDOW_SESSIONS);
   const branchMaxDrawdown = maxDrawdown(rollingNavs);
 
