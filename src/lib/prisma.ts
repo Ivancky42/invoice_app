@@ -44,7 +44,10 @@ function isCurrentClient(client: PrismaClient | undefined): client is PrismaClie
     typeof (client as { contentPage?: unknown }).contentPage !== "undefined" &&
     typeof (client as { jobRun?: unknown }).jobRun !== "undefined" &&
     typeof (client as { priceHistory?: unknown }).priceHistory !== "undefined" &&
-    typeof (client as { ruleVersion?: unknown }).ruleVersion !== "undefined"
+    typeof (client as { ruleVersion?: unknown }).ruleVersion !== "undefined" &&
+    typeof (client as { shadowBranch?: unknown }).shadowBranch !== "undefined" &&
+    typeof (client as { shadowOrder?: unknown }).shadowOrder !== "undefined" &&
+    typeof (client as { shadowPosition?: unknown }).shadowPosition !== "undefined"
   );
 }
 

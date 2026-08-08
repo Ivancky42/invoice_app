@@ -35,7 +35,7 @@ import type {
 } from "@/lib/agent/schemas";
 import type { z } from "zod";
 import { asReportBlocks, truncatePageNotes } from "@/lib/content/blocks";
-import type { WatchlistAction } from "@/generated/prisma/client";
+import type { Branch, WatchlistAction } from "@/generated/prisma/client";
 import { contentPageTitle, ensureContentPages } from "@/lib/agent/contentPages";
 import {
   clearRuleSetCache,
@@ -129,12 +129,12 @@ function assignDefined<T extends Record<string, unknown>>(
 }
 
 /**
- * RuleVersion in force for LIVE writes, stamped server-side (never from input, like
+ * RuleVersion in force on `branch`, stamped server-side (never from input, like
  * upsidePct). Null when resolution degraded to disk — attribution is unknown, not zero.
  * Cheap: getRuleSet is cached 60s, so this is not a per-write DB round-trip.
  */
-async function liveRuleVersionId(): Promise<number | null> {
-  const ruleSet = await getRuleSet("LIVE");
+async function branchRuleVersionId(branch: Branch = "LIVE"): Promise<number | null> {
+  const ruleSet = await getRuleSet(branch);
   if (ruleSet.degraded || ruleSet.versionId <= 0) return null;
   return ruleSet.versionId;
 }
@@ -146,7 +146,8 @@ export async function upsertDailyLog(input: DailyLogInput) {
     input.title?.trim() ||
     (routineType === "EARNINGS" ? `Earnings ${input.logDate}` : input.logDate);
 
-  const ruleVersionId = await liveRuleVersionId();
+  const branch = input.branch ?? "LIVE";
+  const ruleVersionId = await branchRuleVersionId(branch);
 
   const update: PrismaTypes.DailyLogUpdateInput = {};
   assignDefined(update as Record<string, unknown>, {
@@ -165,12 +166,13 @@ export async function upsertDailyLog(input: DailyLogInput) {
   });
 
   const row = await prisma.dailyLog.upsert({
-    // Agent writes are LIVE-only; shadow runs write their own branch rows.
-    where: { logDate_routineType_branch: { logDate, routineType, branch: "LIVE" } },
+    // Widened natural key: LIVE and CANDIDATE keep separate rows for the same day.
+    where: { logDate_routineType_branch: { logDate, routineType, branch } },
     create: {
       title,
       logDate,
       routineType,
+      branch,
       marketContext: jsonField(input.marketContext) as PrismaTypes.InputJsonValue,
       topNews: jsonField(input.topNews) as PrismaTypes.InputJsonValue,
       portfolioMove: jsonField(input.portfolioMove) as PrismaTypes.InputJsonValue,
@@ -190,6 +192,7 @@ export async function upsertDailyLog(input: DailyLogInput) {
     title: row.title,
     logDate: row.logDate?.toISOString() ?? null,
     routineType: row.routineType,
+    branch: row.branch,
     flaggedTickers: row.flaggedTickers,
     rulesVersion: row.rulesVersion,
   };
@@ -198,21 +201,23 @@ export async function upsertDailyLog(input: DailyLogInput) {
 export async function upsertStockReport(input: StockReportInput) {
   const reportDate = parseYmdNoon(input.reportDate);
   const title = input.title?.trim() || `${input.reportType} ${input.reportDate}`;
-  const ruleVersionId = await liveRuleVersionId();
+  const branch = input.branch ?? "LIVE";
+  const ruleVersionId = await branchRuleVersionId(branch);
 
   const row = await prisma.stockReport.upsert({
     where: {
-      // Agent writes are LIVE-only; shadow runs write their own branch rows.
+      // Widened natural key: LIVE and CANDIDATE keep separate rows for the same date.
       reportType_reportDate_branch: {
         reportType: input.reportType,
         reportDate,
-        branch: "LIVE",
+        branch,
       },
     },
     create: {
       title,
       reportType: input.reportType,
       reportDate,
+      branch,
       content: input.content as PrismaTypes.InputJsonValue,
       rulesVersion: input.rulesVersion ?? null,
       ruleVersionId,
@@ -231,6 +236,7 @@ export async function upsertStockReport(input: StockReportInput) {
     title: row.title,
     reportType: row.reportType,
     reportDate: row.reportDate?.toISOString() ?? null,
+    branch: row.branch,
     rulesVersion: row.rulesVersion,
   };
 }
@@ -419,6 +425,17 @@ export async function appendPageNotes(input: AppendPageNotesInput) {
   if (incoming.length === 0) {
     return { ok: false as const, status: 400 as const, reason: "empty_blocks", ticker };
   }
+  // pageNotes live on the real Portfolio/Watchlist rows, which have no branch column.
+  // Accepting a CANDIDATE append would write shadow prose into the real book, so the
+  // branch is validated and refused rather than silently ignored.
+  if ((input.branch ?? "LIVE") !== "LIVE") {
+    return {
+      ok: false as const,
+      status: 400 as const,
+      reason: "branch_not_supported_for_page_notes",
+      ticker,
+    };
+  }
 
   if (input.target === "portfolio") {
     const existing = await prisma.portfolio.findFirst({
@@ -528,6 +545,13 @@ export async function getPageNotes(input: {
 
 export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
   const ticker = input.ticker?.trim().toUpperCase() || null;
+  const branch = input.branch ?? "LIVE";
+  // `idempotencyKey` is globally unique, but the two branches replay the SAME routine
+  // with the same keys — an unprefixed CANDIDATE key would collide with (and overwrite)
+  // the LIVE decision. LIVE keeps the bare key so existing keys keep replaying.
+  const rawKey = input.idempotencyKey?.trim() || null;
+  const idempotencyKey =
+    rawKey === null ? null : branch === "LIVE" ? rawKey : `${branch}:${rawKey}`;
   const decisionDate =
     input.decisionDate === undefined
       ? undefined
@@ -576,19 +600,23 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
     lessonLearned: input.lessonLearned ?? undefined,
     updateStrategy: input.updateStrategy ?? undefined,
     rulesVersion: input.rulesVersion ?? undefined,
+    branch,
     // Server-derived; on the idempotent-replay path this re-stamps with the version at
     // the latest write. A degraded write (null) preserves any prior stamp.
-    ruleVersionId: (await liveRuleVersionId()) ?? undefined,
-    idempotencyKey: input.idempotencyKey?.trim() || undefined,
+    ruleVersionId: (await branchRuleVersionId(branch)) ?? undefined,
+    idempotencyKey: idempotencyKey ?? undefined,
   };
 
-  if (input.idempotencyKey?.trim()) {
-    const key = input.idempotencyKey.trim();
+  if (idempotencyKey) {
+    const key = idempotencyKey;
     const existing = await prisma.decisionReview.findUnique({
       where: { idempotencyKey: key },
     });
     if (existing) {
-      const { idempotencyKey: _k, ...update } = data;
+      // `branch` is dropped alongside `idempotencyKey`: a replay updates the row the key
+      // already identifies and must never move it across branches — that would flip a
+      // CANDIDATE decision to LIVE (and let it enqueue into the real branch's book).
+      const { idempotencyKey: _k, branch: _b, ...update } = data;
       const row = await prisma.decisionReview.update({
         where: { id: existing.id },
         data: update,

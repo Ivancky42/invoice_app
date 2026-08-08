@@ -65,6 +65,23 @@ const dateYmd = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD");
 
+/**
+ * Branch selector for the writes that exist on both branches (routine outputs).
+ * LIVE is the real routine's log; CANDIDATE is shadow-only prose that never touches
+ * the real book.
+ */
+export const branchInputSchema = z.enum(["LIVE", "CANDIDATE"]).optional();
+
+/**
+ * Guard field for REAL-BOOK writes (trades, portfolio, watchlist, ideas, trends,
+ * documents, tracked tickers). Those rows exist only on LIVE, so a `branch` key is a
+ * 400 rather than a silently stripped extra: a CANDIDATE routine that believes it is
+ * writing to its own branch must never mutate the real book by accident.
+ */
+export const realBookBranchGuard = z
+  .undefined({ invalid_type_error: "branch_not_allowed_on_real_book" })
+  .optional();
+
 export const logTradeInputSchema = z.object({
   idempotencyKey: z.string().min(1).max(200),
   ticker: z.string().min(1).max(32),
@@ -81,6 +98,7 @@ export const logTradeInputSchema = z.object({
   theme: z.enum(enumValues(Theme)).nullable().optional(),
   /** When true on a full exit, upsert a minimal Watchlist row for the ticker. */
   reAddToWatchlist: z.boolean().optional(),
+  branch: realBookBranchGuard,
 });
 
 export type LogTradeInputParsed = z.infer<typeof logTradeInputSchema>;
@@ -99,6 +117,7 @@ export const dailyLogInputSchema = z.object({
   flaggedTickers: z.array(z.string().min(1).max(32)).optional(),
   alertEmailSent: z.boolean().optional(),
   rulesVersion: z.string().max(64).nullable().optional(),
+  branch: branchInputSchema,
 });
 
 export const stockReportInputSchema = z.object({
@@ -107,6 +126,7 @@ export const stockReportInputSchema = z.object({
   title: z.string().min(1).max(300).optional(),
   content: reportBlocksSchema,
   rulesVersion: z.string().max(64).nullable().optional(),
+  branch: branchInputSchema,
 });
 
 export const patchPortfolioInputSchema = z.object({
@@ -137,6 +157,7 @@ export const patchPortfolioInputSchema = z.object({
   /** YYYY-MM-DD; recomputes daysToEarnings. Null clears both. */
   earningsDate: dateYmd.nullable().optional(),
   // Explicitly omit currentPrice / shares / myAvgCost / upsidePct — marks + derived %.
+  branch: realBookBranchGuard,
 });
 
 export const appendPageNotesInputSchema = z.object({
@@ -144,6 +165,7 @@ export const appendPageNotesInputSchema = z.object({
   ticker: z.string().min(1).max(32),
   blocks: reportBlocksSchema.min(1),
   rulesVersion: z.string().max(64).nullable().optional(),
+  branch: branchInputSchema,
 });
 
 export const upsertWatchlistInputSchema = z.object({
@@ -169,6 +191,7 @@ export const upsertWatchlistInputSchema = z.object({
   /** YYYY-MM-DD; recomputes daysToEarnings. Null clears both. */
   earningsDate: dateYmd.nullable().optional(),
   // No currentPrice / upsidePct — price sync owns marks; upside is derived.
+  branch: realBookBranchGuard,
 });
 
 export const listDailyLogsQuerySchema = z.object({
@@ -194,8 +217,22 @@ export const listReportsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(36).optional(),
 });
 
+/**
+ * `LIVE:` / `CANDIDATE:` are reserved: the server prefixes CANDIDATE keys to keep the two
+ * branches' replays apart, so a caller-supplied key already carrying a branch prefix could
+ * address the OTHER branch's row (a LIVE write with "CANDIDATE:x" would replay onto the
+ * CANDIDATE decision). Refused rather than silently rewritten.
+ */
+const decisionIdempotencyKeySchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((v) => !/^(LIVE|CANDIDATE):/i.test(v.trim()), {
+    message: "reserved_idempotency_key_prefix",
+  });
+
 export const upsertDecisionReviewInputSchema = z.object({
-  idempotencyKey: z.string().min(1).max(200).optional(),
+  idempotencyKey: decisionIdempotencyKeySchema.optional(),
   title: z.string().min(1).max(500),
   ticker: z.string().min(1).max(32).nullable().optional(),
   decisionDate: dateYmd.nullable().optional(),
@@ -230,6 +267,7 @@ export const upsertDecisionReviewInputSchema = z.object({
   lessonLearned: z.string().max(8000).nullable().optional(),
   updateStrategy: z.boolean().nullable().optional(),
   rulesVersion: z.string().max(64).nullable().optional(),
+  branch: branchInputSchema,
 });
 
 export const getPriceHistoryInputSchema = z.object({
@@ -237,6 +275,18 @@ export const getPriceHistoryInputSchema = z.object({
   from: dateYmd.optional(),
   to: dateYmd.optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+
+export const listShadowPositionsInputSchema = z.object({
+  branch: z.enum(["LIVE", "CANDIDATE"]).optional(),
+  /** HTTP callers send ?includeClosed=true; the route coerces before parsing. */
+  includeClosed: z.boolean().optional(),
+});
+
+export const listShadowOrdersInputSchema = z.object({
+  branch: z.enum(["LIVE", "CANDIDATE"]).optional(),
+  status: z.enum(["PENDING", "FILLED", "REJECTED"]).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 
 export const listDecisionReviewsQuerySchema = z.object({
@@ -252,6 +302,7 @@ export const upsertContentPageInputSchema = z.object({
   title: z.string().min(1).max(300).optional(),
   body: reportBlocksSchema,
   rulesVersion: z.string().max(64).nullable().optional(),
+  branch: realBookBranchGuard,
 });
 
 export const getContentPageInputSchema = z.object({
@@ -279,6 +330,7 @@ export const upsertTrendInputSchema = z.object({
   avoidReason: reportBlocksSchema.nullable().optional(),
   notes: reportBlocksSchema.nullable().optional(),
   retrospective: reportBlocksSchema.nullable().optional(),
+  branch: realBookBranchGuard,
 });
 
 export const upsertIdeaFieldsSchema = z.object({
@@ -300,6 +352,7 @@ export const upsertIdeaFieldsSchema = z.object({
   graduationDate: dateYmd.nullable().optional(),
   graduationPrice: z.number().positive().nullable().optional(),
   // No currentPrice.
+  branch: realBookBranchGuard,
 });
 
 export const upsertIdeaInputSchema = upsertIdeaFieldsSchema.refine(
@@ -361,6 +414,8 @@ export const patchConfigFieldsSchema = z
     SENTIMENT_THRESHOLDS: sentimentPatchSchema.optional(),
     EARNINGS_RISK_THRESHOLDS: earningsRiskPatchSchema.optional(),
     TRACKED_TICKERS: trackedTickersPatchSchema.optional(),
+    // Config is real-book state (live cash, TRACKED_TICKERS) — there is no CANDIDATE copy.
+    branch: realBookBranchGuard,
   })
   .strict();
 
@@ -439,6 +494,29 @@ function resolveEnumName(field: string, options?: string[]): string | undefined 
     return "PositionAction";
   }
   return PATH_TO_ENUM[field];
+}
+
+/**
+ * Real-book writes (trades, portfolio, watchlist, ideas, trends, documents, tracked
+ * tickers) exist only on LIVE. A `branch` key on one of them is refused with a 400
+ * instead of being stripped: a CANDIDATE routine that believes it is writing to its own
+ * branch must never silently mutate the real book. Zod objects here are non-strict, so
+ * this guard inspects the raw input rather than the parsed output.
+ */
+export function branchKeyRejection(input: unknown): AgentValidationFailure | null {
+  if (
+    input !== null &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    Object.prototype.hasOwnProperty.call(input, "branch")
+  ) {
+    return {
+      error: "branch_not_allowed_on_real_book",
+      issues: [],
+      field: "branch",
+    };
+  }
+  return null;
 }
 
 export type AgentValidationFailure = {

@@ -799,3 +799,93 @@ model RuleVersion {
 
   @@index([status])
 }
+
+// === Paper-only shadow ledger (shadow evolution) ===
+// Two branches keep fully independent PAPER books: LIVE mirrors the decisions the ACTIVE
+// ruleset produced, CANDIDATE those of the challenger. Fills come from DecisionReview rows
+// at the NEXT session's open and marks from PriceHistory closes. This accounting never
+// touches Portfolio / Trade / Config cash, and nothing here can place a real order.
+
+/// Direction of a shadow (paper) order.
+enum ShadowSide {
+  BUY
+  SELL
+}
+
+/// Lifecycle of a shadow order. PENDING orders wait for the next session's open.
+enum ShadowOrderStatus {
+  PENDING
+  FILLED
+  REJECTED
+}
+
+/// One paper book per branch. Cash + positions here are play money, never the real book.
+model ShadowBranch {
+  id            String   @id @default(cuid())
+  branch        Branch   @unique
+  /// RuleVersion this branch's book is currently running.
+  ruleVersionId Int
+  /// NAV the book started (or was last reset) with.
+  startNav      Decimal  @db.Decimal(18, 4)
+  cash          Decimal  @db.Decimal(18, 4)
+  /// Running max NAV since the last reset — drawdown input for later fitness work.
+  highWaterNav  Decimal  @db.Decimal(18, 4)
+  resetAt       DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+/// A paper order derived from a DecisionReview row. Filled at the NEXT session's open.
+model ShadowOrder {
+  id               String            @id @default(cuid())
+  branchId         String
+  ticker           String
+  side             ShadowSide
+  /// Copied from the DecisionReview for attribution (the DR row may later change).
+  decisionType     DecisionType?
+  decisionReviewId String?
+  /// Session whose bars the decision was made on (see src/lib/shadow/sessions.ts).
+  decisionSession  DateTime          @db.Date
+  /// BUY: fraction of branch NAV at enqueue time. SELL: fraction of the open position
+  /// to liquidate (1 = full exit) — a NAV-denominated sell cannot close a position
+  /// exactly once the mark moves between enqueue and fill.
+  sizeFraction     Decimal           @db.Decimal(8, 6)
+  status           ShadowOrderStatus @default(PENDING)
+  fillSession      DateTime?         @db.Date
+  /// Always a PriceHistory `open` — never a close, never a substitute.
+  fillPrice        Decimal?          @db.Decimal(14, 4)
+  notional         Decimal?          @db.Decimal(18, 4)
+  shares           Decimal?          @db.Decimal(18, 6)
+  rejectReason     String?
+  /// Sessions this order has waited without a usable open; 3 → REJECTED no_open_price.
+  pendingSessions  Int               @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  /// One DecisionReview may enqueue at most one order per side (null ids are manual rows).
+  @@unique([branchId, decisionReviewId, side])
+  @@index([branchId, status])
+  @@index([decisionReviewId])
+}
+
+/// An open (or closed) paper position in one branch's book.
+model ShadowPosition {
+  id              String    @id @default(cuid())
+  branchId        String
+  ticker          String
+  openedSession   DateTime  @db.Date
+  closedAt        DateTime?
+  shares          Decimal   @db.Decimal(18, 6)
+  avgCost         Decimal   @db.Decimal(14, 4)
+  lastMark        Decimal?  @db.Decimal(14, 4)
+  lastMarkSession DateTime? @db.Date
+  /// True when the last mark was carried forward (no bar that session).
+  markStale       Boolean   @default(false)
+  realizedPnl     Decimal   @default(0) @db.Decimal(18, 4)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // At most one OPEN position per (branch, ticker) — partial unique index
+  // "ShadowPosition_open_unique" in scripts/apply-raw-constraints.ts.
+  @@index([branchId])
+}

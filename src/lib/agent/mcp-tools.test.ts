@@ -21,6 +21,8 @@ const EXPECTED_TOOL_NAMES = [
   "list_ideas",
   "list_portfolio",
   "list_reports",
+  "list_shadow_orders",
+  "list_shadow_positions",
   "list_trades",
   "list_trends",
   "list_watchlist",
@@ -54,7 +56,12 @@ describe("MCP tool surface", () => {
 
   it("registers no execution-capable tool name", () => {
     for (const name of collectToolNames()) {
-      expect(name).not.toMatch(/order|execute|broker|place/i);
+      expect(name).not.toMatch(/execute|broker|place/i);
+      // "order" is only ever allowed on a read tool (the paper shadow ledger's
+      // simulated orders). A tool that could CREATE an order must not exist.
+      if (/order/i.test(name)) {
+        expect(name).toMatch(/^(list|get)_/);
+      }
     }
   });
 

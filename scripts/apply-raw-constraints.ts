@@ -31,6 +31,12 @@ const STATEMENTS: Array<{ label: string; sql: string }> = [
     label: "RuleVersion_one_active",
     sql: `CREATE UNIQUE INDEX IF NOT EXISTS "RuleVersion_one_active" ON "RuleVersion"((1)) WHERE "status" = 'ACTIVE'`,
   },
+  {
+    // A branch's paper book holds at most one OPEN position per ticker; closed rows are
+    // history and may repeat, so the uniqueness has to be partial on closedAt IS NULL.
+    label: "ShadowPosition_open_unique",
+    sql: `CREATE UNIQUE INDEX IF NOT EXISTS "ShadowPosition_open_unique" ON "ShadowPosition"("branchId","ticker") WHERE "closedAt" IS NULL`,
+  },
 ];
 
 const url = process.env.DIRECT_DATABASE_URL?.trim() || process.env.DATABASE_URL;

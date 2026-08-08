@@ -27,7 +27,9 @@ import {
   isCashTicker,
 } from "@/lib/stocks/format";
 import { listStockEnums } from "@/lib/agent/enums";
+import { CRON_JOBS } from "@/lib/cron/jobs";
 import { getRuleSet } from "@/lib/rules/resolve";
+import { shadowContextBlock } from "@/lib/shadow/read";
 import { ensureContentPages } from "@/lib/agent/contentPages";
 import {
   earningsRiskFromDays,
@@ -156,13 +158,66 @@ function pageNotesPreview(body: unknown) {
   };
 }
 
+export type StaleJob = {
+  job: string;
+  /** UTC run day of the last SUCCESS, or null when the job has never succeeded. */
+  lastSuccess: string | null;
+  /** Days since that success; null when there has never been one. */
+  daysBehind: number | null;
+};
+
+/** A registered cron job is stale once its last SUCCESS is older than this. */
+const STALE_JOB_DAYS = 2;
+
+/**
+ * Registered cron jobs whose last SUCCESS is more than {@link STALE_JOB_DAYS} old.
+ * Surfaced in context so a routine can see that (e.g.) price_history stopped feeding
+ * the marks it is about to reason over, instead of trusting silently stale data.
+ */
+async function staleJobsSummary(): Promise<StaleJob[]> {
+  const grouped = await prisma.jobRun.groupBy({
+    by: ["job"],
+    where: { status: "SUCCESS" },
+    _max: { runDay: true },
+  });
+  const lastByJob = new Map(grouped.map((g) => [g.job, g._max.runDay ?? null]));
+
+  const todayMs = Date.UTC(
+    new Date().getUTCFullYear(),
+    new Date().getUTCMonth(),
+    new Date().getUTCDate(),
+  );
+
+  const out: StaleJob[] = [];
+  for (const descriptor of CRON_JOBS) {
+    const last = lastByJob.get(descriptor.job) ?? null;
+    if (!last) {
+      out.push({ job: descriptor.job, lastSuccess: null, daysBehind: null });
+      continue;
+    }
+    const daysBehind = Math.round((todayMs - last.getTime()) / 86_400_000);
+    if (daysBehind > STALE_JOB_DAYS) {
+      out.push({
+        job: descriptor.job,
+        lastSuccess: last.toISOString().slice(0, 10),
+        daysBehind,
+      });
+    }
+  }
+  return out;
+}
+
 async function lastRunSummary(): Promise<{
   prices: SyncRunSummary | null;
   notion: SyncRunSummary | null;
+  staleJobs: StaleJob[];
 }> {
-  const rows = await prisma.syncStatus.findMany({
-    where: { source: { in: ["prices", "notion"] } },
-  });
+  const [rows, staleJobs] = await Promise.all([
+    prisma.syncStatus.findMany({
+      where: { source: { in: ["prices", "notion"] } },
+    }),
+    staleJobsSummary(),
+  ]);
   const bySource = new Map(rows.map((r) => [r.source, r]));
   const map = (source: string): SyncRunSummary | null => {
     const row = bySource.get(source);
@@ -191,6 +246,7 @@ async function lastRunSummary(): Promise<{
   const notionFrozen = process.env.NOTION_SYNC_ENABLED !== "true";
   const notion = map("notion");
   return {
+    staleJobs,
     prices: map("prices"),
     notion: notion
       ? {
@@ -457,6 +513,7 @@ export function serializeDecisionReviewRow(r: DecisionReview) {
     id: r.id,
     notionId: r.notionId,
     idempotencyKey: r.idempotencyKey,
+    branch: r.branch,
     title: r.title,
     ticker: r.ticker,
     decisionDate: iso(r.decisionDate),
@@ -716,8 +773,17 @@ export async function buildAgentContext(routine: AgentRoutine, branch: Branch = 
 
   // Batched: 1 Config query (+ optional cash fallback) + 5 table reads + 1 SyncStatus.
   // Previously fanned out to ~12–13 concurrent queries (pool pressure on cold Neon).
-  const [runtime, portfolio, trades, watchlistRaw, trends, ideas, lastRun, documents] =
-    await Promise.all([
+  const [
+    runtime,
+    portfolio,
+    trades,
+    watchlistRaw,
+    trends,
+    ideas,
+    lastRun,
+    documents,
+    shadow,
+  ] = await Promise.all([
       getAgentRuntimeConfig(branch),
       getPortfolio(),
       getTrades(),
@@ -726,6 +792,8 @@ export async function buildAgentContext(routine: AgentRoutine, branch: Branch = 
       getIdeas(),
       lastRunSummary(),
       listContentPages(),
+      // Informational only: the paper book for this branch, null until it is seeded.
+      shadowContextBlock(branch).catch(() => null),
     ]);
 
   const watchlist = watchlistRaw.filter(
@@ -860,6 +928,8 @@ export async function buildAgentContext(routine: AgentRoutine, branch: Branch = 
     },
     trackedTickers,
     enums: listStockEnums(),
+    /// Paper-only shadow ledger for this branch — never the real book, never executable.
+    shadow,
     lastRun,
   };
 }

@@ -18,6 +18,7 @@ import {
   AGENT_ROUTINES,
 } from "@/lib/agent/context";
 import { logTrade } from "@/lib/agent/logTrade";
+import { listShadowOrders, listShadowPositions } from "@/lib/shadow/read";
 import {
   dailyLogInputSchema,
   getContentPageInputSchema,
@@ -25,6 +26,8 @@ import {
   listDailyLogsQuerySchema,
   listDecisionReviewsQuerySchema,
   listReportsQuerySchema,
+  listShadowOrdersInputSchema,
+  listShadowPositionsInputSchema,
   logTradeInputSchema,
   patchPortfolioInputSchema,
   appendPageNotesInputSchema,
@@ -36,6 +39,7 @@ import {
   upsertIdeaInputSchema,
   upsertTrendInputSchema,
   upsertWatchlistInputSchema,
+  realBookBranchGuard,
   validationFailure,
 } from "@/lib/agent/schemas";
 import {
@@ -295,6 +299,36 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     },
     async () => textJson(await getAllConfig()),
   );
+
+  server.registerTool(
+    "list_shadow_positions",
+    {
+      title: "List shadow positions",
+      description:
+        "List PAPER positions in a shadow branch's ledger (default LIVE). Open only unless includeClosed=true. Paper accounting — never the real portfolio.",
+      inputSchema: listShadowPositionsInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(listShadowPositionsInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await listShadowPositions(parsed));
+    },
+  );
+
+  server.registerTool(
+    "list_shadow_orders",
+    {
+      title: "List shadow orders",
+      description:
+        "List PAPER orders in a shadow branch's ledger (default LIVE), newest decision first. Optional status filter; default limit 50 (max 200). These are simulated fills, never broker orders.",
+      inputSchema: listShadowOrdersInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(listShadowOrdersInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      return textJson(await listShadowOrders(parsed));
+    },
+  );
 }
 
 /** Register Stock HQ write MCP tools (Phase 4c). */
@@ -468,6 +502,8 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
           .enum(["DEMOTED", "DROPPED"])
           .optional()
           .describe("Soft-demote action (default DEMOTED)"),
+        // Real-book write: LIVE only.
+        branch: realBookBranchGuard,
       },
     },
     async ({ ticker, hard, action }) => {
@@ -488,7 +524,8 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Sync tracked tickers",
       description:
         "Rebuild Config TRACKED_TICKERS from Portfolio + active Watchlist. Includes rows with action=null; excludes only DEMOTED/DROPPED. Prefer this over patch_config for ticker list hygiene.",
-      inputSchema: {},
+      // Real-book write: LIVE only.
+      inputSchema: { branch: realBookBranchGuard },
     },
     async () => textJson(await syncTrackedTickersFromDb()),
   );
