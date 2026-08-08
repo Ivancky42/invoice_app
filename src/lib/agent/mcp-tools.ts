@@ -88,16 +88,20 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         "Bundle portfolio state, watchlist, trends, ideas, limits, enums, and rulesVersion for a routine.",
       inputSchema: {
         routine: z.enum(AGENT_ROUTINES).describe("Which Cowork routine is running"),
+        branch: z
+          .enum(["LIVE", "CANDIDATE"])
+          .optional()
+          .describe("Ruleset branch (default LIVE); CANDIDATE is shadow-only"),
       },
     },
-    async ({ routine }) => {
+    async ({ routine, branch }) => {
       if (!isAgentRoutine(routine)) {
         return textError(`Invalid routine. Allowed: ${AGENT_ROUTINES.join(", ")}`);
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const ctx = await Promise.race([
-          buildAgentContext(routine),
+          buildAgentContext(routine, branch ?? "LIVE"),
           new Promise<never>((_, reject) => {
             timer = setTimeout(() => reject(new Error("context_timeout")), 20_000);
           }),
@@ -122,17 +126,22 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     "get_prompt",
     {
       title: "Get prompt markdown",
-      description: "Read a committed prompt file from /prompts (read-only).",
+      description:
+        "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only.",
       inputSchema: {
         name: z.enum(PROMPT_NAMES).describe("Prompt basename without .md"),
+        branch: z
+          .enum(["LIVE", "CANDIDATE"])
+          .optional()
+          .describe("Ruleset branch (default LIVE); CANDIDATE is shadow-only"),
       },
     },
-    async ({ name }) => {
+    async ({ name, branch }) => {
       if (!isPromptName(name)) {
         return textError(`Invalid prompt name. Allowed: ${PROMPT_NAMES.join(", ")}`);
       }
       try {
-        const markdown = await getPromptMarkdown(name);
+        const markdown = await getPromptMarkdown(name, branch ?? "LIVE");
         return {
           content: [{ type: "text" as const, text: markdown }],
         };

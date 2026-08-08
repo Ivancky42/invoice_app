@@ -32,6 +32,10 @@ export async function PATCH(req: NextRequest) {
   if (!parsed.ok) return parsed.response;
 
   const result = await patchConfig(parsed.data);
+  if (!result.ok) {
+    // Refused before anything was written (e.g. kernel-invalid ACTIVE ruleset).
+    return NextResponse.json(result, { status: result.status });
+  }
   const config = await getAllConfig();
   return NextResponse.json({ ...result, config });
 }

@@ -27,12 +27,13 @@ import {
   isCashTicker,
 } from "@/lib/stocks/format";
 import { listStockEnums } from "@/lib/agent/enums";
+import { getRuleSet } from "@/lib/rules/resolve";
 import { ensureContentPages } from "@/lib/agent/contentPages";
 import {
   earningsRiskFromDays,
   type DerivedEarningsRisk,
 } from "@/lib/stocks/derived";
-import type { Portfolio, Watchlist, Trade, Trend, Idea, DecisionReview, ContentPage } from "@/generated/prisma/client";
+import type { Branch, Portfolio, Watchlist, Trade, Trend, Idea, DecisionReview, ContentPage } from "@/generated/prisma/client";
 import type { Decimal } from "@/generated/prisma/internal/prismaNamespace";
 import type { EarningsRiskThresholds } from "@/lib/stocks/derived";
 import {
@@ -694,19 +695,30 @@ export async function getAllConfig(): Promise<Record<string, unknown>> {
   return out;
 }
 
-export async function getPromptMarkdown(name: PromptName): Promise<string> {
+/**
+ * Prompt text for a routine, from the RuleVersion in force on `branch`.
+ * Falls back to the committed file on disk when the ruleset is degraded or incomplete.
+ */
+export async function getPromptMarkdown(
+  name: PromptName,
+  branch: Branch = "LIVE",
+): Promise<string> {
+  const ruleSet = await getRuleSet(branch);
+  const fromDb = ruleSet.files[`${name}.md`];
+  if (typeof fromDb === "string" && fromDb.length > 0) return fromDb;
+
   const filePath = path.join(process.cwd(), "prompts", `${name}.md`);
   return fs.readFile(filePath, "utf8");
 }
 
-export async function buildAgentContext(routine: AgentRoutine) {
+export async function buildAgentContext(routine: AgentRoutine, branch: Branch = "LIVE") {
   const trendDetail = routine !== "earnings";
 
   // Batched: 1 Config query (+ optional cash fallback) + 5 table reads + 1 SyncStatus.
   // Previously fanned out to ~12–13 concurrent queries (pool pressure on cold Neon).
   const [runtime, portfolio, trades, watchlistRaw, trends, ideas, lastRun, documents] =
     await Promise.all([
-      getAgentRuntimeConfig(),
+      getAgentRuntimeConfig(branch),
       getPortfolio(),
       getTrades(),
       getWatchlist(),
@@ -726,6 +738,8 @@ export async function buildAgentContext(routine: AgentRoutine) {
     sentimentThresholds,
     earningsRiskThresholds,
     trackedTickers,
+    ruleVersionId,
+    degraded,
   } = runtime;
 
   const holdings = holdingsByTicker(trades);
@@ -808,6 +822,11 @@ export async function buildAgentContext(routine: AgentRoutine) {
   return {
     routine,
     rulesVersion: rulesVersion(),
+    branch,
+    /// RuleVersion the routine is running under; 0 when resolution degraded to disk.
+    ruleVersionId,
+    /// True when the ruleset came from disk defaults instead of the DB — log it.
+    degraded,
     asOf: asOfNow(),
     timezone: TIMEZONE,
     cash,

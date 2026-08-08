@@ -369,6 +369,9 @@ model Trade {
   thesisAtEntry    Json?
   /// Long-form notes as ReportBlock[].
   notes            Json?
+  /// RuleVersion.id in force when the trade was logged. No branch column — the real
+  /// book is LIVE-only by design; shadow trades never land here.
+  ruleVersionId    Int?
   syncedAt         DateTime     @updatedAt
 
   @@index([ticker])
@@ -477,11 +480,15 @@ model DailyLog {
   flaggedTickers   String[]         @default([])
   alertEmailSent   Boolean?         @default(false)
   rulesVersion     String?
+  /// LIVE = real routine output; CANDIDATE = shadow run under a candidate ruleset.
+  branch           Branch           @default(LIVE)
+  /// RuleVersion.id this row was produced under (null for pre-versioning rows).
+  ruleVersionId    Int?
   syncedAt         DateTime         @updatedAt
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
-  @@unique([logDate, routineType])
+  @@unique([logDate, routineType, branch])
   @@index([logDate])
 }
 
@@ -500,9 +507,13 @@ model StockReport {
   /// Normalized block tree for rendering (paragraphs, headings, tables, lists).
   content      Json
   rulesVersion String?
+  /// LIVE = real routine output; CANDIDATE = shadow run under a candidate ruleset.
+  branch       Branch          @default(LIVE)
+  /// RuleVersion.id this row was produced under (null for pre-versioning rows).
+  ruleVersionId Int?
   syncedAt     DateTime        @updatedAt
 
-  @@unique([reportType, reportDate])
+  @@unique([reportType, reportDate, branch])
   @@index([reportType])
   @@index([reportDate])
 }
@@ -632,6 +643,10 @@ model DecisionReview {
   lessonLearned        String?
   updateStrategy       Boolean?
   rulesVersion         String?
+  /// LIVE = real decision; CANDIDATE = shadow decision under a candidate ruleset.
+  branch               Branch                    @default(LIVE)
+  /// RuleVersion.id this decision was made under (null for pre-versioning rows).
+  ruleVersionId        Int?
   syncedAt             DateTime                  @updatedAt
   createdAt            DateTime                  @default(now())
   updatedAt            DateTime                  @updatedAt
@@ -640,6 +655,7 @@ model DecisionReview {
   @@index([decisionDate])
   @@index([reviewStatus])
   @@index([decisionType])
+  @@index([branch])
 }
 
 /// Living strategy docs (Cowork Strategy Lessons Summary + Investment Style Profile).
@@ -719,4 +735,67 @@ model TickerPriceStatus {
   lastError           String?
   consecutiveFailures Int       @default(0)
   updatedAt           DateTime  @updatedAt
+}
+
+// === Versioned ruleset (shadow evolution) ===
+// The Stock HQ ruleset (prompts + limits) becomes database-resident and versioned so a
+// later evolution engine can propose candidate versions on the CANDIDATE branch while
+// LIVE keeps running the ACTIVE version. Kernel clauses stay pinned in the deployed
+// bundle (src/lib/rules/kernelClauses.ts) — the DB can never relax them.
+
+/// Lifecycle of a RuleVersion. Exactly one ACTIVE and at most one CANDIDATE per lane
+/// (enforced by partial unique indexes; see scripts/apply-raw-constraints.ts).
+enum RuleStatus {
+  CANDIDATE
+  ACTIVE
+  RETIRED
+  KILLED
+}
+
+/// Evolution lane a candidate belongs to. FAST = short-horizon experiments, SLOW = structural.
+enum RuleLane {
+  FAST
+  SLOW
+}
+
+/// Who created a rule version.
+enum RuleActor {
+  AGENT
+  HUMAN
+  CRON
+}
+
+/// Which ruleset a row was produced under. LIVE is the real book; CANDIDATE is shadow-only.
+enum Branch {
+  LIVE
+  CANDIDATE
+}
+
+/// One immutable snapshot of the whole ruleset (all five prompt files + limits).
+/// `id` IS the version number — never reuse or renumber.
+model RuleVersion {
+  id             Int         @id @default(autoincrement())
+  status         RuleStatus
+  /// Null for v1 and for HUMAN-authored versions that belong to no evolution lane.
+  lane           RuleLane?
+  actor          RuleActor
+  /// Version this one was derived from; null for v1.
+  parentId       Int?
+  /// { "_shared.md": "<full text>", … } — all five prompt files.
+  files          Json
+  /// { "_shared.md": "<sha256 hex>", … } over the exact stored text.
+  fileShas       Json
+  /// LimitsConfig snapshot (same shape as Config.LIMITS).
+  limits         Json
+  changeSummary  String?
+  /// e.g. ["prompts:_shared#7", "limits:cashFloorPct"].
+  changedPaths   Json?
+  /// Sessions on/before this instant are excluded from any fitness comparison for
+  /// this version — stamped at creation so a candidate cannot claim pre-existing history.
+  evidenceCutoff DateTime?
+  createdAt      DateTime    @default(now())
+  activatedAt    DateTime?
+  retiredAt      DateTime?
+
+  @@index([status])
 }

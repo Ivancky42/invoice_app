@@ -37,6 +37,12 @@ import type { z } from "zod";
 import { asReportBlocks, truncatePageNotes } from "@/lib/content/blocks";
 import type { WatchlistAction } from "@/generated/prisma/client";
 import { contentPageTitle, ensureContentPages } from "@/lib/agent/contentPages";
+import {
+  clearRuleSetCache,
+  filesFromRow,
+  getRuleSet,
+  kernelGate,
+} from "@/lib/rules/resolve";
 
 type DailyLogInput = z.infer<typeof dailyLogInputSchema>;
 type StockReportInput = z.infer<typeof stockReportInputSchema>;
@@ -122,6 +128,17 @@ function assignDefined<T extends Record<string, unknown>>(
   }
 }
 
+/**
+ * RuleVersion in force for LIVE writes, stamped server-side (never from input, like
+ * upsidePct). Null when resolution degraded to disk — attribution is unknown, not zero.
+ * Cheap: getRuleSet is cached 60s, so this is not a per-write DB round-trip.
+ */
+async function liveRuleVersionId(): Promise<number | null> {
+  const ruleSet = await getRuleSet("LIVE");
+  if (ruleSet.degraded || ruleSet.versionId <= 0) return null;
+  return ruleSet.versionId;
+}
+
 export async function upsertDailyLog(input: DailyLogInput) {
   const logDate = parseYmdNoon(input.logDate);
   const routineType = input.routineType ?? "DAILY";
@@ -129,9 +146,13 @@ export async function upsertDailyLog(input: DailyLogInput) {
     input.title?.trim() ||
     (routineType === "EARNINGS" ? `Earnings ${input.logDate}` : input.logDate);
 
+  const ruleVersionId = await liveRuleVersionId();
+
   const update: PrismaTypes.DailyLogUpdateInput = {};
   assignDefined(update as Record<string, unknown>, {
     title,
+    // Version at last write wins; a degraded write (null) preserves the prior stamp.
+    ruleVersionId: ruleVersionId ?? undefined,
     marketContext: jsonField(input.marketContext),
     topNews: jsonField(input.topNews),
     portfolioMove: jsonField(input.portfolioMove),
@@ -144,7 +165,8 @@ export async function upsertDailyLog(input: DailyLogInput) {
   });
 
   const row = await prisma.dailyLog.upsert({
-    where: { logDate_routineType: { logDate, routineType } },
+    // Agent writes are LIVE-only; shadow runs write their own branch rows.
+    where: { logDate_routineType_branch: { logDate, routineType, branch: "LIVE" } },
     create: {
       title,
       logDate,
@@ -158,6 +180,7 @@ export async function upsertDailyLog(input: DailyLogInput) {
       flaggedTickers: input.flaggedTickers ?? [],
       alertEmailSent: input.alertEmailSent ?? false,
       rulesVersion: input.rulesVersion ?? null,
+      ruleVersionId,
     },
     update,
   });
@@ -175,12 +198,15 @@ export async function upsertDailyLog(input: DailyLogInput) {
 export async function upsertStockReport(input: StockReportInput) {
   const reportDate = parseYmdNoon(input.reportDate);
   const title = input.title?.trim() || `${input.reportType} ${input.reportDate}`;
+  const ruleVersionId = await liveRuleVersionId();
 
   const row = await prisma.stockReport.upsert({
     where: {
-      reportType_reportDate: {
+      // Agent writes are LIVE-only; shadow runs write their own branch rows.
+      reportType_reportDate_branch: {
         reportType: input.reportType,
         reportDate,
+        branch: "LIVE",
       },
     },
     create: {
@@ -189,11 +215,14 @@ export async function upsertStockReport(input: StockReportInput) {
       reportDate,
       content: input.content as PrismaTypes.InputJsonValue,
       rulesVersion: input.rulesVersion ?? null,
+      ruleVersionId,
     },
     update: {
       title,
       content: input.content as PrismaTypes.InputJsonValue,
       rulesVersion: input.rulesVersion ?? null,
+      // Version at last write wins; a degraded write (null) preserves the prior stamp.
+      ruleVersionId: ruleVersionId ?? undefined,
     },
   });
 
@@ -547,6 +576,9 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
     lessonLearned: input.lessonLearned ?? undefined,
     updateStrategy: input.updateStrategy ?? undefined,
     rulesVersion: input.rulesVersion ?? undefined,
+    // Server-derived; on the idempotent-replay path this re-stamps with the version at
+    // the latest write. A degraded write (null) preserves any prior stamp.
+    ruleVersionId: (await liveRuleVersionId()) ?? undefined,
     idempotencyKey: input.idempotencyKey?.trim() || undefined,
   };
 
@@ -751,6 +783,8 @@ function mergeLimits(
   patch: NonNullable<PatchConfigInput["LIMITS"]>,
 ): LimitsConfig {
   return {
+    // Keys with no patch field (prose-derived thresholds) are carried over unchanged.
+    ...current,
     singlePositionPct: patch.singlePositionPct ?? current.singlePositionPct,
     themePct: patch.themePct ?? current.themePct,
     speculativeSleevePct:
@@ -765,12 +799,119 @@ function mergeLimits(
   };
 }
 
+type ApplyLimitsResult =
+  | { ok: true; ruleVersionId: number | null }
+  | { ok: false; status: 409; reason: string; details?: unknown };
+
+/**
+ * Write a LIMITS change to BOTH surfaces that read caps.
+ *
+ * The agent plans against RuleVersion.limits while logTrade enforces Config.LIMITS, so a
+ * human patch that touched only Config would drift the two apart forever. When rule
+ * versions exist, one transaction retires the ACTIVE version and activates a HUMAN child
+ * carrying the merged limits (files copied verbatim) alongside the Config write. Before
+ * versioning exists, Config alone remains the source of truth.
+ */
+async function applyLimits(merged: LimitsConfig): Promise<ApplyLimitsResult> {
+  const active = await prisma.ruleVersion.findFirst({
+    where: { status: "ACTIVE" },
+    orderBy: { id: "desc" },
+  });
+
+  if (!active) {
+    const anyVersion = await prisma.ruleVersion.count();
+    if (anyVersion === 0) {
+      // Pre-versioning: Config is the only planning + enforcement surface.
+      await setConfig(CONFIG_KEYS.LIMITS, merged);
+      return { ok: true, ruleVersionId: null };
+    }
+    return {
+      ok: false,
+      status: 409,
+      reason: "no_active_rule_version",
+      details: { message: "RuleVersion rows exist but none is ACTIVE; refusing to patch LIMITS" },
+    };
+  }
+
+  const files = filesFromRow(active.files);
+  const gate = kernelGate(files);
+  if (!gate.ok) {
+    // Never activate a version whose kernel does not validate — not even a copy.
+    return {
+      ok: false,
+      status: 409,
+      reason: "kernel_violation",
+      details: { parentId: active.id, clauseIds: gate.clauseIds, violations: gate.violations },
+    };
+  }
+
+  const now = new Date();
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      // Retire first: the partial unique index allows only one ACTIVE row.
+      const retired = await tx.ruleVersion.updateMany({
+        where: { id: active.id, status: "ACTIVE" },
+        data: { status: "RETIRED", retiredAt: now },
+      });
+      if (retired.count !== 1) throw new Error("rule_version_race");
+
+      const row = await tx.ruleVersion.create({
+        data: {
+          status: "ACTIVE",
+          actor: "HUMAN",
+          parentId: active.id,
+          files: files as unknown as PrismaTypes.InputJsonValue,
+          fileShas: active.fileShas as PrismaTypes.InputJsonValue,
+          limits: merged as unknown as PrismaTypes.InputJsonValue,
+          changeSummary: "human LIMITS patch via /api/agent/config",
+          // Nothing before this instant counts as evidence for this version.
+          evidenceCutoff: now,
+          activatedAt: now,
+        },
+      });
+
+      // Same transaction: logTrade keeps enforcing Config.LIMITS, so the two stay in lockstep.
+      await tx.config.upsert({
+        where: { key: CONFIG_KEYS.LIMITS },
+        create: { key: CONFIG_KEYS.LIMITS, value: merged as unknown as PrismaTypes.InputJsonValue },
+        update: { value: merged as unknown as PrismaTypes.InputJsonValue },
+      });
+
+      return row;
+    });
+
+    clearRuleSetCache();
+    return { ok: true, ruleVersionId: created.id };
+  } catch (err) {
+    if (err instanceof Error && err.message === "rule_version_race") {
+      return {
+        ok: false,
+        status: 409,
+        reason: "rule_version_race",
+        details: { message: "ACTIVE rule version changed mid-patch; nothing was written" },
+      };
+    }
+    throw err;
+  }
+}
+
 /**
  * Patch safe Config keys (cash, FX, thresholds, tracked, LIMITS).
  * Never prompts. LIMITS patches are allowed but change hard caps — use sparingly.
  */
 export async function patchConfig(input: PatchConfigInput) {
   const updated: string[] = [];
+  let ruleVersionId: number | null = null;
+
+  // First: a LIMITS patch can be refused (kernel / no ACTIVE version), and refusing before
+  // any other key is written keeps the patch all-or-nothing from the caller's view.
+  if (input.LIMITS !== undefined) {
+    const current = await getLimits();
+    const result = await applyLimits(mergeLimits(current, input.LIMITS));
+    if (!result.ok) return result;
+    ruleVersionId = result.ruleVersionId;
+    updated.push(CONFIG_KEYS.LIMITS);
+  }
 
   if (input.CASH_POSITION_USD !== undefined) {
     await setConfig(CONFIG_KEYS.CASH_POSITION_USD, input.CASH_POSITION_USD);
@@ -834,12 +975,6 @@ export async function patchConfig(input: PatchConfigInput) {
     }
   }
 
-  if (input.LIMITS !== undefined) {
-    const current = await getLimits();
-    await setConfig(CONFIG_KEYS.LIMITS, mergeLimits(current, input.LIMITS));
-    updated.push(CONFIG_KEYS.LIMITS);
-  }
-
   if (input.SENTIMENT_THRESHOLDS !== undefined) {
     const raw = await prisma.config.findUnique({
       where: { key: CONFIG_KEYS.SENTIMENT_THRESHOLDS },
@@ -885,5 +1020,6 @@ export async function patchConfig(input: PatchConfigInput) {
     updated.push(CONFIG_KEYS.TRACKED_TICKERS);
   }
 
-  return { ok: true as const, updated };
+  // Non-null only when a LIMITS patch created a new RuleVersion.
+  return { ok: true as const, updated, ruleVersionId };
 }

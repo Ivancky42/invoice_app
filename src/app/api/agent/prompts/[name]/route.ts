@@ -6,6 +6,8 @@ import {
   isPromptName,
   PROMPT_NAMES,
 } from "@/lib/agent/context";
+import { getRuleSet, readDiskRuleFiles, sha256Hex } from "@/lib/rules/resolve";
+import type { Branch } from "@/generated/prisma/client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -29,8 +31,38 @@ export async function GET(req: NextRequest, { params }: Params) {
     );
   }
 
+  const branchParam = req.nextUrl.searchParams.get("branch");
+  if (branchParam !== null && branchParam !== "LIVE" && branchParam !== "CANDIDATE") {
+    return NextResponse.json(
+      { ok: false, error: "bad_request", message: "branch must be LIVE or CANDIDATE" },
+      { status: 400 },
+    );
+  }
+  const branch: Branch = branchParam === "CANDIDATE" ? "CANDIDATE" : "LIVE";
+
   try {
-    const markdown = await getPromptMarkdown(raw);
+    // Parity check: compare the stored ruleset text against the committed file.
+    if (req.nextUrl.searchParams.get("diff") === "1") {
+      const [ruleSet, diskFiles] = await Promise.all([
+        getRuleSet(branch),
+        readDiskRuleFiles(),
+      ]);
+      const dbText = ruleSet.files[`${raw}.md`] ?? null;
+      const diskText = diskFiles[`${raw}.md`] ?? null;
+      const dbSha = dbText === null ? null : sha256Hex(dbText);
+      const diskSha = diskText === null ? null : sha256Hex(diskText);
+      return NextResponse.json({
+        ok: true,
+        branch,
+        versionId: ruleSet.versionId,
+        degraded: ruleSet.degraded,
+        dbSha,
+        diskSha,
+        identical: dbSha !== null && dbSha === diskSha,
+      });
+    }
+
+    const markdown = await getPromptMarkdown(raw, branch);
     return new NextResponse(markdown, {
       status: 200,
       headers: {
