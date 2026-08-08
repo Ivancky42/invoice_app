@@ -39,7 +39,8 @@ async function handle(req: Request): Promise<Response> {
     {
       required: true,
       resourceMetadataPath: "/.well-known/oauth-protected-resource",
-      requiredScopes: ["mcp:tools"],
+      // Either mcp:tools (LIVE) or mcp:shadow (CANDIDATE) — verified in verifyMcpBearer.
+      requiredScopes: [],
       resourceUrl: resource,
     },
   );

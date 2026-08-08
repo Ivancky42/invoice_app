@@ -211,10 +211,16 @@ codebase is `src/lib/shadow/decisionReturns.ts`, and it is never imported here).
 the formulas. `src/lib/fitness/snapshot.ts` is the daily job that reads both branches'
 marked books, resolved counterfactuals, and turnover, and writes one `FitnessSnapshot` row
 per branch per session with a `quality` (`OK` / `DEGRADED` / `null`).
-`src/lib/fitness/counterfactuals.ts` seeds a `Counterfactual` row for every AVOID / WAIT /
-DO_NOT_AVERAGE_DOWN decision (a WAIT on an already-held position is treated as HOLD, not a
-counterfactual — there is nothing declined) and resolves it once the horizon session's
-close is available. `src/lib/fitness/breadthClassify.ts` computes `MoveClass` per decision.
+`src/lib/fitness/counterfactuals.ts` seeds a `Counterfactual` row **per horizon** (21
+interim + 63 full quarter) for every AVOID / WAIT / DO_NOT_AVERAGE_DOWN decision (a WAIT
+on an already-held position is treated as HOLD, not a counterfactual — there is nothing
+declined). Interim credit enters fitness ~3 weeks after the decision; the 63-session row
+stores the residual vs already-recognized shorter credits so lifetime Σ equals the quarter
+measure. `src/lib/fitness/breadthClassify.ts` computes `MoveClass` per decision.
+`evolution_evaluate` additionally refuses **promotion** until ≥20 RESOLVED interim (21-session)
+counterfactuals have non-zero signed credit (`counterfactual_credit_gate`); kills/reverts still
+run. Keep `EVOLUTION_PROMOTE=0` as the ops kill switch. CANDIDATE Cowork connectors must
+authorize with `mcp:shadow` — real-book writes are refused server-side.
 
 ### 2.8 Evolution engine (`src/lib/evolution/`)
 

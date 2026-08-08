@@ -4,8 +4,20 @@
  */
 
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import {
+  hasAnyMcpScope,
+  MCP_SCOPE,
+  MCP_SCOPES_SUPPORTED,
+  MCP_SHADOW_SCOPE,
+  normalizeMcpScopeRequest,
+} from "@/lib/agent/mcp-scope";
 
-export const MCP_SCOPE = "mcp:tools";
+export {
+  MCP_SCOPE,
+  MCP_SHADOW_SCOPE,
+  MCP_SCOPES_SUPPORTED,
+  normalizeMcpScopeRequest,
+};
 
 /** Exact redirect URIs (Claude + ChatGPT legacy). */
 export const ALLOWED_REDIRECT_URIS = [
@@ -205,7 +217,7 @@ export async function mintAuthCode(input: {
     redirect_uri: input.redirectUri,
     code_challenge: input.codeChallenge,
     code_challenge_method: "S256",
-    scope: input.scope?.trim() || MCP_SCOPE,
+    scope: normalizeMcpScopeRequest(input.scope),
     resource: input.resource,
     iat: now,
     exp: now + AUTH_CODE_TTL_SEC,
@@ -219,7 +231,7 @@ export async function mintAccessToken(input: {
   resource?: string;
 }): Promise<{ access_token: string; expires_in: number; scope: string }> {
   const now = Math.floor(Date.now() / 1000);
-  const scope = input.scope?.trim() || MCP_SCOPE;
+  const scope = normalizeMcpScopeRequest(input.scope);
   const claims: AccessTokenClaims = {
     typ: "access",
     client_id: input.clientId,
@@ -245,7 +257,7 @@ export async function mintRefreshToken(input: {
   const claims: RefreshTokenClaims = {
     typ: "refresh",
     client_id: input.clientId,
-    scope: input.scope?.trim() || MCP_SCOPE,
+    scope: normalizeMcpScopeRequest(input.scope),
     resource: input.resource,
     iat: now,
     exp: now + REFRESH_TOKEN_TTL_SEC,
@@ -260,7 +272,7 @@ export async function verifyMcpBearer(
 ): Promise<AuthInfo | undefined> {
   if (!bearerToken) return undefined;
 
-  // Legacy Desktop / mcp-remote / curl
+  // Legacy Desktop / mcp-remote / curl — full LIVE access.
   if (agentTokenMatches(bearerToken)) {
     return {
       token: bearerToken,
@@ -277,7 +289,7 @@ export async function verifyMcpBearer(
     typeof payload.scope === "string" && payload.scope.length > 0
       ? payload.scope.split(/\s+/).filter(Boolean)
       : [MCP_SCOPE];
-  if (!scope.includes(MCP_SCOPE)) return undefined;
+  if (!hasAnyMcpScope(scope)) return undefined;
 
   const clientId =
     typeof payload.client_id === "string" ? payload.client_id : "unknown";
@@ -311,7 +323,7 @@ export function authorizationServerMetadata(origin: string) {
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
-    scopes_supported: [MCP_SCOPE],
+    scopes_supported: [...MCP_SCOPES_SUPPORTED],
     service_documentation: `${origin}/docs/STOCK_HQ_AGENTS.md`,
   };
 }
@@ -321,7 +333,7 @@ export function protectedResourceMetadata(origin: string) {
   return {
     resource,
     authorization_servers: [origin],
-    scopes_supported: [MCP_SCOPE],
+    scopes_supported: [...MCP_SCOPES_SUPPORTED],
     bearer_methods_supported: ["header"],
     resource_name: "Stock HQ MCP",
   };

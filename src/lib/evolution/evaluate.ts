@@ -13,6 +13,7 @@
 import type { Prisma, RuleLane, RuleStatus } from "@/generated/prisma/client";
 import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { appendEvolutionEvent, countEvolutionEvents } from "@/lib/evolution/log";
+import { COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS } from "@/lib/fitness/counterfactuals";
 import { evaluateCandidate, sequentialZ, type CandidateVerdict } from "@/lib/fitness/math";
 import { prisma } from "@/lib/prisma";
 import { challengerLegitimacy } from "@/lib/rules/challenger";
@@ -29,6 +30,12 @@ const PROMOTION_RATE_WINDOW_DAYS = 90;
 export const EVOLUTION_PROMOTE_KEY = "EVOLUTION_PROMOTE";
 
 /**
+ * Hard readiness gate: do not promote while avoided-loss credit is still dark.
+ * Counts RESOLVED counterfactuals whose signed credit is non-zero (either sign).
+ */
+export const MIN_RESOLVED_NONZERO_CREDITS_FOR_PROMOTE = 20;
+
+/**
  * True when promotion is intentionally frozen (re-replay in progress, or ops kill switch).
  * Env wins over Config: `EVOLUTION_PROMOTE=0` always pauses; Config `false`/`0` also pauses.
  */
@@ -42,6 +49,17 @@ export async function isEvolutionPromotePaused(): Promise<boolean> {
     return true;
   }
   return false;
+}
+
+/** RESOLVED interim-horizon rows with non-zero signed credit (readiness for promotion). */
+export async function countResolvedNonZeroCredits(): Promise<number> {
+  return prisma.counterfactual.count({
+    where: {
+      status: "RESOLVED",
+      horizonSessions: COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS,
+      OR: [{ credit: { gt: 0 } }, { credit: { lt: 0 } }],
+    },
+  });
 }
 
 export type EvolutionEvaluateDetail = {
@@ -60,6 +78,7 @@ export type EvolutionEvaluateDetail = {
   promotionsIn90d?: number;
   promotedVersionId?: number;
   retiredVersionId?: number;
+  resolvedNonZeroCredits?: number;
 };
 
 export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult> {
@@ -226,6 +245,20 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
   }
 
   if (verdict === "PROMOTE") {
+    // Credit gate only blocks crowning — kills/reverts must still run while credit is dark.
+    const resolvedNonZeroCredits = await countResolvedNonZeroCredits();
+    if (resolvedNonZeroCredits < MIN_RESOLVED_NONZERO_CREDITS_FOR_PROMOTE) {
+      return {
+        done: true,
+        detail: {
+          ...baseDetail,
+          verdict: "CONTINUE",
+          skipped: "counterfactual_credit_gate",
+          resolvedNonZeroCredits,
+        } as unknown as Prisma.InputJsonValue,
+      };
+    }
+
     const promoted = await promote(candidate, active, stats);
     if (!promoted.ok) {
       return {
@@ -243,6 +276,7 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
         ...baseDetail,
         promotedVersionId: candidate.id,
         retiredVersionId: active.id,
+        resolvedNonZeroCredits,
       } as unknown as Prisma.InputJsonValue,
     };
   }

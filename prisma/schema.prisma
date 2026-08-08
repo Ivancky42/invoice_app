@@ -1062,8 +1062,8 @@ model Counterfactual {
   decisionType     DecisionType
   /// Session whose bars the decision was made on (see src/lib/shadow/sessions.ts).
   decisionSession  DateTime             @db.Date
-  /// Horizon length in SESSIONS — constant 63 (one quarter), counted on the session
-  /// calendar so holidays cannot stretch or shorten the window.
+  /// Horizon length in SESSIONS — 21 (interim) and/or 63 (full quarter), counted on the
+  /// session calendar so holidays cannot stretch or shorten the window.
   horizonSessions  Int
   priceAtDecision  Decimal              @db.Decimal(14, 4)
   /// Fraction of NAV the branch's ruleset WOULD have allowed for this name.
@@ -1072,14 +1072,17 @@ model Counterfactual {
   horizonSession   DateTime?            @db.Date
   priceAtHorizon   Decimal?             @db.Decimal(14, 4)
   horizonReturn    Decimal?             @db.Decimal(10, 6)
-  /// SIGNED: −horizonReturn × permittedSize. Never clamped, never abs().
+  /// SIGNED tranche of −horizonReturn × permittedSize. Interim (21) stores the raw credit;
+  /// full (63) stores the residual vs already-recognized shorter horizons so lifetime sum
+  /// equals the quarter credit without double-counting in fitness.
   credit           Decimal?             @db.Decimal(10, 6)
   status           CounterfactualStatus @default(PENDING)
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
 
-  /// One counterfactual per decision per branch — a replayed seed cannot double-count.
-  @@unique([branchId, decisionReviewId])
+  /// One row per (decision, branch, horizon) — interim + full coexist; replays cannot
+  /// double-seed the same horizon.
+  @@unique([branchId, decisionReviewId, horizonSessions])
   @@index([branchId])
   @@index([status])
 }

@@ -18,6 +18,12 @@ import {
   AGENT_ROUTINES,
 } from "@/lib/agent/context";
 import { logTrade } from "@/lib/agent/logTrade";
+import {
+  canWriteRealBook,
+  isShadowOnlyScope,
+  realBookWriteBlockedError,
+  shadowScopeLiveBranchError,
+} from "@/lib/agent/mcp-scope";
 import { getShadowFitness, listCounterfactuals } from "@/lib/fitness/read";
 import { applyGapFix } from "@/lib/evolution/gapfix";
 import { listEvolutionEvents } from "@/lib/evolution/log";
@@ -77,6 +83,8 @@ import {
   upsertWatchlist,
 } from "@/lib/agent/writes";
 
+type ToolExtra = { authInfo?: { scopes?: string[] } };
+
 function textJson(data: unknown) {
   // Compact JSON — pretty-print bloated get_context ~25% and can stall MCP bridges.
   return {
@@ -100,6 +108,34 @@ function parseTool<T>(schema: z.ZodType<T>, args: unknown): T | { __error: strin
   };
 }
 
+function toolScopes(extra: ToolExtra | undefined): string[] | undefined {
+  return extra?.authInfo?.scopes;
+}
+
+/**
+ * Block real-book / evolution writes for mcp:shadow connectors.
+ * Fail closed when scopes are present but do not include mcp:tools.
+ */
+function denyRealBookWrite(extra: ToolExtra | undefined) {
+  if (canWriteRealBook(toolScopes(extra))) return null;
+  return textError(JSON.stringify(realBookWriteBlockedError()));
+}
+
+/**
+ * Shadow connectors must address CANDIDATE. LIVE is refused; omitted branch becomes
+ * CANDIDATE.
+ */
+function forceShadowBranch<T extends { branch?: "LIVE" | "CANDIDATE" }>(
+  input: T,
+  extra: ToolExtra | undefined,
+): T | { __error: string } {
+  if (!isShadowOnlyScope(toolScopes(extra))) return input;
+  if (input.branch === "LIVE") {
+    return { __error: JSON.stringify(shadowScopeLiveBranchError()) };
+  }
+  return { ...input, branch: "CANDIDATE" };
+}
+
 /** Register Stock HQ read MCP tools. */
 export function registerAgentMcpReadTools(server: McpServer): void {
   server.registerTool(
@@ -116,14 +152,16 @@ export function registerAgentMcpReadTools(server: McpServer): void {
           .describe("Ruleset branch (default LIVE); CANDIDATE is shadow-only"),
       },
     },
-    async ({ routine, branch }) => {
+    async ({ routine, branch }, extra) => {
       if (!isAgentRoutine(routine)) {
         return textError(`Invalid routine. Allowed: ${AGENT_ROUTINES.join(", ")}`);
       }
+      const branched = forceShadowBranch({ branch }, extra);
+      if ("__error" in branched) return textError(branched.__error);
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const ctx = await Promise.race([
-          buildAgentContext(routine, branch ?? "LIVE"),
+          buildAgentContext(routine, branched.branch ?? "LIVE"),
           new Promise<never>((_, reject) => {
             timer = setTimeout(() => reject(new Error("context_timeout")), 20_000);
           }),
@@ -158,12 +196,14 @@ export function registerAgentMcpReadTools(server: McpServer): void {
           .describe("Ruleset branch (default LIVE); CANDIDATE is shadow-only"),
       },
     },
-    async ({ name, branch }) => {
+    async ({ name, branch }, extra) => {
       if (!isPromptName(name)) {
         return textError(`Invalid prompt name. Allowed: ${PROMPT_NAMES.join(", ")}`);
       }
+      const branched = forceShadowBranch({ branch }, extra);
+      if ("__error" in branched) return textError(branched.__error);
       try {
-        const markdown = await getPromptMarkdown(name, branch ?? "LIVE");
+        const markdown = await getPromptMarkdown(name, branched.branch ?? "LIVE");
         return {
           content: [{ type: "text" as const, text: markdown }],
         };
@@ -209,10 +249,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         "List Decision Review Log rows (filter by ticker, reviewStatus, branch LIVE|CANDIDATE, or pendingDueWithinDays).",
       inputSchema: listDecisionReviewsQuerySchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(listDecisionReviewsQuerySchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson(await listDecisionReviews(parsed));
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      return textJson(await listDecisionReviews(branched));
     },
   );
 
@@ -224,10 +266,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         "List DailyLog rows (newest first). Optional since/until YYYY-MM-DD and routineType (DAILY|EARNINGS); default limit 14 (max 90).",
       inputSchema: listDailyLogsQuerySchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(listDailyLogsQuerySchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson(await listDailyLogItems(parsed));
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      return textJson(await listDailyLogItems(branched));
     },
   );
 
@@ -239,10 +283,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         "List StockReport rows (WEEKLY/MONTHLY). Optional reportType, since/until; default limit 8 (max 36).",
       inputSchema: listReportsQuerySchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(listReportsQuerySchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson(await listStockReportItems(parsed));
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      return textJson(await listStockReportItems(branched));
     },
   );
 
@@ -326,10 +372,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         "List PAPER positions in a shadow branch's ledger (default LIVE). Open only unless includeClosed=true. Paper accounting — never the real portfolio.",
       inputSchema: listShadowPositionsInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(listShadowPositionsInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson(await listShadowPositions(parsed));
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      return textJson(await listShadowPositions(branched));
     },
   );
 
@@ -341,10 +389,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         "List PAPER orders in a shadow branch's ledger (default LIVE), newest decision first. Optional status filter; default limit 50 (max 200). These are simulated fills, never broker orders.",
       inputSchema: listShadowOrdersInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(listShadowOrdersInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson(await listShadowOrders(parsed));
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      return textJson(await listShadowOrders(branched));
     },
   );
 
@@ -356,10 +406,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         "Daily fitness snapshots for a shadow branch (default LIVE), newest session first. All values are FRACTIONS (0.03 = 3%). avoidedCreditDelta is SIGNED: refusing a name that fell credits, refusing one that rose debits. Default limit 30 (max 90).",
       inputSchema: getShadowFitnessInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(getShadowFitnessInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson(await getShadowFitness(parsed));
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      return textJson(await getShadowFitness(branched));
     },
   );
 
@@ -371,10 +423,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         "List what NOT-taken decisions (AVOID / WAIT / DO_NOT_AVERAGE_DOWN) would have been worth for a shadow branch (default LIVE), newest decision first. `credit` is SIGNED and in NAV fractions. Optional status filter; default limit 50 (max 200).",
       inputSchema: listCounterfactualsInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(listCounterfactualsInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson(await listCounterfactuals(parsed));
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      return textJson(await listCounterfactuals(branched));
     },
   );
 
@@ -447,7 +501,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Log a trade with idempotencyKey; reconciles Portfolio.shares, avg cost, and Config cash in one transaction. Hard caps → conflict (do not retry). Soft tier-band mismatches → warnings[]. Never writes prices.",
       inputSchema: logTradeInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const parsed = parseTool(logTradeInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       const result = await logTrade(parsed);
@@ -469,10 +525,12 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Upsert DailyLog on (logDate, routineType). Default routineType=DAILY; Earnings must pass EARNINGS so the two do not overwrite each other. Narrative fields are ReportBlock[].",
       inputSchema: dailyLogInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(dailyLogInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson({ ok: true, dailyLog: await upsertDailyLog(parsed) });
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      return textJson({ ok: true, dailyLog: await upsertDailyLog(branched) });
     },
   );
 
@@ -483,10 +541,12 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       description: "Upsert StockReport on (reportType, reportDate). content is ReportBlock[].",
       inputSchema: stockReportInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(stockReportInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      return textJson({ ok: true, report: await upsertStockReport(parsed) });
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      return textJson({ ok: true, report: await upsertStockReport(branched) });
     },
   );
 
@@ -501,7 +561,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         ...patchPortfolioInputSchema.shape,
       },
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const { ticker, ...rest } = args as { ticker: string } & Record<string, unknown>;
       const parsed = parseTool(patchPortfolioInputSchema, rest);
       if ("__error" in parsed) return textError(parsed.__error);
@@ -521,7 +583,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Upsert a watchlist row by ticker. May set analystTarget/bullTarget/stopLoss/entryZone/earningsDate; writing analystTarget recomputes upsidePct. Does not write currentPrice or upsidePct directly.",
       inputSchema: upsertWatchlistInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const parsed = parseTool(upsertWatchlistInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       return textJson({ ok: true, watchlist: await upsertWatchlist(parsed) });
@@ -536,7 +600,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Append ReportBlock[] to portfolio or watchlist pageNotes (append-only). Response returns only the newest ~3 blocks plus totals — use get_page_notes for older history.",
       inputSchema: appendPageNotesInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const parsed = parseTool(appendPageNotesInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       const result = await appendPageNotes(parsed);
@@ -570,10 +636,12 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry. Defaults reviewStatus to PENDING.",
       inputSchema: upsertDecisionReviewInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(upsertDecisionReviewInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const result = await upsertDecisionReview(parsed);
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      const result = await upsertDecisionReview(branched);
       if (!result.ok) {
         return { ...textJson(result), isError: true as const };
       }
@@ -589,10 +657,12 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Append EvidenceItem rows to an existing Decision Review (by decisionReviewId or idempotencyKey, within branch — default LIVE). Additive — use upsert_decision_review's evidence[] to replace-on-replay instead. 404 when the DR is not found on that branch.",
       inputSchema: addEvidenceFieldsSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
       const parsed = parseTool(addEvidenceInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const result = await addEvidence(parsed);
+      const branched = forceShadowBranch(parsed, extra);
+      if ("__error" in branched) return textError(branched.__error);
+      const result = await addEvidence(branched);
       if (!result.ok) {
         return { ...textJson(result), isError: true as const };
       }
@@ -608,7 +678,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Replace Strategy Lessons Summary or Investment Style Profile body (ReportBlock[]).",
       inputSchema: upsertContentPageInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const parsed = parseTool(upsertContentPageInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       return textJson({ ok: true, document: await upsertContentPage(parsed) });
@@ -635,7 +707,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         branch: realBookBranchGuard,
       },
     },
-    async ({ ticker, hard, action }) => {
+    async ({ ticker, hard, action }, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const result = await deleteWatchlist(ticker, {
         hard: hard === true,
         action: action === "DROPPED" ? "DROPPED" : "DEMOTED",
@@ -656,7 +730,11 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       // Real-book write: LIVE only.
       inputSchema: { branch: realBookBranchGuard },
     },
-    async () => textJson(await syncTrackedTickersFromDb()),
+    async (_args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
+      return textJson(await syncTrackedTickersFromDb());
+    },
   );
 
   server.registerTool(
@@ -666,7 +744,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       description: "Upsert a trend by trendName.",
       inputSchema: upsertTrendInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const parsed = parseTool(upsertTrendInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       return textJson({ ok: true, trend: await upsertTrend(parsed) });
@@ -680,7 +760,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       description: "Upsert an idea by stockSector or leadTicker. Does not write prices.",
       inputSchema: upsertIdeaFieldsSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const parsed = parseTool(upsertIdeaInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       return textJson({ ok: true, idea: await upsertIdea(parsed) });
@@ -695,7 +777,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Propose a CANDIDATE ruleset (prose hunks and/or limits changes). The SERVER assigns the lane — any `lane` you pass is ignored and recorded. Requires cited scored decision reviews (≥3, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome), a falsifiable counterCase (≥40 chars) and a measurable successMetric. Kernel edits, drift-rail breaches and eligibility failures are rejected AND appended to the evolution log.",
       inputSchema: proposeRuleChangeFieldsSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const parsed = parseTool(proposeRuleChangeInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       const result = await proposeRuleChange(parsed);
@@ -712,7 +796,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Immediately patch ONE section of the ACTIVE ruleset for a typo / contradiction / clarification (≤40 changed lines). expectedSectionSha is REQUIRED and a mismatch is a 409. Not a rule change: use propose_rule_change for anything that alters behaviour. An in-flight candidate is rebased, or killed if it touched the same section.",
       inputSchema: applyGapFixInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const parsed = parseTool(applyGapFixInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       const result = await applyGapFix(parsed);
@@ -729,7 +815,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
         "Compute the retrospective HELPED/NEUTRAL/HURT outcome of a RETIRED or KILLED rule version from the fitness ledger. `outcomeClaim` is recorded under outcomeDetail.agentClaim and logged, but NEVER used as the outcome — the server scores it. Below 10 paired sessions the call returns `preview: true, outcome: null` and writes NOTHING: the version stays unscored until its series is long enough.",
       inputSchema: scoreRuleVersionInputSchema.shape,
     },
-    async (args) => {
+    async (args, extra) => {
+      const blocked = denyRealBookWrite(extra);
+      if (blocked) return blocked;
       const parsed = parseTool(scoreRuleVersionInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
       const result = await scoreRuleVersion(parsed);

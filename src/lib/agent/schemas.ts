@@ -204,6 +204,7 @@ export const listDailyLogsQuerySchema = z.object({
   until: dateYmd.optional(),
   limit: z.coerce.number().int().min(1).max(90).optional(),
   routineType: z.enum(enumValues(DailyLogRoutine)).optional(),
+  branch: branchInputSchema,
 });
 
 export const getPageNotesInputSchema = z.object({
@@ -220,6 +221,7 @@ export const listReportsQuerySchema = z.object({
   since: dateYmd.optional(),
   until: dateYmd.optional(),
   limit: z.coerce.number().int().min(1).max(36).optional(),
+  branch: branchInputSchema,
 });
 
 /**

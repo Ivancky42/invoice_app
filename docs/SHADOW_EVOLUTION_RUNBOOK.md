@@ -241,6 +241,19 @@ routines, but calling `get_context` / `get_prompt` / `upsert_decision_review` /
 `upsert_report` with `branch="CANDIDATE"` explicitly on every call. See
 `prompts/weekly.md` §0 ("Branch") for the exact call shape the routine already expects.
 
+**Structural guard (required):** authorize the CANDIDATE connector with scope
+`mcp:shadow` (radio on `/api/oauth/authorize`). That token can write branch-aware
+artifacts only; `patch_portfolio` / watchlist / ideas / evolution writes return
+`shadow_scope_real_book_forbidden`. LIVE routines keep `mcp:tools`. Prompt text alone
+is not enough — if the capability is reachable, it eventually gets reached.
+
+**Avoided-loss credit:** each refusal seeds horizons **21 and 63**. Interim credit
+enters fitness ~3 weeks after the decision; the 63-session row stores the residual so
+lifetime Σ equals the quarter measure. When z clears the promote threshold,
+`evolution_evaluate` still refuses to crown until ≥20 RESOLVED **interim** credits are
+non-zero (`skipped: "counterfactual_credit_gate"` → CONTINUE). Kills/reverts are not
+blocked by that gate. Keep `EVOLUTION_PROMOTE=0` until hand-checked.
+
 ---
 
 ## 8. Rollback lever

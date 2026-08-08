@@ -641,13 +641,16 @@ export async function listDailyLogItems(opts?: {
   until?: string;
   limit?: number;
   routineType?: "DAILY" | "EARNINGS";
+  branch?: "LIVE" | "CANDIDATE";
 }) {
   const limit = opts?.limit ?? 14;
   const where: {
     logDate?: { gte?: Date; lte?: Date };
     routineType?: "DAILY" | "EARNINGS";
+    branch?: "LIVE" | "CANDIDATE";
   } = {};
   if (opts?.routineType) where.routineType = opts.routineType;
+  if (opts?.branch) where.branch = opts.branch;
   if (opts?.since || opts?.until) {
     where.logDate = {};
     if (opts.since) {
@@ -670,13 +673,16 @@ export async function listStockReportItems(opts?: {
   since?: string;
   until?: string;
   limit?: number;
+  branch?: "LIVE" | "CANDIDATE";
 }) {
   const limit = opts?.limit ?? 8;
   const where: {
     reportType?: "WEEKLY" | "MONTHLY";
     reportDate?: { gte?: Date; lte?: Date };
+    branch?: "LIVE" | "CANDIDATE";
   } = {};
   if (opts?.reportType) where.reportType = opts.reportType;
+  if (opts?.branch) where.branch = opts.branch;
   if (opts?.since || opts?.until) {
     where.reportDate = {};
     if (opts.since) {

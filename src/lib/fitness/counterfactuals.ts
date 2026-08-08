@@ -3,8 +3,13 @@
  *
  * A counterfactual asks "what would this refusal have been worth?". It is seeded from
  * AVOID / WAIT / DO_NOT_AVERAGE_DOWN DecisionReviews at the size the branch's OWN ruleset
- * would have permitted, and resolved one quarter (63 sessions) later at that session's
- * close. The resulting credit is SIGNED — see counterfactualCredit in ./math.
+ * would have permitted, and resolved at each configured horizon (interim 21 + full 63)
+ * at that session's close. The resulting credit is SIGNED — see counterfactualCredit.
+ *
+ * Dual horizons: interim credit enters fitness ~3 weeks after the decision so defensive
+ * refusals are not dark for a full quarter; the full-horizon row stores the residual
+ * (raw_63 − already-recognized shorter credits) so lifetime sum equals the quarter
+ * measure without double-counting.
  *
  * Reads PriceHistory, DecisionReview, the shadow ledger and the branch ruleset only. No
  * Portfolio / Trade / Config state is consulted: a paper book must stay uncontaminated.
@@ -25,10 +30,28 @@ import {
   sessionOffsetIn,
   ymd,
 } from "@/lib/shadow/sessions";
+import { roundFraction } from "@/lib/shadow/sizing";
 import { decToNum } from "@/lib/stocks/format";
 
-/** One quarter of trading, counted in SESSIONS so holidays cannot stretch the window. */
+/** Interim horizon — early signed credit so fitness is not dark for a full quarter. */
+export const COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS = 21;
+
+/** Full quarter of trading, counted in SESSIONS so holidays cannot stretch the window. */
 export const COUNTERFACTUAL_HORIZON_SESSIONS = 63;
+
+/** Horizons seeded/resolved for every refusal (shortest first). */
+export const COUNTERFACTUAL_HORIZONS = [
+  COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS,
+  COUNTERFACTUAL_HORIZON_SESSIONS,
+] as const;
+
+/**
+ * Full-horizon rows store residual vs already-recognized shorter credits so lifetime Σ
+ * equals the quarter measure without double-counting in fitness.
+ */
+export function residualCredit(rawFullCredit: number, alreadyRecognized: number): number {
+  return roundFraction(rawFullCredit - alreadyRecognized);
+}
 
 /** Decision types that represent capital NOT deployed. HOLD is deliberately absent. */
 const SEEDABLE_DECISION_TYPES = ["AVOID", "WAIT", "DO_NOT_AVERAGE_DOWN"] as const;
@@ -90,18 +113,21 @@ export async function seedCounterfactualsForBranch(
 
   if (decisions.length === 0) return { seeded, skipped, truncated: false };
 
-  // Already-seeded rows are excluded here rather than per decision (no N+1, and the
-  // unique index stays the backstop against a concurrent run). Also collect notionIds
-  // already represented so a twin DR id cannot double-credit the fitness stream.
+  // Already-seeded (decision, horizon) pairs are excluded here rather than per decision
+  // (no N+1; unique index is the concurrent backstop). notionIds already represented on
+  // ANY horizon block twin DR ids from double-crediting the fitness stream.
   const existing = await prisma.counterfactual.findMany({
     where: { branchId: branchRow.id },
-    select: { decisionReviewId: true },
+    select: { decisionReviewId: true, horizonSessions: true },
   });
-  const seededIds = new Set(existing.map((row) => row.decisionReviewId));
+  const seededKeys = new Set(
+    existing.map((row) => `${row.decisionReviewId}:${row.horizonSessions}`),
+  );
+  const seededDecisionIds = new Set(existing.map((row) => row.decisionReviewId));
   const seededNotionIds = new Set<string>();
-  if (seededIds.size > 0) {
+  if (seededDecisionIds.size > 0) {
     const linked = await prisma.decisionReview.findMany({
-      where: { id: { in: [...seededIds] }, notionId: { not: null } },
+      where: { id: { in: [...seededDecisionIds] }, notionId: { not: null } },
       select: { notionId: true },
     });
     for (const row of linked) {
@@ -125,10 +151,18 @@ export async function seedCounterfactualsForBranch(
     weightByTicker.set(position.ticker, book.nav > 0 ? value / book.nav : 0);
   }
 
-  const pending = decisions.filter(
-    (d) =>
-      !seededIds.has(d.id) && (!d.notionId || !seededNotionIds.has(d.notionId)),
-  );
+  // A decision already seeded on any horizon still needs missing horizons filled in;
+  // only twin notionIds (a different DR id for the same refusal) are hard-skipped.
+  const pending = decisions.filter((d) => {
+    const missingHorizon = COUNTERFACTUAL_HORIZONS.some(
+      (h) => !seededKeys.has(`${d.id}:${h}`),
+    );
+    if (!missingHorizon) return false;
+    if (d.notionId && seededNotionIds.has(d.notionId) && !seededDecisionIds.has(d.id)) {
+      return false;
+    }
+    return true;
+  });
   const decisionSessionById = new Map<string, string>();
   for (const dr of pending) {
     const day = decisionSessionForReview(sessions, dr);
@@ -194,23 +228,29 @@ export async function seedCounterfactualsForBranch(
       currentWeight: heldWeight,
     });
 
-    try {
-      await prisma.counterfactual.create({
-        data: {
-          branchId: branchRow.id,
-          decisionReviewId: dr.id,
-          ticker,
-          decisionType,
-          decisionSession: sessionDate(decisionSessionDay),
-          horizonSessions: COUNTERFACTUAL_HORIZON_SESSIONS,
-          priceAtDecision,
-          permittedSize: size,
-          status: "PENDING",
-        },
-      });
-      seeded += 1;
-    } catch (err) {
-      if (!isUniqueViolation(err)) throw err;
+    for (const horizonSessions of COUNTERFACTUAL_HORIZONS) {
+      if (seededKeys.has(`${dr.id}:${horizonSessions}`)) continue;
+      try {
+        await prisma.counterfactual.create({
+          data: {
+            branchId: branchRow.id,
+            decisionReviewId: dr.id,
+            ticker,
+            decisionType,
+            decisionSession: sessionDate(decisionSessionDay),
+            horizonSessions,
+            priceAtDecision,
+            permittedSize: size,
+            status: "PENDING",
+          },
+        });
+        seededKeys.add(`${dr.id}:${horizonSessions}`);
+        seededDecisionIds.add(dr.id);
+        if (dr.notionId) seededNotionIds.add(dr.notionId);
+        seeded += 1;
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+      }
     }
   }
 
@@ -288,7 +328,10 @@ export async function resolvePendingCounterfactuals(
 
   const rows = await prisma.counterfactual.findMany({
     where: { status: "PENDING" },
-    orderBy: { decisionSession: "asc" },
+    // Shorter horizons first: if 21 and 63 both elapse in the same run, interim must
+    // resolve before full computes its residual — otherwise full stores raw_63 and
+    // interim later adds raw_21 → double-count in fitness.
+    orderBy: [{ decisionSession: "asc" }, { horizonSessions: "asc" }],
     take: MAX_PENDING_PER_RUN,
   });
   if (rows.length === 0) return { resolved, unresolved, truncated: false };
@@ -329,9 +372,24 @@ export async function resolvePendingCounterfactuals(
     // Horizon has not elapsed yet (or the calendar does not reach it) — stay PENDING.
     if (!plan.horizonDay) continue;
 
+    // Belt-and-suspenders: never resolve a longer horizon while a shorter sibling is
+    // still PENDING (e.g. prior run truncated after seeding both).
+    if (row.horizonSessions > COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS) {
+      const pendingShorter = await prisma.counterfactual.count({
+        where: {
+          branchId: row.branchId,
+          decisionReviewId: row.decisionReviewId,
+          horizonSessions: { lt: row.horizonSessions },
+          status: "PENDING",
+        },
+      });
+      if (pendingShorter > 0) continue;
+    }
+
+    const ticker = row.ticker.trim().toUpperCase();
     let priced: { day: string; close: number } | null = null;
     for (const day of plan.candidates) {
-      const close = closeByKey.get(`${row.ticker}|${day}`) ?? null;
+      const close = closeByKey.get(`${ticker}|${day}`) ?? null;
       if (close !== null && close > 0) {
         priced = { day, close };
         break;
@@ -362,11 +420,29 @@ export async function resolvePendingCounterfactuals(
       continue;
     }
 
-    const { horizonReturn, credit } = counterfactualCredit({
+    const { horizonReturn, credit: rawCredit } = counterfactualCredit({
       priceAtDecision,
       priceAtHorizon: priced.close,
       permittedSize: size,
     });
+
+    // Full-horizon rows store the residual vs shorter horizons already recognized in
+    // fitness, so Σ credits over a decision's life equals the quarter measure once.
+    let credit = rawCredit;
+    if (row.horizonSessions > COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS) {
+      const shorter = await prisma.counterfactual.findMany({
+        where: {
+          branchId: row.branchId,
+          decisionReviewId: row.decisionReviewId,
+          horizonSessions: { lt: row.horizonSessions },
+          status: "RESOLVED",
+          credit: { not: null },
+        },
+        select: { credit: true },
+      });
+      const already = shorter.reduce((sum, s) => sum + (decToNum(s.credit) ?? 0), 0);
+      credit = residualCredit(rawCredit, already);
+    }
 
     // Conditioned on status so a concurrent run cannot resolve the same row twice.
     const updated = await prisma.counterfactual.updateMany({
