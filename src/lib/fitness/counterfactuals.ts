@@ -10,14 +10,15 @@
  * Portfolio / Trade / Config state is consulted: a paper book must stay uncontaminated.
  */
 import type { Prisma } from "@/generated/prisma/client";
+import type { DecisionType } from "@/generated/prisma/client";
 import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { counterfactualCredit, permittedSize } from "@/lib/fitness/math";
 import { prisma } from "@/lib/prisma";
 import { getRuleSet } from "@/lib/rules/resolve";
 import { branchBook, ensureShadowBranches, listBranches } from "@/lib/shadow/branches";
+import { dedupeDecisionsForShadow } from "@/lib/shadow/dedupe";
 import {
-  decisionSessionFromEasternDate,
-  easternDateOf,
+  decisionSessionForReview,
   latestSessionOnOrBeforeIn,
   loadSessions,
   sessionDate,
@@ -62,42 +63,51 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
-async function seedForBranch(
+export type SeedableDecisionRow = {
+  id: string;
+  ticker: string | null;
+  decisionType: DecisionType | null;
+  convictionScore: number | null;
+  createdAt: Date;
+  decisionDate: Date | null;
+  notionId: string | null;
+  idempotencyKey: string | null;
+};
+
+/**
+ * Seed counterfactuals for a caller-supplied DR list. Used by the daily cron and by the
+ * chronological historical replay script.
+ */
+export async function seedCounterfactualsForBranch(
   branchRow: { id: string; branch: "LIVE" | "CANDIDATE" },
   sessions: string[],
+  decisions: SeedableDecisionRow[],
   runDay: Date,
   budget: JobContext["budget"],
 ): Promise<{ seeded: number; skipped: number; truncated: boolean }> {
   let seeded = 0;
   let skipped = 0;
 
-  const since = new Date(runDay.getTime() - LOOKBACK_DAYS * 86_400_000);
-  const decisions = await prisma.decisionReview.findMany({
-    where: {
-      branch: branchRow.branch,
-      createdAt: { gte: since },
-      ticker: { not: null },
-      decisionType: { in: [...SEEDABLE_DECISION_TYPES] },
-    },
-    select: {
-      id: true,
-      ticker: true,
-      decisionType: true,
-      convictionScore: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "asc" },
-    take: MAX_DECISIONS_PER_BRANCH,
-  });
   if (decisions.length === 0) return { seeded, skipped, truncated: false };
 
   // Already-seeded rows are excluded here rather than per decision (no N+1, and the
-  // unique index stays the backstop against a concurrent run).
+  // unique index stays the backstop against a concurrent run). Also collect notionIds
+  // already represented so a twin DR id cannot double-credit the fitness stream.
   const existing = await prisma.counterfactual.findMany({
-    where: { branchId: branchRow.id, decisionReviewId: { in: decisions.map((d) => d.id) } },
+    where: { branchId: branchRow.id },
     select: { decisionReviewId: true },
   });
   const seededIds = new Set(existing.map((row) => row.decisionReviewId));
+  const seededNotionIds = new Set<string>();
+  if (seededIds.size > 0) {
+    const linked = await prisma.decisionReview.findMany({
+      where: { id: { in: [...seededIds] }, notionId: { not: null } },
+      select: { notionId: true },
+    });
+    for (const row of linked) {
+      if (row.notionId) seededNotionIds.add(row.notionId);
+    }
+  }
 
   const latestSession = latestSessionOnOrBeforeIn(sessions, ymd(runDay));
   if (!latestSession) return { seeded, skipped: decisions.length, truncated: false };
@@ -115,10 +125,13 @@ async function seedForBranch(
     weightByTicker.set(position.ticker, book.nav > 0 ? value / book.nav : 0);
   }
 
-  const pending = decisions.filter((d) => !seededIds.has(d.id));
+  const pending = decisions.filter(
+    (d) =>
+      !seededIds.has(d.id) && (!d.notionId || !seededNotionIds.has(d.notionId)),
+  );
   const decisionSessionById = new Map<string, string>();
   for (const dr of pending) {
-    const day = decisionSessionFromEasternDate(sessions, easternDateOf(dr.createdAt));
+    const day = decisionSessionForReview(sessions, dr);
     if (day) decisionSessionById.set(dr.id, day);
   }
 
@@ -136,7 +149,7 @@ async function seedForBranch(
         })
       : [];
   const closeByKey = new Map(
-    bars.map((b) => [`${b.ticker}|${ymd(b.date)}`, decToNum(b.close)]),
+    bars.map((b) => [`${b.ticker.trim().toUpperCase()}|${ymd(b.date)}`, decToNum(b.close)]),
   );
 
   for (const dr of pending) {
@@ -204,6 +217,43 @@ async function seedForBranch(
   return { seeded, skipped, truncated: false };
 }
 
+async function seedForBranch(
+  branchRow: { id: string; branch: "LIVE" | "CANDIDATE" },
+  sessions: string[],
+  runDay: Date,
+  budget: JobContext["budget"],
+): Promise<{ seeded: number; skipped: number; truncated: boolean }> {
+  const since = new Date(runDay.getTime() - LOOKBACK_DAYS * 86_400_000);
+  const raw = await prisma.decisionReview.findMany({
+    where: {
+      branch: branchRow.branch,
+      createdAt: { gte: since },
+      ticker: { not: null },
+      decisionType: { in: [...SEEDABLE_DECISION_TYPES] },
+    },
+    select: {
+      id: true,
+      ticker: true,
+      decisionType: true,
+      convictionScore: true,
+      createdAt: true,
+      decisionDate: true,
+      notionId: true,
+      idempotencyKey: true,
+    },
+    orderBy: [{ decisionDate: "asc" }, { createdAt: "asc" }],
+    take: MAX_DECISIONS_PER_BRANCH,
+  });
+
+  return seedCounterfactualsForBranch(
+    branchRow,
+    sessions,
+    dedupeDecisionsForShadow(raw),
+    runDay,
+    budget,
+  );
+}
+
 /** Ascending sessions to try for the horizon price: the exact one, then the walk. */
 export function horizonCandidateSessions(
   sessions: string[],
@@ -224,7 +274,8 @@ export function horizonCandidateSessions(
   return { horizonDay, candidates };
 }
 
-async function resolvePending(
+/** Resolve PENDING counterfactuals whose horizon has elapsed as of `runDay`. */
+export async function resolvePendingCounterfactuals(
   sessions: string[],
   runDay: Date,
   budget: JobContext["budget"],
@@ -266,7 +317,7 @@ async function resolvePending(
       })
     : [];
   const closeByKey = new Map(
-    bars.map((b) => [`${b.ticker}|${ymd(b.date)}`, decToNum(b.close)]),
+    bars.map((b) => [`${b.ticker.trim().toUpperCase()}|${ymd(b.date)}`, decToNum(b.close)]),
   );
 
   for (const row of rows) {
@@ -364,7 +415,7 @@ export async function runCounterfactuals(ctx: JobContext): Promise<JobResult> {
     };
   }
 
-  const resolution = await resolvePending(sessions, ctx.runDay, ctx.budget);
+  const resolution = await resolvePendingCounterfactuals(sessions, ctx.runDay, ctx.budget);
   detail.resolved = resolution.resolved;
   detail.unresolved = resolution.unresolved;
   detail.truncated ||= resolution.truncated;

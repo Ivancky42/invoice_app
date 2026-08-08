@@ -355,6 +355,8 @@ export const listDecisionReviewsQuerySchema = z.object({
   /** Include only Pending rows whose decisionDate is within this many days (lookahead). */
   pendingDueWithinDays: z.coerce.number().int().min(1).max(365).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
+  /** LIVE (default when omitted = all branches) or CANDIDATE paper decisions. */
+  branch: z.enum(["LIVE", "CANDIDATE"]).optional(),
 });
 
 export const upsertContentPageInputSchema = z.object({

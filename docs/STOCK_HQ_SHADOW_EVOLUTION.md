@@ -83,11 +83,15 @@ pure (no Prisma at the algorithm layer) and exposes binary-search helpers over t
 ascending session list: `latestSessionOnOrBeforeIn`, `nextSessionAfterIn`,
 `decisionSessionFromEasternDate`.
 
-`decisionSession` is derived from a Decision Review's `createdAt`, **never** from
-`decisionDate`: routines run after the US close, so the freshest bars the agent could have
-seen belong to the latest session on or before the **US-Eastern** calendar date of
-`createdAt` (a 20:00 ET write is already the next UTC day, so a naive UTC lookup would
-credit a session that has not happened yet).
+`decisionSession` is derived from a Decision Review's **`decisionDate` when set**, else
+from the US-Eastern calendar date of `createdAt`. Notion-synced and agent-written rows
+carry an explicit calendar `decisionDate` (stored as UTC midnight or noon) — using that
+date's `ymd` avoids collapsing a backfill onto the sync day. When `decisionDate` is null
+(live routines that omitted it), fall back to Eastern `createdAt`: routines run after the
+US close, so the freshest bars the agent could have seen belong to that session (a
+20:00 ET write is already the next UTC day, so a naive UTC lookup would credit a session
+that has not happened yet). Never run Notion midnight-UTC `decisionDate` values through
+Eastern conversion — that would shift them back a calendar day.
 
 Per-consumer missing-data policy: a fill that cannot find its scheduled open stays
 `PENDING` and is `REJECTED` after 3 sessions; a mark that finds no bar carries the prior

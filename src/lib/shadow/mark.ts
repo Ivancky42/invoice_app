@@ -25,9 +25,15 @@ export type ShadowMarkDetail = {
   byBranch: Record<string, ShadowMarkBranchDetail>;
 };
 
-export async function runShadowMark(ctx: JobContext): Promise<JobResult> {
+export async function runShadowMark(
+  ctx: JobContext,
+  opts?: { onlyBranchIds?: string[] },
+): Promise<JobResult> {
   await ensureShadowBranches();
-  const [branches, sessions] = await Promise.all([listBranches(), loadSessions()]);
+  const [allBranches, sessions] = await Promise.all([listBranches(), loadSessions()]);
+  const branches = opts?.onlyBranchIds
+    ? allBranches.filter((b) => opts.onlyBranchIds!.includes(b.id))
+    : allBranches;
   const sessionDay = latestSessionOnOrBeforeIn(sessions, ymd(ctx.runDay));
 
   const detail: ShadowMarkDetail = { session: sessionDay, byBranch: {} };
@@ -49,11 +55,13 @@ export async function runShadowMark(ctx: JobContext): Promise<JobResult> {
         },
         select: { ticker: true, close: true },
       });
-      const closeByTicker = new Map(bars.map((b) => [b.ticker, decToNum(b.close)]));
+      const closeByTicker = new Map(
+        bars.map((b) => [b.ticker.trim().toUpperCase(), decToNum(b.close)]),
+      );
 
       const staleIds: string[] = [];
       for (const position of positions) {
-        const close = closeByTicker.get(position.ticker) ?? null;
+        const close = closeByTicker.get(position.ticker.trim().toUpperCase()) ?? null;
         if (close === null) {
           // Carry the previous mark forward — never substitute another session's price.
           staleIds.push(position.id);

@@ -19,6 +19,7 @@ the ordered steps to turn it on safely.
 | `RULES_MIRROR_REPO` | Optional, unset by default | Set to `owner/repo` only if you want promoted rulesets mirrored to a `rules-mirror` branch for external diffing. Mirroring is best-effort and never blocks a promotion if unset or failing. |
 | `RULES_MIRROR_TOKEN` | Optional, unset by default | A GitHub PAT (classic or fine-grained) with **`contents: write`** on the target repo. The mirror writes **only** to the `rules-mirror` branch, never `main` — a push to `main` would trigger a prod deploy, so this is deliberate. |
 | `EVIDENCE_ENFORCEMENT` | Optional, defaults `warn` | Leave unset (or `warn`) for the initial deploy — evidence-tier codes land in `warnings[]` on `upsert_decision_review`, nothing is rejected. Only flip to `strict` after routines have been writing evidence for a while and you've reviewed the warning volume. |
+| `EVOLUTION_PROMOTE` | **Set to `0` until re-replay verifies** | Hard-pauses `evolution_evaluate` (`skipped: "promote_paused"`). Clear or set `1` only after `scripts/replay-shadow-history.ts` has been run against prod and spot-checked. Also honours Config key `EVOLUTION_PROMOTE=false`. |
 
 All other required vars (`DATABASE_URL`, `DIRECT_DATABASE_URL`, `AGENT_TOKEN`,
 `SYNC_SECRET`, etc.) are unchanged by this branch.
@@ -264,3 +265,22 @@ only, same schedule) — `/api/cron/tick` and everything downstream of it (shado
 fitness, evolution) simply stops being invoked. Nothing about this rollback deletes data:
 `RuleVersion`, `ShadowBranch`, `FitnessSnapshot`, and `EvolutionEvent` rows are left as-is
 and resume exactly where they left off if the cron entry is flipped back later.
+
+---
+
+## 9. Historical shadow re-replay (after date-collapse / Notion backfill)
+
+If DecisionReviews were bulk-synced from Notion, their `createdAt` is the sync day. The
+daily jobs now prefer `decisionDate` for `decisionSession`, but a one-shot chronological
+replay is still required so historical buys fill before later sells:
+
+```bash
+# Dry-run first — prints dated sample rows, writes nothing
+DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/replay-shadow-history.ts --dry-run
+
+# Wipe shadow ledger for both branches and walk the session calendar
+DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/replay-shadow-history.ts
+```
+
+Keep `EVOLUTION_PROMOTE=0` until the sample counterfactual prices match DR decision-day
+closes (not the sync-day close). Then clear the env var (or set `1`) and redeploy.

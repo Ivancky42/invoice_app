@@ -9,17 +9,20 @@
  * before today's decisions are judged. Orders still PENDING at this point are exposure
  * the branch has already committed to, so they count towards position sizing and they
  * defer — never reject — a sell for the same ticker.
+ *
+ * `decisionSession` prefers DR.`decisionDate` (calendar ymd) over Eastern `createdAt`,
+ * so Notion-backfilled history is not collapsed onto the sync day.
  */
 import type { Prisma } from "@/generated/prisma/client";
-import type { Branch } from "@/generated/prisma/client";
+import type { Branch, DecisionType } from "@/generated/prisma/client";
 import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { prisma } from "@/lib/prisma";
 import { getRuleSet } from "@/lib/rules/resolve";
 import { branchBook, ensureShadowBranches, listBranches } from "@/lib/shadow/branches";
+import { dedupeDecisionsForShadow } from "@/lib/shadow/dedupe";
 import { classifyDecisionType, sellDisposition } from "@/lib/shadow/orders";
 import {
-  decisionSessionFromEasternDate,
-  easternDateOf,
+  decisionSessionForReview,
   loadSessions,
   latestSessionOnOrBeforeIn,
   sessionDate,
@@ -28,7 +31,7 @@ import {
 import { buySizeFraction, sellSizeFraction } from "@/lib/shadow/sizing";
 import { decToNum } from "@/lib/stocks/format";
 
-/** Bounded backward scan — older decisions are never enqueued retroactively. */
+/** Bounded backward scan — older decisions are never enqueued retroactively by the cron. */
 const LOOKBACK_DAYS = 14;
 
 /** Hard cap on DR rows examined per branch per run (the daily set is far smaller). */
@@ -51,6 +54,17 @@ export type ShadowEnqueueDetail = BranchCounts & {
   truncated: boolean;
 };
 
+export type EnqueueDecisionRow = {
+  id: string;
+  ticker: string | null;
+  decisionType: DecisionType | null;
+  convictionScore: number | null;
+  createdAt: Date;
+  decisionDate: Date | null;
+  notionId: string | null;
+  idempotencyKey: string | null;
+};
+
 function isUniqueViolation(err: unknown): boolean {
   return (
     typeof err === "object" &&
@@ -59,9 +73,14 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
-async function enqueueForBranch(
+/**
+ * Enqueue a caller-supplied DR list (already scoped to a branch). Used by the daily cron
+ * and by the chronological historical replay script.
+ */
+export async function enqueueDecisionsForBranch(
   branchRow: { id: string; branch: Branch },
   sessions: string[],
+  decisions: EnqueueDecisionRow[],
   runDay: Date,
   budget: JobContext["budget"],
 ): Promise<BranchCounts & { truncated: boolean }> {
@@ -70,46 +89,6 @@ async function enqueueForBranch(
   let skipped = 0;
   let deferred = 0;
 
-  const since = new Date(runDay.getTime() - LOOKBACK_DAYS * 86_400_000);
-
-  // Already-enqueued DRs are excluded IN THE QUERY, before the cap: filtering after a
-  // `take` would let one full window of settled decisions starve every new DR, which
-  // would then age out of the lookback unnoticed. An order can never predate its own
-  // decision, so orders created inside the window cover every DR inside it.
-  const enqueuedRows = await prisma.shadowOrder.findMany({
-    where: {
-      branchId: branchRow.id,
-      decisionReviewId: { not: null },
-      createdAt: { gte: since },
-    },
-    select: { decisionReviewId: true },
-  });
-  const enqueuedIds = [
-    ...new Set(
-      enqueuedRows
-        .map((o) => o.decisionReviewId)
-        .filter((id): id is string => id !== null),
-    ),
-  ];
-
-  const decisions = await prisma.decisionReview.findMany({
-    where: {
-      branch: branchRow.branch,
-      createdAt: { gte: since },
-      ticker: { not: null },
-      decisionType: { in: ["BUY", "ADD", "AVERAGE_DOWN", "REDUCE", "EXIT"] },
-      ...(enqueuedIds.length > 0 ? { id: { notIn: enqueuedIds } } : {}),
-    },
-    select: {
-      id: true,
-      ticker: true,
-      decisionType: true,
-      convictionScore: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "asc" },
-    take: MAX_DECISIONS_PER_BRANCH,
-  });
   if (decisions.length === 0) {
     return { enqueued, rejected, skipped, deferred, truncated: false };
   }
@@ -157,10 +136,7 @@ async function enqueueForBranch(
       continue;
     }
 
-    const decisionSessionDay = decisionSessionFromEasternDate(
-      sessions,
-      easternDateOf(dr.createdAt),
-    );
+    const decisionSessionDay = decisionSessionForReview(sessions, dr);
     if (!decisionSessionDay) {
       // No session on/before the decision date — cannot date the order deterministically.
       skipped += 1;
@@ -200,6 +176,9 @@ async function enqueueForBranch(
         });
         enqueued += 1;
         claimedFraction.set(ticker, (claimedFraction.get(ticker) ?? 0) + sizing.sizeFraction);
+        // Same-run sells for this ticker must defer (not reject no_position) once a BUY is
+        // pending — the book will not show the position until the next session's fill.
+        pendingBuyTickers.add(ticker);
       } catch (err) {
         if (!isUniqueViolation(err)) throw err;
       }
@@ -236,6 +215,68 @@ async function enqueueForBranch(
   }
 
   return { enqueued, rejected, skipped, deferred, truncated: false };
+}
+
+async function enqueueForBranch(
+  branchRow: { id: string; branch: Branch },
+  sessions: string[],
+  runDay: Date,
+  budget: JobContext["budget"],
+): Promise<BranchCounts & { truncated: boolean }> {
+  const since = new Date(runDay.getTime() - LOOKBACK_DAYS * 86_400_000);
+
+  // Already-enqueued DRs (any age) — unique index is the backstop, but we also collect
+  // notionIds already represented so a twin DR id cannot double-enter the book.
+  const enqueuedRows = await prisma.shadowOrder.findMany({
+    where: {
+      branchId: branchRow.id,
+      decisionReviewId: { not: null },
+    },
+    select: { decisionReviewId: true },
+  });
+  const enqueuedIds = new Set(
+    enqueuedRows
+      .map((o) => o.decisionReviewId)
+      .filter((id): id is string => id !== null),
+  );
+  const enqueuedNotionIds = new Set<string>();
+  if (enqueuedIds.size > 0) {
+    const linked = await prisma.decisionReview.findMany({
+      where: { id: { in: [...enqueuedIds] }, notionId: { not: null } },
+      select: { notionId: true },
+    });
+    for (const row of linked) {
+      if (row.notionId) enqueuedNotionIds.add(row.notionId);
+    }
+  }
+
+  const raw = await prisma.decisionReview.findMany({
+    where: {
+      branch: branchRow.branch,
+      createdAt: { gte: since },
+      ticker: { not: null },
+      decisionType: { in: ["BUY", "ADD", "AVERAGE_DOWN", "REDUCE", "EXIT"] },
+      ...(enqueuedIds.size > 0 ? { id: { notIn: [...enqueuedIds] } } : {}),
+    },
+    select: {
+      id: true,
+      ticker: true,
+      decisionType: true,
+      convictionScore: true,
+      createdAt: true,
+      decisionDate: true,
+      notionId: true,
+      idempotencyKey: true,
+    },
+    orderBy: [{ decisionDate: "asc" }, { createdAt: "asc" }],
+    take: MAX_DECISIONS_PER_BRANCH,
+  });
+
+  const decisions = dedupeDecisionsForShadow(raw).filter(
+    (d) => !d.notionId || !enqueuedNotionIds.has(d.notionId),
+  );
+
+  return enqueueDecisionsForBranch(branchRow, sessions, decisions, runDay, budget);
 }
 
 /**

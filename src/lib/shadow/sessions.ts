@@ -134,6 +134,36 @@ export function easternDateOf(at: Date): string {
   return easternSessionDate(Math.floor(at.getTime() / 1000));
 }
 
+export type DecisionAsOfInput = {
+  /** Explicit decision calendar day when the DR carries one (Notion / agent). */
+  decisionDate: Date | null;
+  /** Row write time — fallback when `decisionDate` is null. */
+  createdAt: Date;
+};
+
+/**
+ * Calendar day a DecisionReview should be dated for session lookup.
+ *
+ * Prefer `decisionDate` when set: Notion stores midnight-UTC calendar dates, and running
+ * those through {@link easternDateOf} would shift them back a day. Only fall back to the
+ * Eastern write-time rule when the DR has no decisionDate (live routines that omitted it).
+ */
+export function decisionAsOfDay(dr: DecisionAsOfInput): string {
+  if (dr.decisionDate) return ymd(dr.decisionDate);
+  return easternDateOf(dr.createdAt);
+}
+
+/**
+ * Pure: session a DecisionReview belongs to — `decisionDate` when present, else the
+ * Eastern calendar date of `createdAt`.
+ */
+export function decisionSessionForReview(
+  sessions: string[],
+  dr: DecisionAsOfInput,
+): string | null {
+  return decisionSessionFromEasternDate(sessions, decisionAsOfDay(dr));
+}
+
 /** Load (and cache) the ascending session calendar from PriceHistory anchors. */
 export async function loadSessions(): Promise<string[]> {
   const hit = cache;
@@ -169,8 +199,17 @@ export async function nextSessionAfter(date: Date | string): Promise<string | nu
   return nextSessionAfterIn(sessions, typeof date === "string" ? date : ymd(date));
 }
 
-/** Session a DecisionReview row written at `createdAt` was decided on, or null. */
-export async function decisionSessionFor(createdAt: Date): Promise<string | null> {
+/**
+ * Session a DecisionReview was decided on, or null.
+ * Prefers `decisionDate` when provided; otherwise Eastern date of `createdAt`.
+ */
+export async function decisionSessionFor(
+  createdAt: Date,
+  decisionDate?: Date | null,
+): Promise<string | null> {
   const sessions = await loadSessions();
-  return decisionSessionFromEasternDate(sessions, easternDateOf(createdAt));
+  return decisionSessionForReview(sessions, {
+    decisionDate: decisionDate ?? null,
+    createdAt,
+  });
 }

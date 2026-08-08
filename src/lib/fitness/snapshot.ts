@@ -323,9 +323,15 @@ async function snapshotBranch(
   };
 }
 
-export async function runFitnessSnapshot(ctx: JobContext): Promise<JobResult> {
+export async function runFitnessSnapshot(
+  ctx: JobContext,
+  opts?: { onlyBranchIds?: string[] },
+): Promise<JobResult> {
   await ensureShadowBranches();
-  const [branches, sessions] = await Promise.all([listBranches(), loadSessions()]);
+  const [allBranches, sessions] = await Promise.all([listBranches(), loadSessions()]);
+  const branches = opts?.onlyBranchIds
+    ? allBranches.filter((b) => opts.onlyBranchIds!.includes(b.id))
+    : allBranches;
   const sessionDay = latestSessionOnOrBeforeIn(sessions, ymd(ctx.runDay));
 
   const detail: FitnessSnapshotDetail = { session: sessionDay, byBranch: {} };

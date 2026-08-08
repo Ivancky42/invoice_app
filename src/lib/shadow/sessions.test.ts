@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  decisionAsOfDay,
+  decisionSessionForReview,
   decisionSessionFromEasternDate,
   easternDateOf,
   isSessionIn,
@@ -120,5 +122,51 @@ describe("decisionSessionFor date math", () => {
   it("returns null before any session exists", () => {
     const createdAt = new Date("2026-07-01T16:00:00.000Z");
     expect(decisionSessionFromEasternDate(SESSIONS, easternDateOf(createdAt))).toBeNull();
+  });
+});
+
+describe("decisionAsOfDay / decisionSessionForReview", () => {
+  const syncCreatedAt = new Date("2026-08-06T11:38:12.000Z");
+
+  it("uses calendar ymd of decisionDate noon UTC (agent/seed shape)", () => {
+    const decisionDate = new Date("2026-05-16T12:00:00.000Z");
+    expect(decisionAsOfDay({ decisionDate, createdAt: syncCreatedAt })).toBe("2026-05-16");
+  });
+
+  it("uses calendar ymd of decisionDate midnight UTC (Notion shape) — does NOT Eastern-shift", () => {
+    // Midnight UTC is still evening ET the prior day; Eastern conversion would wrongly
+    // yield 2026-05-15. Calendar ymd must win for explicit decisionDate.
+    const decisionDate = new Date("2026-05-16T00:00:00.000Z");
+    expect(easternDateOf(decisionDate)).toBe("2026-05-15");
+    expect(decisionAsOfDay({ decisionDate, createdAt: syncCreatedAt })).toBe("2026-05-16");
+  });
+
+  it("falls back to Eastern createdAt when decisionDate is null", () => {
+    expect(decisionAsOfDay({ decisionDate: null, createdAt: syncCreatedAt })).toBe(
+      easternDateOf(syncCreatedAt),
+    );
+  });
+
+  it("maps a May decisionDate to a May session even when createdAt is the Aug sync day", () => {
+    const maySessions = [
+      "2026-05-14",
+      "2026-05-15",
+      "2026-05-16",
+      "2026-08-06",
+      "2026-08-07",
+    ];
+    expect(
+      decisionSessionForReview(maySessions, {
+        decisionDate: new Date("2026-05-16T00:00:00.000Z"),
+        createdAt: syncCreatedAt,
+      }),
+    ).toBe("2026-05-16");
+    // Without decisionDate the sync-day collapse would win:
+    expect(
+      decisionSessionForReview(maySessions, {
+        decisionDate: null,
+        createdAt: syncCreatedAt,
+      }),
+    ).toBe("2026-08-06");
   });
 });

@@ -206,7 +206,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List decision reviews",
       description:
-        "List Decision Review Log rows (filter by ticker, reviewStatus, or pendingDueWithinDays).",
+        "List Decision Review Log rows (filter by ticker, reviewStatus, branch LIVE|CANDIDATE, or pendingDueWithinDays).",
       inputSchema: listDecisionReviewsQuerySchema.shape,
     },
     async (args) => {

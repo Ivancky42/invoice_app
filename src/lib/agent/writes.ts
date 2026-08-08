@@ -817,6 +817,9 @@ export async function listDecisionReviews(query: ListDecisionReviewsQuery = {}) 
   if (query.reviewStatus) {
     where.reviewStatus = query.reviewStatus;
   }
+  if (query.branch) {
+    where.branch = query.branch;
+  }
   if (query.pendingDueWithinDays != null) {
     const now = new Date();
     const start = new Date(now);

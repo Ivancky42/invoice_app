@@ -225,7 +225,7 @@ export default async function StocksOverview() {
 
       <StocksDailyBriefCard />
 
-      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <Link href="/stocks/portfolio" className="card p-4 hover:shadow-sm transition">
           <div className="text-xs text-gray-500">Holdings</div>
           <div className="text-2xl font-semibold mt-1">{portfolio.length}</div>
@@ -241,6 +241,10 @@ export default async function StocksOverview() {
         <Link href="/stocks/decisions" className="card p-4 hover:shadow-sm transition">
           <div className="text-xs text-gray-500">Decisions</div>
           <div className="text-sm font-medium mt-2 text-gray-700">Review log →</div>
+        </Link>
+        <Link href="/stocks/shadow" className="card p-4 hover:shadow-sm transition">
+          <div className="text-xs text-gray-500">Shadow books</div>
+          <div className="text-sm font-medium mt-2 text-gray-700">Evolution loop →</div>
         </Link>
         <div className="card p-4">
           <div className="text-xs text-gray-500">Unrealized P&L (portfolio)</div>

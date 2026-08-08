@@ -104,7 +104,7 @@ async function fillBranch(
       })
     : [];
   const openByKey = new Map(
-    bars.map((b) => [`${b.ticker}|${ymd(b.date)}`, decToNum(b.open)]),
+    bars.map((b) => [`${b.ticker.trim().toUpperCase()}|${ymd(b.date)}`, decToNum(b.open)]),
   );
 
   for (const order of orders) {
@@ -122,8 +122,9 @@ async function fillBranch(
 
     let fillSessionDay: string | null = null;
     let openPrice: number | null = null;
+    const orderTicker = order.ticker.trim().toUpperCase();
     for (const day of candidates) {
-      const price = openByKey.get(`${order.ticker}|${day}`) ?? null;
+      const price = openByKey.get(`${orderTicker}|${day}`) ?? null;
       if (price !== null && price > 0) {
         fillSessionDay = day;
         openPrice = price;
@@ -276,13 +277,23 @@ async function fillBranch(
 }
 
 /**
- * Fill pending orders for both branches. Like `shadow_enqueue` this returns
+ * Fill pending orders for both branches (or a caller-supplied subset). Returns
  * `{ done: true }`: the pending set is tiny and every order is re-examined on the next
  * run, so a budget-guard exit loses nothing.
+ *
+ * `onlyBranchIds` is for the historical replay script — so a LIVE-only re-replay cannot
+ * fill stale CANDIDATE orders that were intentionally left alone.
  */
-export async function runShadowFill(ctx: JobContext): Promise<JobResult> {
+export async function runShadowFill(
+  ctx: JobContext,
+  opts?: { onlyBranchIds?: string[] },
+): Promise<JobResult> {
   await ensureShadowBranches();
-  const branches = await listBranches();
+  let branches = await listBranches();
+  if (opts?.onlyBranchIds) {
+    const allow = new Set(opts.onlyBranchIds);
+    branches = branches.filter((b) => allow.has(b.id));
+  }
   const sessions = await loadSessions();
 
   const detail: ShadowFillDetail = {

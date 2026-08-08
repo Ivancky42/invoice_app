@@ -9,8 +9,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { prisma } from "@/lib/prisma";
 import {
-  decisionSessionFromEasternDate,
-  easternDateOf,
+  decisionSessionForReview,
   loadSessions,
   sessionDate,
   sessionOffsetIn,
@@ -83,11 +82,12 @@ export async function fillDecisionReturns(ctx: {
       id: true,
       ticker: true,
       createdAt: true,
+      decisionDate: true,
       return1wPct: true,
       return4wPct: true,
       return3mPct: true,
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ decisionDate: "asc" }, { createdAt: "asc" }],
     take: MAX_ROWS,
   });
 
@@ -102,7 +102,7 @@ export async function fillDecisionReturns(ctx: {
 
   for (const row of rows) {
     const ticker = row.ticker!.trim().toUpperCase();
-    const base = decisionSessionFromEasternDate(sessions, easternDateOf(row.createdAt));
+    const base = decisionSessionForReview(sessions, row);
     if (!base) continue;
 
     const horizons: Array<[HorizonField, string]> = [];
@@ -129,7 +129,9 @@ export async function fillDecisionReturns(ctx: {
     },
     select: { ticker: true, date: true, close: true },
   });
-  const closeByKey = new Map(bars.map((b) => [`${b.ticker}|${ymd(b.date)}`, decToNum(b.close)]));
+  const closeByKey = new Map(
+    bars.map((b) => [`${b.ticker.trim().toUpperCase()}|${ymd(b.date)}`, decToNum(b.close)]),
+  );
 
   for (const plan of plans) {
     const baseClose = closeByKey.get(`${plan.ticker}|${plan.base}`) ?? null;

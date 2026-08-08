@@ -19,11 +19,30 @@ import { challengerLegitimacy } from "@/lib/rules/challenger";
 import { mirrorRuleVersion } from "@/lib/rules/gitMirror";
 import { clearRuleSetCache } from "@/lib/rules/resolve";
 import { ensureShadowBranches, resetBranch } from "@/lib/shadow/branches";
-import { CONFIG_KEYS } from "@/lib/stocks/config";
+import { CONFIG_KEYS, getConfig } from "@/lib/stocks/config";
 import { decToNum } from "@/lib/stocks/format";
 
 /** Window the promotion rate limit is measured over. */
 const PROMOTION_RATE_WINDOW_DAYS = 90;
+
+/** Config / env key: set to `"0"` / `false` to freeze promotion until a clean re-replay. */
+export const EVOLUTION_PROMOTE_KEY = "EVOLUTION_PROMOTE";
+
+/**
+ * True when promotion is intentionally frozen (re-replay in progress, or ops kill switch).
+ * Env wins over Config: `EVOLUTION_PROMOTE=0` always pauses; Config `false`/`0` also pauses.
+ */
+export async function isEvolutionPromotePaused(): Promise<boolean> {
+  const env = process.env.EVOLUTION_PROMOTE?.trim().toLowerCase();
+  if (env === "0" || env === "false" || env === "off") return true;
+  if (env === "1" || env === "true" || env === "on") return false;
+
+  const raw = await getConfig(EVOLUTION_PROMOTE_KEY);
+  if (raw === false || raw === 0 || raw === "0" || raw === "false" || raw === "off") {
+    return true;
+  }
+  return false;
+}
 
 export type EvolutionEvaluateDetail = {
   candidateId: number | null;
@@ -44,6 +63,13 @@ export type EvolutionEvaluateDetail = {
 };
 
 export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult> {
+  if (await isEvolutionPromotePaused()) {
+    return {
+      done: true,
+      detail: { candidateId: null, skipped: "promote_paused" },
+    };
+  }
+
   const active = await prisma.ruleVersion.findFirst({
     where: { status: "ACTIVE" },
     orderBy: { id: "desc" },
