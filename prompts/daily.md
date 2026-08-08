@@ -5,6 +5,15 @@
 Follow `_shared.md` in full. It owns the write contract, Adaptive Decision Layer (§4),
 sizing (§7), sleeves (§6), price provenance (§3), Decision Review (§11), and enums.
 
+**Branch:** pass `branch` explicitly on `get_context` / `get_prompt` / `upsert_daily_log` /
+`upsert_decision_review` calls (default `LIVE`). The real-book write tools this routine
+uses (`patch_portfolio`, `upsert_watchlist`, `append_page_notes`, `sync_tracked_tickers`)
+always address the one real book and reject a `branch` param outright.
+
+**Evidence:** every `upsert_decision_review` should carry its cited evidence inline in the
+`evidence` array (`tier`, `kind`, `observedAt` per item) rather than as a follow-up
+`add_evidence` call — see `_shared` evidence provenance §.
+
 **Tools:** `get_context(routine="daily")`, `get_prompt`, `list_portfolio`,
 `list_watchlist` (use `includeDemoted=true` when checking re-promotion), `list_ideas`,
 `list_trends`, `list_trades`, `list_decision_reviews`, `list_daily_logs`, `get_document`,

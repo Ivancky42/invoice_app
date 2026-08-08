@@ -148,8 +148,45 @@ Local Desktop config does **not** reach Cowork cloud schedules — use the Custo
 
 **Verify tools appear:**
 
-- Read: `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes`
-- Write (**live in 4c**): `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document`. **`patch_config` is HTTP-only** (`PATCH /api/agent/config`) — not registered on MCP so routines cannot rewrite `LIMITS`.
+- Read: `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes`, `get_price_history`, `get_shadow_fitness`, `list_shadow_positions`, `list_shadow_orders`, `list_counterfactuals`, `list_evolution_log`, `get_rule_version`, `list_rule_versions`, `get_kernel`
+- Write (**live in 4c**): `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document`, `add_evidence`, `propose_rule_change`, `apply_gap_fix`, `score_rule_version`. **`patch_config` is HTTP-only** (`PATCH /api/agent/config`) — not registered on MCP so routines cannot rewrite `LIMITS`. **Promote / revert / activate a ruleset have no tool anywhere** — promotion is cron-only (`evolution_evaluate`), same precedent as `patch_config`: a proposer must never be able to crown its own candidate.
+
+### 2.4a Shadow evolution — read/write surface
+
+Nine new read tools and four new write tools (Phase — shadow ledger + rule evolution) sit
+alongside the existing surface, all under the same `AGENT_TOKEN` / MCP auth:
+
+| Tool | Kind | Notes |
+|---|---|---|
+| `get_price_history` | Read | Daily OHLC bars for one ticker, newest first. `from`/`to` optional; default limit 120 (max 500). |
+| `get_shadow_fitness` | Read | Daily `FitnessSnapshot` rows for a shadow branch (default `LIVE`). All values are FRACTIONS (`0.03` = 3%). `avoidedCreditDelta` is SIGNED — refusing a name that fell credits, refusing one that rose debits. |
+| `list_shadow_positions` | Read | Open (or all, `includeClosed=true`) PAPER positions in a branch's ledger — never the real portfolio. |
+| `list_shadow_orders` | Read | PAPER orders (simulated fills, never broker orders) in a branch's ledger, newest decision first. |
+| `list_counterfactuals` | Read | What NOT-taken decisions (AVOID / WAIT / DO_NOT_AVERAGE_DOWN) would have been worth. `credit` is SIGNED, in NAV fractions. |
+| `list_evolution_log` | Read | The append-only audit log — proposals, rejections (incl. `KERNEL_ATTEMPT`), promotions, kills, scores. Read rejections too; a repeated identical one is itself a signal. |
+| `get_rule_version` | Read | Metadata for one `RuleVersion` (status, lane, limits, changedPaths, outcome). Never returns prompt text — use `get_prompt` for the running ruleset. |
+| `list_rule_versions` | Read | `RuleVersion` metadata, newest first, optional `status` filter. |
+| `get_kernel` | Read | The five pinned kernel clauses (id + sha256 + canonical text). Read this BEFORE `propose_rule_change` — any hunk touching a fence is rejected and logged `KERNEL_ATTEMPT`. |
+| `propose_rule_change` | Write | Propose a CANDIDATE ruleset. Server assigns the lane (a supplied `lane` is ignored and recorded as `laneClaimIgnored`). Requires ≥3 cited scored decision reviews, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome, a falsifiable `counterCase` (≥40 chars), and a measurable `successMetric`. Loosening a rail needs ≥5 rows over ≥42 days plus `worstCase`. |
+| `apply_gap_fix` | Write | Immediate patch to ONE section of the ACTIVE ruleset for a typo/contradiction (≤40 changed lines). `expectedSectionSha` required — mismatch is a 409. Not for behaviour changes; use `propose_rule_change` for those. |
+| `score_rule_version` | Write | Retrospective HELPED/NEUTRAL/HURT on a RETIRED/KILLED version, computed server-side. Below 10 paired sessions returns `preview: true, outcome: null` and writes nothing. `outcomeClaim` is recorded but never authoritative. |
+| `add_evidence` | Write | Append `EvidenceItem` rows to an existing Decision Review (`decisionReviewId` or `idempotencyKey`, within `branch`). Prefer citing evidence inline on `upsert_decision_review`'s `evidence[]` array instead when writing the DR fresh. |
+
+**`branch` param semantics.** `get_context`, `get_prompt`, `upsert_daily_log`,
+`upsert_report`, and `upsert_decision_review` accept an optional `branch` (`"LIVE"` default
+| `"CANDIDATE"`). The real-book write surface — `log_trade`, `patch_portfolio`, watchlist /
+idea / trend / document writes, `sync_tracked_tickers`, `delete_watchlist` — **rejects** a
+`branch` param outright with `400 branch_not_allowed_on_real_book`: both branches read the
+same one real book, and a `branch=CANDIDATE` write attempt on the real-book surface must
+never silently mutate it. `CANDIDATE`-branch idempotency keys are server-prefixed
+(`CANDIDATE:${key}`) so a candidate replay can never collide with or address a LIVE row.
+
+**Evidence on `upsert_decision_review`.** Pass cited evidence inline via the `evidence`
+array (`{ tier, kind, observedAt }` per item, tiers `T1`–`T4`, up to 20 items) rather than
+a separate `add_evidence` follow-up call when writing the DR fresh — `add_evidence` exists
+for appending evidence to a DR after the fact. `EVIDENCE_ENFORCEMENT` (env, default
+`warn`) governs whether unmet tier requirements land in `warnings[]` (write proceeds) or
+`failures[]` (write rejected, `strict` mode only).
 
 ### 2.5 Point the four Cowork routines
 
@@ -199,6 +236,14 @@ Same zod contracts as MCP tools. Prefer MCP when the client supports tool schema
 | Reports | `GET /api/agent/reports?reportType&since&until&limit` | WEEKLY/MONTHLY |
 | Decision reviews | `GET /api/agent/decision-reviews` | Filter by ticker / status / pending window |
 | Config | `GET /api/agent/config` | All Config keys |
+| Price history | `GET /api/agent/price-history?ticker=…` | Daily OHLC bars, newest first; `from`/`to`; default limit 120 (max 500) |
+| Shadow fitness | `GET /api/agent/shadow/fitness?branch=…` | Daily `FitnessSnapshot` rows; fractions; `avoidedCreditDelta` signed |
+| Shadow positions | `GET /api/agent/shadow/positions?branch=…` | Open (or `includeClosed=true`) PAPER positions |
+| Shadow orders | `GET /api/agent/shadow/orders?branch=…` | PAPER simulated fills, newest decision first |
+| Counterfactuals | `GET /api/agent/shadow/counterfactuals?branch=…` | Signed credit for refused decisions |
+| Evolution log | `GET /api/agent/evolution/log` | Append-only audit trail — proposals, rejections, promotions, kills, scores |
+| Rule versions | `GET /api/agent/evolution/rule-versions` / `GET /api/agent/evolution/rule-versions/:id` | Metadata only, never prompt text |
+| Kernel | `GET /api/agent/evolution/kernel` | Pinned kernel clauses (id + sha256 + text) |
 | MCP | `POST/GET /api/mcp/mcp` | Same tools as below |
 
 ### Writes — **live (Phase 4c)**
@@ -208,6 +253,10 @@ Same zod contracts as MCP tools. Prefer MCP when the client supports tool schema
 | Daily log | `POST /api/agent/daily-log` | `logDate` |
 | Report | `POST /api/agent/report` | `(reportType, reportDate)`; persists `rulesVersion` |
 | Trade | `POST /api/agent/trade` | client `idempotencyKey`; syncs TRACKED_TICKERS |
+| Evidence | `POST /api/agent/evidence` | Appends `EvidenceItem` rows to an existing DR (branch-scoped, 404 if not found on that branch) |
+| Propose rule change | `POST /api/agent/evolution/propose` | Server assigns lane; rejects log to `EvolutionEvent` |
+| Apply gap fix | `POST /api/agent/evolution/gap-fix` | `expectedSectionSha` required; 409 on mismatch |
+| Score rule version | `POST /api/agent/evolution/score` | Server-computed outcome; preview-only below 10 paired sessions |
 | Portfolio patch | `PATCH /api/agent/portfolio/:ticker` | includes earningsDate, marketCapBucket, analystRating |
 | Watchlist upsert/delete | `PUT /api/agent/watchlist` / `DELETE /api/agent/watchlist/:ticker` | syncs TRACKED_TICKERS |
 | Sync tracked tickers | `POST /api/agent/tracked-tickers/sync` | rebuild from DB |
@@ -386,8 +435,8 @@ Neon is SoT. Notion sync cron is **removed** from `vercel.json`. Only `/api/sync
 
 | Kind | Tools |
 |------|--------|
-| **Read** | `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes` |
-| **Write** | `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote; `hard=true` to erase), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document` (`patch_config` for cash/FX only in rare ops — never LIMITS from routines) |
+| **Read** | `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes`, `get_price_history`, `get_shadow_fitness`, `list_shadow_positions`, `list_shadow_orders`, `list_counterfactuals`, `list_evolution_log`, `get_rule_version`, `list_rule_versions`, `get_kernel` |
+| **Write** | `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote; `hard=true` to erase), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document`, `add_evidence`, `propose_rule_change`, `apply_gap_fix`, `score_rule_version` (`patch_config` for cash/FX only in rare ops — never LIMITS from routines; promote/revert/activate have no tool anywhere — cron-only) |
 
 Matching HTTP surface: `/api/agent/*` (see §3). Prices are never written by agents.
 

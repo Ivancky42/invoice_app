@@ -4,6 +4,11 @@
 
 Follow `_shared.md` in full.
 
+**Branch:** pass `branch` explicitly on `get_context` / `get_prompt` / `upsert_report` /
+`upsert_decision_review` calls (default `LIVE`). Real-book write tools used here
+(`patch_portfolio`, `append_page_notes`, `sync_tracked_tickers`, idea/trend/document
+writes) reject a `branch` param.
+
 **Tools:** `get_context(routine="monthly")`, `get_prompt`, `list_portfolio`,
 `list_watchlist`, `list_ideas`, `list_trends`, `list_trades`, `list_decision_reviews`,
 `list_daily_logs`, `list_reports`, `get_document` → `upsert_report`
