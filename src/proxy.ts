@@ -10,6 +10,7 @@ export async function proxy(req: NextRequest) {
 
   if (pathname === "/login") return NextResponse.next();
   if (pathname.startsWith("/api/sync/")) return NextResponse.next();
+  if (pathname.startsWith("/api/cron/")) return NextResponse.next();
   if (pathname.startsWith("/api/agent/")) return NextResponse.next();
   if (pathname.startsWith("/api/mcp")) return NextResponse.next();
   if (pathname.startsWith("/api/oauth")) return NextResponse.next();
