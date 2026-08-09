@@ -208,6 +208,15 @@ Also every week, for each holding/watchlist name you touch:
 - Resolve `STOP_IN_LIMBO` breached stops (execute path or formal RESET).
 - Roll null/past `earningsDate` to the next confirmed date.
 - Fix stale `entryZone` / `addZone` text (wrong avg-cost clauses, obsolete ranges).
+- **No-zone / TBD sweep (mandatory):** every watchlist name whose `entryZone` is null,
+  `TBD`, "no entry zone", or otherwise non-actionable — or still pending re-underwrite
+  after a voided zone / post-print base change — must be resolved this week: either
+  `upsert_watchlist` with a concrete zone + stop off the **current** base, or
+  soft-demote (`delete_watchlist` / `DEMOTED`) with re-entry condition in `actionNotes`
+  + a Decision Review. Do not carry "no entry zone" across ≥21 days or through a
+  material round-trip (ASTS: TBD since 2026-05-17 through a ~−46% peak-to-trough).
+  Names already marked `RE-UNDERWRITE PENDING` (e.g. SMR) are in the same bucket —
+  finish the re-underwrite or demote; do not extend another week by silence.
 - Assign null `theme` when a legal value fits (`SOCIAL_PLATFORMS` for social/consumer-
   internet platforms); leave null only when nothing maps and rely on Daily `UNCAPPED_THEME`.
 - Null `sleeve` → default `MOMENTUM_CATALYST` and confirm.

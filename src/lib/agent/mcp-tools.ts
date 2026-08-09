@@ -218,7 +218,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     "list_portfolio",
     {
       title: "List portfolio",
-      description: "List current portfolio positions with weightPct, averageDownsUsed, lastPriceUpdate, priceStatus. pageNotes are truncated to newest ~3 blocks (see pageNotesTruncated / get_page_notes).",
+      description: "List current portfolio positions with weightPct, averageDownsUsed, lastPriceUpdate, priceStatus. pageNotes preview is newest ~3 dated entries, char-budgeted (see pageNotesTruncated / get_page_notes).",
       inputSchema: {},
     },
     async () => textJson(await listPortfolioPositions()),
@@ -229,7 +229,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List watchlist",
       description:
-        "List watchlist rows with lastPriceUpdate and priceStatus. Excludes DEMOTED/DROPPED by default; pass includeDemoted=true to include soft-demoted names. pageNotes truncated to newest ~3 (use get_page_notes for history).",
+        "List watchlist rows with lastPriceUpdate and priceStatus. Excludes DEMOTED/DROPPED by default; pass includeDemoted=true to include soft-demoted names. pageNotes preview is newest ~3 dated entries, char-budgeted (use get_page_notes for history).",
       inputSchema: {
         includeDemoted: z
           .boolean()
@@ -597,7 +597,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Append page notes",
       description:
-        "Append ReportBlock[] to portfolio or watchlist pageNotes (append-only). Response returns only the newest ~3 blocks plus totals — use get_page_notes for older history.",
+        "Append ReportBlock[] to portfolio or watchlist pageNotes (append-only). Response returns only the newest ~3 dated entries plus totals — use get_page_notes for older history.",
       inputSchema: appendPageNotesInputSchema.shape,
     },
     async (args, extra) => {
@@ -616,7 +616,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Get page notes history",
       description:
-        "Paginated pageNotes for one portfolio or watchlist ticker (newest first). Use when pageNotesTruncated=true on context/list responses. Default limit 20.",
+        "Paginated pageNotes for one portfolio or watchlist ticker (newest first; legacy mega-paragraphs are split into dated entries). Use when pageNotesTruncated=true on context/list responses. Default limit 20.",
       inputSchema: getPageNotesInputSchema.shape,
     },
     async (args) => {

@@ -71,22 +71,132 @@ export function hasReportBlocks(value: unknown): boolean {
 	return asReportBlocks(value).length > 0;
 }
 
+const MONTH =
+	"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec";
+const DOW = "Mon|Tue|Wed|Thu|Fri|Sat|Sun";
+/** Date-led ticker-note lines (ISO, "Jun 3, 2026", "Mon Jun 15 2026"). */
+const DATE_LED =
+	new RegExp(
+		`^(?:\\d{4}-\\d{2}-\\d{2}|(?:${DOW})\\s+(?:${MONTH})\\s+\\d{1,2}\\s+\\d{4}|(?:${MONTH})\\s+\\d{1,2},?\\s+\\d{4})\\b`,
+	);
+
+function isDateLedEntry(text: string): boolean {
+	return DATE_LED.test(text.trimStart());
+}
+
 /**
- * Keep the newest `keep` ReportBlocks for context/list payloads.
+ * Split a paragraph that packs many dated daily notes into one block
+ * (legacy Notion / early-agent shape) into one entry per date header.
+ */
+export function splitDatedNoteText(text: string): string[] {
+	const trimmed = text.trim();
+	if (!trimmed) return [];
+
+	const chunks = trimmed.split(/\n\n+/);
+	const entries: string[] = [];
+	for (const chunk of chunks) {
+		const part = chunk.trim();
+		if (!part) continue;
+		if (entries.length === 0 || isDateLedEntry(part)) {
+			entries.push(part);
+		} else {
+			entries[entries.length - 1] += `\n\n${part}`;
+		}
+	}
+
+	// Densely packed single-newline logs: re-split when blank-line split failed
+	// to separate date-led lines.
+	if (entries.length === 1 && /\n(?=\S)/.test(entries[0]) && isDateLedEntry(entries[0])) {
+		const lines = entries[0].split("\n");
+		const dense: string[] = [];
+		for (const line of lines) {
+			const part = line.trimEnd();
+			if (!part.trim()) continue;
+			if (dense.length === 0 || isDateLedEntry(part)) dense.push(part.trim());
+			else dense[dense.length - 1] += `\n${part}`;
+		}
+		if (dense.length > 1) return dense;
+	}
+
+	return entries;
+}
+
+/**
+ * Expand stored pageNotes into chronological dated entries.
+ * Mega-paragraphs that contain many "YYYY-MM-DD" / "Mon Jun 15 2026" headers
+ * become one entry each; non-paragraph blocks pass through unchanged.
+ */
+export function expandPageNoteEntries(blocks: ReportBlock[]): ReportBlock[] {
+	const out: ReportBlock[] = [];
+	for (const block of blocks) {
+		if (
+			block.type === "paragraph" ||
+			block.type === "quote" ||
+			block.type === "callout"
+		) {
+			const parts = splitDatedNoteText(block.text);
+			if (parts.length <= 1) {
+				out.push(block);
+				continue;
+			}
+			for (const text of parts) {
+				out.push({ type: "paragraph", text });
+			}
+			continue;
+		}
+		out.push(block);
+	}
+	return out;
+}
+
+/** Default char budget for context/list pageNotes previews (~keeps MCP under limit). */
+export const PAGE_NOTES_PREVIEW_MAX_CHARS = 4_500;
+
+/**
+ * Keep the newest `keep` dated entries for context/list payloads, with a
+ * char budget so legacy mega-blocks cannot blow the response.
  * Full history remains in DB; use get_page_notes for older entries.
  */
 export function truncatePageNotes(
 	value: unknown,
 	keep = 3,
+	maxChars = PAGE_NOTES_PREVIEW_MAX_CHARS,
 ): { blocks: ReportBlock[]; totalBlocks: number; truncated: boolean } {
-	const all = asReportBlocks(value);
-	if (all.length <= keep) {
-		return { blocks: all, totalBlocks: all.length, truncated: false };
+	const raw = asReportBlocks(value);
+	const all = expandPageNoteEntries(raw);
+	if (all.length === 0) {
+		return { blocks: [], totalBlocks: 0, truncated: false };
 	}
+
+	let kept = all.length <= keep ? all : all.slice(-keep);
+	// Truncated only when the preview drops entries (or char-budget slices one).
+	// Expanding a mega-block without dropping is not truncation.
+	let truncated = all.length > kept.length;
+
+	// Char budget: drop oldest kept entries first; if one entry still overflows,
+	// keep only its tail (newest text inside the entry).
+	const textLen = (blocks: ReportBlock[]) =>
+		blocks.reduce((n, b) => n + ("text" in b && typeof b.text === "string" ? b.text.length : 40), 0);
+
+	while (kept.length > 1 && textLen(kept) > maxChars) {
+		kept = kept.slice(1);
+		truncated = true;
+	}
+	if (kept.length === 1 && textLen(kept) > maxChars) {
+		const only = kept[0];
+		if ("text" in only && typeof only.text === "string") {
+			const text = only.text;
+			const slice = text.slice(-maxChars);
+			const snapped = slice.replace(/^[^\n]*\n/, "") || slice;
+			kept = [{ type: "paragraph", text: `…${snapped}` }];
+			truncated = true;
+		}
+	}
+
 	return {
-		blocks: all.slice(-keep),
+		blocks: kept,
 		totalBlocks: all.length,
-		truncated: true,
+		truncated,
 	};
 }
 

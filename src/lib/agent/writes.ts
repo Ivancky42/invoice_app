@@ -35,7 +35,11 @@ import type {
   upsertWatchlistInputSchema,
 } from "@/lib/agent/schemas";
 import type { z } from "zod";
-import { asReportBlocks, truncatePageNotes } from "@/lib/content/blocks";
+import {
+  asReportBlocks,
+  expandPageNoteEntries,
+  truncatePageNotes,
+} from "@/lib/content/blocks";
 import type { Branch, WatchlistAction } from "@/generated/prisma/client";
 import { contentPageTitle, ensureContentPages } from "@/lib/agent/contentPages";
 import {
@@ -530,7 +534,8 @@ export async function getPageNotes(input: {
     };
   }
 
-  const all = asReportBlocks(row.pageNotes);
+  // Expand legacy mega-paragraphs into dated entries so offset/limit are useful.
+  const all = expandPageNoteEntries(asReportBlocks(row.pageNotes));
   // Newest-first: reverse chronological for agent history reads.
   const newestFirst = [...all].reverse();
   const slice = newestFirst.slice(offset, offset + limit);

@@ -86,10 +86,12 @@ Use `list_decision_reviews` for pending/scored decisions. Prefer bounded windows
 pulling max every run.
 
 `lastPriceUpdate`, `priceStatus` (`OK` | `STALE` | `SYNC_FAILED` | `UNKNOWN`), and a
-**truncated** `pageNotes` preview (newest ~3 blocks) are on `get_context.positions` /
-watchlist and on `list_portfolio` / `list_watchlist`. When `pageNotesTruncated=true`,
-fetch older history with `get_page_notes` (`target`, `ticker`, `limit`, `offset`) — never
-expect full ticker-note history in context/list payloads.
+**truncated** `pageNotes` preview (newest ~3 **dated entries**, char-budgeted) are on
+`get_context.positions` / watchlist and on `list_portfolio` / `list_watchlist`. Legacy
+mega-paragraphs that pack many days into one block are split on date headers before
+truncation — never expect the full ticker-note history in context/list payloads. When
+`pageNotesTruncated=true`, fetch older history with `get_page_notes` (`target`, `ticker`,
+`limit`, `offset`).
 
 `lastRun.prices.failedTickers` / `failedDetails` expose the last price-sync misses.
 
@@ -430,10 +432,10 @@ under analysis plus Pending reviews due within 7 days. Compress series; do not s
 with `blocks` as `ReportBlock[]`. Do **not** replace via `patch_portfolio.pageNotes` /
 `upsert_watchlist.pageNotes` unless intentionally rewriting history.
 
-Context / list serializers return only the **newest ~3** blocks plus
-`pageNotesTotal` / `pageNotesTruncated`. Use `get_page_notes` for older history.
-`append_page_notes` responses are similarly truncated — do not treat the response as the
-full note body.
+Context / list serializers return only the **newest ~3 dated entries** (char-budgeted)
+plus `pageNotesTotal` / `pageNotesTruncated`. Mega-paragraph history is split on date
+headers first. Use `get_page_notes` for older history. `append_page_notes` responses are
+similarly truncated — do not treat the response as the full note body.
 
 **When to append (material only — not every ticker every day):**
 - A recommendation or adaptive state changes
@@ -511,6 +513,12 @@ Daily as `UNCAPPED_THEME` (§7).
 - **Zone / cost text:** `entryZone` / `addZone` are price ranges, not avg-cost labels. If
   zone text cites an avg cost that disagrees with `myAvgCost`, rewrite the zone (or drop
   the cost clause). Never invent avg cost in zone fields — cost lives on `myAvgCost`.
+- **Undefined / TBD zones are not a free pass:** a watchlist `entryZone` that is null,
+  `TBD`, "no entry zone", or otherwise non-actionable for **≥21 calendar days** since
+  graduation / last zone wipe, or that survives a material post-print base change without
+  re-underwrite, is a Weekly hygiene failure. Weekly must either set levels off the
+  current (post-print) base or soft-demote with a written re-entry condition — silent
+  carry-forward of "no zone" through a large round-trip is not allowed (ASTS shape).
 - Ideas without `leadTicker` cannot join to watchlist/portfolio and have
   `priceReliable: false`. Set `leadTicker` whenever you touch an idea (§11.4).
 - **Percent units (write correctly — UI formats from these):**
