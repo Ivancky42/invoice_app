@@ -165,7 +165,9 @@ export async function getDailyLogs(): Promise<DailyLogRow[]> {
 }
 
 export async function getLatestDailyLog(): Promise<DailyLogRow | null> {
+	// Overview briefs are LIVE-only — CANDIDATE rows are shadow routine output.
 	const row = await prisma.dailyLog.findFirst({
+		where: { branch: "LIVE" },
 		orderBy: [
 			{ logDate: { sort: "desc", nulls: "last" } },
 			{ syncedAt: "desc" },
@@ -309,8 +311,9 @@ export function contentPageToDTO(row: ContentPageRow): ContentPageDTO {
 export async function getLatestStockReport(
 	type: StockReportType,
 ): Promise<StockReportRow | null> {
+	// Overview briefs are LIVE-only — CANDIDATE rows are shadow routine output.
 	return prisma.stockReport.findFirst({
-		where: { reportType: type },
+		where: { reportType: type, branch: "LIVE" },
 		orderBy: [
 			{ reportDate: { sort: "desc", nulls: "last" } },
 			{ syncedAt: "desc" },
