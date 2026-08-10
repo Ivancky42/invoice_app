@@ -26,7 +26,8 @@ and `upsert_decision_review` are branch-aware.
 
 **Tools (evolution side, new this cycle):** `get_shadow_fitness`, `list_shadow_positions`,
 `list_shadow_orders`, `list_counterfactuals`, `list_evolution_log`, `list_rule_versions`,
-`get_rule_version`, `get_kernel` (read) → `propose_rule_change`, `apply_gap_fix`,
+`get_rule_version`, `get_kernel`, `list_rule_sections` (read) → `propose_rule_change`,
+`apply_gap_fix`,
 `score_rule_version` (write). **Promotion, reversion, and activation have no agent tool at
 all** — see §4.
 
@@ -93,6 +94,14 @@ Before proposing anything, call `get_kernel` — the five kernel-fenced clauses
 kernel fence is refused outright and logged as `KERNEL_ATTEMPT` — do not attempt it, even
 experimentally.
 
+Then call `list_rule_sections` (default LIVE / `writePin=true`; optionally `file="_shared"`)
+for the target `## N.` `sectionId` and its `sha256`. Every prose hunk **requires**
+`sectionId` + `expectedSectionSha` (that sha) and `newText` must be the **full section**
+including the heading — not a fragment. Omitting either field fails schema validation
+with 400 before the kernel gate runs (the old whole-file-swap path used to surface as a
+misleading `KERNEL_ATTEMPT` / `MISSING_REGION`). Read the section body via `get_prompt`,
+edit it, and send the whole section back. Do not use `branch=CANDIDATE` shas for writes.
+
 **Eligibility bars** (`propose_rule_change` enforces these server-side; know them before
 drafting so you cite the right evidence, not after a rejection):
 
@@ -123,9 +132,10 @@ touch — never claim one; a claimed lane is stripped and logged as `laneClaimIg
 
 **Gap-fixes are different and separate**: a typo, a contradiction, or a clarification that
 does not change behaviour goes through `apply_gap_fix` instead — immediate, ≤40 changed
-lines, one section, `expectedSectionSha` required (409 on mismatch so you never blind-write
-over prose someone else already touched). Use `propose_rule_change` only when the change
-is meant to alter behaviour and needs shadow-testing before it can earn real influence.
+lines, one section, `sectionId` + `expectedSectionSha` from `list_rule_sections` required
+(409 on mismatch so you never blind-write over prose someone else already touched). Use
+`propose_rule_change` only when the change is meant to alter behaviour and needs
+shadow-testing before it can earn real influence.
 
 ### 0d. Score — retire the verdict on old candidates
 

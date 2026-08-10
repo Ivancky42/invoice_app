@@ -490,15 +490,16 @@ export const patchConfigInputSchema = patchConfigFieldsSchema.refine(
 
 // === Evolution engine (rule proposals, gap-fixes, scoring, audit log) ===
 
-/** One prose edit. Section-scoped edits may pin the section's sha to detect drift. */
+/** One prose edit. Always section-scoped — whole-file swaps are refused. */
 export const proposeHunkSchema = z
   .object({
     /** One of the five prompt files, with or without the `.md` suffix. */
     file: z.string().min(1).max(64),
-    /** `## N.` heading number. Omit to replace the WHOLE file (rare; huge diffs). */
-    sectionId: z.string().min(1).max(8).optional(),
-    /** sha256 of the current section text — 409 `section_sha_mismatch` when it moved. */
-    expectedSectionSha: z.string().regex(/^[0-9a-f]{64}$/, "expectedSectionSha must be sha256 hex").optional(),
+    /** `## N.` heading number. Required — discover via `list_rule_sections`. */
+    sectionId: z.string().min(1).max(8),
+    /** sha256 of the current section text from `list_rule_sections` — 409 on mismatch. */
+    expectedSectionSha: z.string().regex(/^[0-9a-f]{64}$/, "expectedSectionSha must be sha256 hex"),
+    /** Full replacement text for that section (heading line included), not a snippet. */
     newText: z.string().min(1).max(100_000),
   })
   .strict();
@@ -569,6 +570,15 @@ export const listRuleVersionsInputSchema = z
   .object({
     status: z.enum(enumValues(RuleStatus)).optional(),
     limit: z.coerce.number().int().min(1).max(100).optional(),
+  })
+  .strict();
+
+/** Section index for the running ruleset — ids + shas, never full prompt text. */
+export const listRuleSectionsInputSchema = z
+  .object({
+    branch: z.enum(["LIVE", "CANDIDATE"]).optional(),
+    /** Optional filter: one of the five prompt files, with or without `.md`. */
+    file: z.string().min(1).max(64).optional(),
   })
   .strict();
 

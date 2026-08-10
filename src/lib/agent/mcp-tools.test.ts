@@ -28,6 +28,7 @@ const EXPECTED_TOOL_NAMES = [
   "list_ideas",
   "list_portfolio",
   "list_reports",
+  "list_rule_sections",
   "list_rule_versions",
   "list_shadow_orders",
   "list_shadow_positions",

@@ -18,7 +18,7 @@ import {
   normaliseRuleFile,
   replaceSection,
   sectionIds,
-} from "@/lib/evolution/propose";
+} from "@/lib/evolution/sections";
 import { prisma } from "@/lib/prisma";
 import { changedLinesInside, diffLines } from "@/lib/rules/diff";
 import { mirrorRuleVersion } from "@/lib/rules/gitMirror";

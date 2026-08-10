@@ -33,6 +33,12 @@ import { changedLinesInside, diffLines } from "@/lib/rules/diff";
 // kernelGate wraps validateKernel; fenceRanges/scanForbiddenPatterns are the other two gates.
 import { fenceRanges, scanForbiddenPatterns } from "@/lib/rules/kernel";
 import {
+  findSection,
+  normaliseRuleFile,
+  replaceSection,
+  sectionIds,
+} from "@/lib/evolution/sections";
+import {
   RULE_FILE_NAMES,
   filesFromRow,
   kernelGate,
@@ -51,72 +57,16 @@ export const SLOW_DIFF_BUDGET_LINES = 120;
  */
 const ACTION_PROSE_SECTIONS = new Set(["6", "7", "8"]);
 
-const SECTION_HEADING_RE = /^##\s+(\d+[a-z]?)\./;
-
-// ---------------------------------------------------------------------------
-// Section primitives (shared with gapfix)
-// ---------------------------------------------------------------------------
-
-export type SectionSlice = {
-  sectionId: string;
-  /** 0-based line index of the heading. */
-  start: number;
-  /** 0-based exclusive end (line index of the next heading, or EOF). */
-  end: number;
-  text: string;
-};
-
-function splitLines(text: string): string[] {
-  return text.replace(/\r\n?/g, "\n").split("\n");
-}
-
-/** Locate a `## N.` section by its number. Null when the file has no such heading. */
-export function findSection(fileText: string, sectionId: string): SectionSlice | null {
-  const lines = splitLines(fileText);
-  let start = -1;
-  for (let i = 0; i < lines.length; i += 1) {
-    const m = SECTION_HEADING_RE.exec(lines[i]);
-    if (!m) continue;
-    if (start === -1 && m[1] === sectionId) {
-      start = i;
-      continue;
-    }
-    if (start !== -1) {
-      return { sectionId, start, end: i, text: lines.slice(start, i).join("\n") };
-    }
-  }
-  if (start === -1) return null;
-  return { sectionId, start, end: lines.length, text: lines.slice(start).join("\n") };
-}
-
-/** Replace one section's text wholesale. Returns null when the section does not exist. */
-export function replaceSection(
-  fileText: string,
-  sectionId: string,
-  newText: string,
-): string | null {
-  const slice = findSection(fileText, sectionId);
-  if (!slice) return null;
-  const lines = splitLines(fileText);
-  const replacement = splitLines(newText.replace(/\s+$/, ""));
-  return [...lines.slice(0, slice.start), ...replacement, ...lines.slice(slice.end)].join("\n");
-}
-
-/** Every `## N.` heading number present in a file, in order. */
-export function sectionIds(fileText: string): string[] {
-  const out: string[] = [];
-  for (const line of splitLines(fileText)) {
-    const m = SECTION_HEADING_RE.exec(line);
-    if (m) out.push(m[1]);
-  }
-  return out;
-}
-
-/** Normalise a caller-supplied prompt file name to one of the five stored keys. */
-export function normaliseRuleFile(file: string): string | null {
-  const name = file.trim().endsWith(".md") ? file.trim() : `${file.trim()}.md`;
-  return (RULE_FILE_NAMES as readonly string[]).includes(name) ? name : null;
-}
+// Re-export section helpers so existing `@/lib/evolution/propose` imports keep working.
+export {
+  findSection,
+  inventorySections,
+  normaliseRuleFile,
+  replaceSection,
+  sectionIds,
+  type SectionMeta,
+  type SectionSlice,
+} from "@/lib/evolution/sections";
 
 // ---------------------------------------------------------------------------
 // Lane assignment (pure)
@@ -156,8 +106,8 @@ export function assignLane(args: {
 
 export type ProposeHunk = {
   file: string;
-  sectionId?: string;
-  expectedSectionSha?: string;
+  sectionId: string;
+  expectedSectionSha: string;
   newText: string;
 };
 
@@ -342,43 +292,63 @@ export async function proposeRuleChange(
     }
     const current = candidateFiles[file] ?? "";
 
-    if (hunk.sectionId) {
-      const slice = findSection(current, hunk.sectionId);
-      if (!slice) {
-        return {
-          ok: false,
-          status: 404,
-          reason: "section_not_found",
-          details: { file, sectionId: hunk.sectionId },
-        };
-      }
-      if (hunk.expectedSectionSha) {
-        const actualSha = sha256Hex(slice.text);
-        if (actualSha !== hunk.expectedSectionSha) {
-          // The section moved under the proposer's feet — refuse rather than clobber.
-          return {
-            ok: false,
-            status: 409,
-            reason: "section_sha_mismatch",
-            details: { file, sectionId: hunk.sectionId, actualSha },
-          };
-        }
-      }
-      const next = replaceSection(current, hunk.sectionId, hunk.newText);
-      if (next === null) {
-        return {
-          ok: false,
-          status: 404,
-          reason: "section_not_found",
-          details: { file, sectionId: hunk.sectionId },
-        };
-      }
-      candidateFiles[file] = next;
-      prosePaths.push(`prompts:${file.replace(/\.md$/, "")}#${hunk.sectionId}`);
-    } else {
-      candidateFiles[file] = hunk.newText;
-      prosePaths.push(`prompts:${file.replace(/\.md$/, "")}`);
+    // Whole-file swaps are refused: a snippet without fences looks like a kernel wipe
+    // (MISSING_REGION × 5) and burns the weekly proposal slot as KERNEL_ATTEMPT.
+    if (!hunk.sectionId?.trim()) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "section_id_required",
+        details: {
+          file,
+          message:
+            "prose hunks must target a ## N. section; call list_rule_sections for ids + shas",
+        },
+      };
     }
+    if (!hunk.expectedSectionSha) {
+      return {
+        ok: false,
+        status: 400,
+        reason: "expected_section_sha_required",
+        details: {
+          file,
+          sectionId: hunk.sectionId,
+          message: "pass expectedSectionSha from list_rule_sections for this section",
+        },
+      };
+    }
+
+    const slice = findSection(current, hunk.sectionId);
+    if (!slice) {
+      return {
+        ok: false,
+        status: 404,
+        reason: "section_not_found",
+        details: { file, sectionId: hunk.sectionId },
+      };
+    }
+    const actualSha = sha256Hex(slice.text);
+    if (actualSha !== hunk.expectedSectionSha) {
+      // The section moved under the proposer's feet — refuse rather than clobber.
+      return {
+        ok: false,
+        status: 409,
+        reason: "section_sha_mismatch",
+        details: { file, sectionId: hunk.sectionId, actualSha },
+      };
+    }
+    const next = replaceSection(current, hunk.sectionId, hunk.newText);
+    if (next === null) {
+      return {
+        ok: false,
+        status: 404,
+        reason: "section_not_found",
+        details: { file, sectionId: hunk.sectionId },
+      };
+    }
+    candidateFiles[file] = next;
+    prosePaths.push(`prompts:${file.replace(/\.md$/, "")}#${hunk.sectionId}`);
   }
 
   // --- 2. Candidate limits ------------------------------------------------

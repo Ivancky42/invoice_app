@@ -28,7 +28,12 @@ import { getShadowFitness, listCounterfactuals } from "@/lib/fitness/read";
 import { applyGapFix } from "@/lib/evolution/gapfix";
 import { listEvolutionEvents } from "@/lib/evolution/log";
 import { proposeRuleChange } from "@/lib/evolution/propose";
-import { getKernel, getRuleVersion, listRuleVersions } from "@/lib/evolution/read";
+import {
+  getKernel,
+  getRuleVersion,
+  listRuleSections,
+  listRuleVersions,
+} from "@/lib/evolution/read";
 import { scoreRuleVersion } from "@/lib/evolution/scoring";
 import { listShadowOrders, listShadowPositions } from "@/lib/shadow/read";
 import {
@@ -50,6 +55,7 @@ import {
   applyGapFixInputSchema,
   getRuleVersionInputSchema,
   listEvolutionLogInputSchema,
+  listRuleSectionsInputSchema,
   listRuleVersionsInputSchema,
   proposeRuleChangeFieldsSchema,
   proposeRuleChangeInputSchema,
@@ -489,6 +495,23 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     },
     async () => textJson(getKernel()),
   );
+
+  server.registerTool(
+    "list_rule_sections",
+    {
+      title: "List rule sections",
+      description:
+        "Section index for pin digests: per-file `## N.` ids, heading lines, and sha256. Default (LIVE) reads the ACTIVE row the same way propose_rule_change / apply_gap_fix pin — writePin=true. Call BEFORE those writes for sectionId + expectedSectionSha. branch=CANDIDATE is inspection-only (writePin=false). Never returns section body — use get_prompt. Optional file filter (e.g. `_shared`).",
+      inputSchema: listRuleSectionsInputSchema.shape,
+    },
+    async (args) => {
+      const parsed = parseTool(listRuleSectionsInputSchema, args);
+      if ("__error" in parsed) return textError(parsed.__error);
+      const result = await listRuleSections(parsed);
+      if (!result.ok) return { ...textJson(result), isError: true as const };
+      return textJson(result);
+    },
+  );
 }
 
 /** Register Stock HQ write MCP tools (Phase 4c). */
@@ -774,7 +797,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Propose rule change",
       description:
-        "Propose a CANDIDATE ruleset (prose hunks and/or limits changes). The SERVER assigns the lane — any `lane` you pass is ignored and recorded. Requires cited scored decision reviews (≥3, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome), a falsifiable counterCase (≥40 chars) and a measurable successMetric. Kernel edits, drift-rail breaches and eligibility failures are rejected AND appended to the evolution log.",
+        "Propose a CANDIDATE ruleset (prose hunks and/or limits changes). Every prose hunk REQUIRES sectionId + expectedSectionSha from list_rule_sections; newText is the full section (heading included) — whole-file swaps are refused with 400. The SERVER assigns the lane — any `lane` you pass is ignored and recorded. Requires cited scored decision reviews (≥3, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome), a falsifiable counterCase (≥40 chars) and a measurable successMetric. Kernel edits, drift-rail breaches and eligibility failures are rejected AND appended to the evolution log.",
       inputSchema: proposeRuleChangeFieldsSchema.shape,
     },
     async (args, extra) => {
@@ -793,7 +816,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Apply gap fix",
       description:
-        "Immediately patch ONE section of the ACTIVE ruleset for a typo / contradiction / clarification (≤40 changed lines). expectedSectionSha is REQUIRED and a mismatch is a 409. Not a rule change: use propose_rule_change for anything that alters behaviour. An in-flight candidate is rebased, or killed if it touched the same section.",
+        "Immediately patch ONE section of the ACTIVE ruleset for a typo / contradiction / clarification (≤40 changed lines). sectionId + expectedSectionSha are REQUIRED (from list_rule_sections); mismatch is a 409. Not a rule change: use propose_rule_change for anything that alters behaviour. An in-flight candidate is rebased, or killed if it touched the same section.",
       inputSchema: applyGapFixInputSchema.shape,
     },
     async (args, extra) => {

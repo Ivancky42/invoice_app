@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { assignLane } from "@/lib/evolution/propose";
 import {
-  assignLane,
   findSection,
+  inventorySections,
   normaliseRuleFile,
   replaceSection,
   sectionIds,
-} from "@/lib/evolution/propose";
+} from "@/lib/evolution/sections";
+import { sha256Hex } from "@/lib/rules/resolve";
 
 const FILE = [
   "# Shared",
@@ -117,6 +119,19 @@ describe("section primitives", () => {
   it("detects a deleted heading via sectionIds", () => {
     const next = replaceSection(FILE, "2", "just prose, no heading")!;
     expect(sectionIds(next)).toEqual(["1", "3"]);
+  });
+
+  it("inventories section ids + sha256 without returning body text", () => {
+    const inv = inventorySections(FILE);
+    expect(inv.map((s) => s.sectionId)).toEqual(["1", "2", "3"]);
+    expect(inv[1]).toEqual({
+      sectionId: "2",
+      heading: "## 2. Second",
+      sha256: sha256Hex(findSection(FILE, "2")!.text),
+      lineCount: 4,
+    });
+    // Defence: metadata must not embed the section body.
+    expect(JSON.stringify(inv)).not.toContain("beta");
   });
 });
 

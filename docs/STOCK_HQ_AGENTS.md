@@ -148,7 +148,7 @@ Local Desktop config does **not** reach Cowork cloud schedules — use the Custo
 
 **Verify tools appear:**
 
-- Read: `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes`, `get_price_history`, `get_shadow_fitness`, `list_shadow_positions`, `list_shadow_orders`, `list_counterfactuals`, `list_evolution_log`, `get_rule_version`, `list_rule_versions`, `get_kernel`
+- Read: `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes`, `get_price_history`, `get_shadow_fitness`, `list_shadow_positions`, `list_shadow_orders`, `list_counterfactuals`, `list_evolution_log`, `get_rule_version`, `list_rule_versions`, `get_kernel`, `list_rule_sections`
 - Write (**live in 4c**): `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document`, `add_evidence`, `propose_rule_change`, `apply_gap_fix`, `score_rule_version`. **`patch_config` is HTTP-only** (`PATCH /api/agent/config`) — not registered on MCP so routines cannot rewrite `LIMITS`. **Promote / revert / activate a ruleset have no tool anywhere** — promotion is cron-only (`evolution_evaluate`), same precedent as `patch_config`: a proposer must never be able to crown its own candidate.
 
 ### 2.4a Shadow evolution — read/write surface
@@ -167,8 +167,9 @@ alongside the existing surface, all under the same `AGENT_TOKEN` / MCP auth:
 | `get_rule_version` | Read | Metadata for one `RuleVersion` (status, lane, limits, changedPaths, outcome). Never returns prompt text — use `get_prompt` for the running ruleset. |
 | `list_rule_versions` | Read | `RuleVersion` metadata, newest first, optional `status` filter. |
 | `get_kernel` | Read | The five pinned kernel clauses (id + sha256 + canonical text). Read this BEFORE `propose_rule_change` — any hunk touching a fence is rejected and logged `KERNEL_ATTEMPT`. |
-| `propose_rule_change` | Write | Propose a CANDIDATE ruleset. Server assigns the lane (a supplied `lane` is ignored and recorded as `laneClaimIgnored`). Requires ≥3 cited scored decision reviews, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome, a falsifiable `counterCase` (≥40 chars), and a measurable `successMetric`. Loosening a rail needs ≥5 rows over ≥42 days plus `worstCase`. |
-| `apply_gap_fix` | Write | Immediate patch to ONE section of the ACTIVE ruleset for a typo/contradiction (≤40 changed lines). `expectedSectionSha` required — mismatch is a 409. Not for behaviour changes; use `propose_rule_change` for those. |
+| `list_rule_sections` | Read | Per-file `## N.` section ids, heading lines, and sha256 digests. Default LIVE reads the ACTIVE row (`writePin=true`) — same pin target as `propose_rule_change` / `apply_gap_fix`. `branch=CANDIDATE` is inspection-only. Never returns section body — use `get_prompt`. |
+| `propose_rule_change` | Write | Propose a CANDIDATE ruleset. Every prose hunk requires `sectionId` + `expectedSectionSha` (from `list_rule_sections`) and full-section `newText` — whole-file swaps are `400`. Server assigns the lane (a supplied `lane` is ignored and recorded as `laneClaimIgnored`). Requires ≥3 cited scored decision reviews, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome, a falsifiable `counterCase` (≥40 chars), and a measurable `successMetric`. Loosening a rail needs ≥5 rows over ≥42 days plus `worstCase`. |
+| `apply_gap_fix` | Write | Immediate patch to ONE section of the ACTIVE ruleset for a typo/contradiction (≤40 changed lines). `sectionId` + `expectedSectionSha` required (from `list_rule_sections`) — mismatch is a 409. Not for behaviour changes; use `propose_rule_change` for those. |
 | `score_rule_version` | Write | Retrospective HELPED/NEUTRAL/HURT on a RETIRED/KILLED version, computed server-side. Below 10 paired sessions returns `preview: true, outcome: null` and writes nothing. `outcomeClaim` is recorded but never authoritative. |
 | `add_evidence` | Write | Append `EvidenceItem` rows to an existing Decision Review (`decisionReviewId` or `idempotencyKey`, within `branch`). Prefer citing evidence inline on `upsert_decision_review`'s `evidence[]` array instead when writing the DR fresh. |
 
@@ -244,6 +245,7 @@ Same zod contracts as MCP tools. Prefer MCP when the client supports tool schema
 | Evolution log | `GET /api/agent/evolution/log` | Append-only audit trail — proposals, rejections, promotions, kills, scores |
 | Rule versions | `GET /api/agent/evolution/rule-versions` / `GET /api/agent/evolution/rule-versions/:id` | Metadata only, never prompt text |
 | Kernel | `GET /api/agent/evolution/kernel` | Pinned kernel clauses (id + sha256 + text) |
+| Rule sections | `GET /api/agent/evolution/sections?branch=&file=` | Section ids + sha256 digests (no body text) |
 | MCP | `POST/GET /api/mcp/mcp` | Same tools as below |
 
 ### Writes — **live (Phase 4c)**
@@ -435,7 +437,7 @@ Neon is SoT. Notion sync cron is **removed** from `vercel.json`. Only `/api/sync
 
 | Kind | Tools |
 |------|--------|
-| **Read** | `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes`, `get_price_history`, `get_shadow_fitness`, `list_shadow_positions`, `list_shadow_orders`, `list_counterfactuals`, `list_evolution_log`, `get_rule_version`, `list_rule_versions`, `get_kernel` |
+| **Read** | `get_context`, `get_prompt`, `list_portfolio`, `list_watchlist`, `list_trades`, `list_ideas`, `list_trends`, `get_config`, `list_decision_reviews`, `list_daily_logs`, `list_reports`, `get_document`, `get_page_notes`, `get_price_history`, `get_shadow_fitness`, `list_shadow_positions`, `list_shadow_orders`, `list_counterfactuals`, `list_evolution_log`, `get_rule_version`, `list_rule_versions`, `get_kernel`, `list_rule_sections` |
 | **Write** | `upsert_daily_log`, `upsert_report`, `log_trade`, `patch_portfolio`, `append_page_notes`, `upsert_watchlist`, `delete_watchlist` (soft-demote; `hard=true` to erase), `upsert_trend`, `upsert_idea`, `sync_tracked_tickers`, `upsert_decision_review`, `upsert_document`, `add_evidence`, `propose_rule_change`, `apply_gap_fix`, `score_rule_version` (`patch_config` for cash/FX only in rare ops — never LIMITS from routines; promote/revert/activate have no tool anywhere — cron-only) |
 
 Matching HTTP surface: `/api/agent/*` (see §3). Prices are never written by agents.

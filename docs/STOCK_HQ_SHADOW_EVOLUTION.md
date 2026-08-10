@@ -408,13 +408,18 @@ that already retired honestly, and stays `RETIRED`.
 
 1. **Propose** (`propose_rule_change`) — an agent submits prose hunks and/or limits
    changes plus `changeSummary`, `reasoningPattern`, `successMetric`, `counterCase`, and
-   citations (`evidenceDecisionIds`). Gates run cheapest-and-most-fundamental first:
-   structural validity → **kernel** (fence + forbidden-pattern scan, LCS diff budget) →
-   per-parameter `driftGuard` (hard range → 90-day drift → v1 drift → consecutive-
-   loosening ratchet) → `checkEligibility` (§6) → row creation as a `CANDIDATE`
-   `RuleVersion`. Any refusal is appended to `EvolutionEvent` with a machine-readable code
-   — a rejected proposal is evidence too, and repeat-identical rejections are themselves a
-   weekly-routine signal (see `prompts/weekly.md` §0b).
+   citations (`evidenceDecisionIds`). Every prose hunk must carry `sectionId` +
+   `expectedSectionSha` from `list_rule_sections` (`writePin=true`, ACTIVE row) and
+   full-section `newText` — omitting either fails schema validation with 400 before the
+   kernel gate (a prior whole-file-swap footgun surfaced as `KERNEL_ATTEMPT` /
+   `MISSING_REGION` on all five fences). Gates run
+   cheapest-and-most-fundamental first: structural validity → **kernel** (fence +
+   forbidden-pattern scan, LCS diff budget) → per-parameter `driftGuard` (hard range →
+   90-day drift → v1 drift → consecutive-loosening ratchet) → `checkEligibility` (§6) →
+   row creation as a `CANDIDATE` `RuleVersion`. Any refusal is appended to `EvolutionEvent`
+   with a machine-readable code — a rejected proposal is evidence too, and
+   repeat-identical rejections are themselves a weekly-routine signal (see
+   `prompts/weekly.md` §0b).
 2. **Shadow-test** — `ensureShadowBranches` points the `CANDIDATE` book at the new version;
    its own paper ledger accrues fills, marks, counterfactuals, and a daily
    `FitnessSnapshot`, all isolated from `LIVE`.
