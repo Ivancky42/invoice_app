@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   branchKeyRejection,
   dailyLogInputSchema,
+  evidenceItemInputSchema,
   logTradeInputSchema,
   patchConfigInputSchema,
+  patchPortfolioInputSchema,
   upsertDecisionReviewInputSchema,
+  upsertIdeaInputSchema,
   upsertWatchlistInputSchema,
   validationFailure,
 } from "@/lib/agent/schemas";
@@ -92,6 +95,37 @@ describe("branch-aware writes accept a branch", () => {
   });
 });
 
+describe("zone / foundVia write limits", () => {
+  it("accepts an entryZone / addZone that used to 400 at 500 chars", () => {
+    const zone = "x".repeat(501);
+    expect(patchPortfolioInputSchema.safeParse({ addZone: zone }).success).toBe(true);
+    expect(upsertWatchlistInputSchema.safeParse({ ticker: "OKLO", entryZone: zone }).success).toBe(
+      true,
+    );
+    expect(patchPortfolioInputSchema.safeParse({ addZone: "x".repeat(2001) }).success).toBe(false);
+  });
+
+  it("accepts a beatRate recap longer than 200 chars", () => {
+    expect(patchPortfolioInputSchema.safeParse({ beatRate: "x".repeat(201) }).success).toBe(true);
+    expect(patchPortfolioInputSchema.safeParse({ beatRate: "x".repeat(1001) }).success).toBe(false);
+  });
+
+  it("accepts a foundVia note longer than 200 chars", () => {
+    expect(
+      upsertIdeaInputSchema.safeParse({
+        stockSector: "WDAY",
+        foundVia: "x".repeat(201),
+      }).success,
+    ).toBe(true);
+    expect(
+      upsertIdeaInputSchema.safeParse({
+        stockSector: "WDAY",
+        foundVia: "x".repeat(1001),
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe("branchKeyRejection", () => {
   it("flags an own `branch` key on schema-less real-book requests", () => {
     expect(branchKeyRejection({ branch: "CANDIDATE" })?.error).toBe(
@@ -119,6 +153,48 @@ describe("decision review thesis state", () => {
     expect(
       upsertDecisionReviewInputSchema.safeParse({ title: "t", thesisState: "MOSTLY_FINE" })
         .success,
+    ).toBe(false);
+  });
+
+  it("normalizes a session-label observedAt to the leading YYYY-MM-DD", () => {
+    const parsed = evidenceItemInputSchema.safeParse({
+      tier: "T1",
+      kind: "FILING",
+      summary: "GEV pyramid trigger re-checked on the session close.",
+      observedAt: "2026-08-11 US close",
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.observedAt).toBe("2026-08-11");
+  });
+
+  it("still accepts a plain date or ISO datetime for observedAt", () => {
+    expect(
+      evidenceItemInputSchema.safeParse({
+        tier: "T1",
+        kind: "FILING",
+        summary: "Plain date is already a valid observedAt.",
+        observedAt: "2026-08-11",
+      }).success,
+    ).toBe(true);
+    expect(
+      evidenceItemInputSchema.safeParse({
+        tier: "T1",
+        kind: "FILING",
+        summary: "ISO datetime is already a valid observedAt.",
+        observedAt: "2026-08-11T20:00:00.000Z",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects an observedAt that is not a date", () => {
+    expect(
+      evidenceItemInputSchema.safeParse({
+        tier: "T1",
+        kind: "FILING",
+        summary: "A prose timestamp is not parseable as observedAt.",
+        observedAt: "last Tuesday",
+      }).success,
     ).toBe(false);
   });
 

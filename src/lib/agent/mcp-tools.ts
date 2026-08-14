@@ -224,7 +224,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     "list_portfolio",
     {
       title: "List portfolio",
-      description: "List current portfolio positions with weightPct, averageDownsUsed, lastPriceUpdate, priceStatus. pageNotes preview is newest ~3 dated entries, char-budgeted (see pageNotesTruncated / get_page_notes).",
+      description: "List current portfolio positions with weightPct, averageDownsUsed, lastPriceUpdate, priceStatus. lastPriceUpdate is the GMT+8 session date (noon UTC), not the sync clock time. pageNotes preview is newest ~3 dated entries, char-budgeted (see pageNotesTruncated / get_page_notes).",
       inputSchema: {},
     },
     async () => textJson(await listPortfolioPositions()),
@@ -235,7 +235,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List watchlist",
       description:
-        "List watchlist rows with lastPriceUpdate and priceStatus. Excludes DEMOTED/DROPPED by default; pass includeDemoted=true to include soft-demoted names. pageNotes preview is newest ~3 dated entries, char-budgeted (use get_page_notes for history).",
+        "List watchlist rows with lastPriceUpdate and priceStatus. lastPriceUpdate is the GMT+8 session date (noon UTC), not the sync clock time. Excludes DEMOTED/DROPPED by default; pass includeDemoted=true to include soft-demoted names. pageNotes preview is newest ~3 dated entries, char-budgeted (use get_page_notes for history).",
       inputSchema: {
         includeDemoted: z
           .boolean()
@@ -303,7 +303,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get daily price history",
       description:
-        "List PriceHistory daily OHLC bars for one ticker, newest first. Optional from/to YYYY-MM-DD; default limit 120 (max 500).",
+        "List PriceHistory daily OHLC bars for one ticker, newest first. Covers Portfolio, Watchlist, and Idea leadTicker symbols (plus SPY/QQQ/AAPL/MSFT/CSPX). Optional from/to YYYY-MM-DD; default limit 120 (max 500).",
       inputSchema: getPriceHistoryInputSchema.shape,
     },
     async (args) => {
@@ -578,7 +578,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Patch portfolio",
       description:
-        "Patch portfolio metadata (action, stopLoss, sleeve, conviction, thesis/pageNotes, entryZone, addZone, nextAddTrigger, keyRisk, theme, riskLevel, marketCapBucket, analystRating, analystTarget, beatRate, impliedMove, earningsDate). Writing analystTarget recomputes upsidePct from stored currentPrice. Does NOT write currentPrice/shares/avg/upsidePct/socialScore. For append-only daily notes use append_page_notes.",
+        "Patch portfolio metadata (action, stopLoss, sleeve, conviction, thesis/pageNotes, entryZone, addZone, nextAddTrigger, keyRisk, theme, riskLevel, marketCapBucket, analystRating, analystTarget, beatRate, impliedMove, earningsDate). Zones up to 2000 chars; beatRate up to 1000. Writing analystTarget recomputes upsidePct from stored currentPrice. Does NOT write currentPrice/shares/avg/upsidePct/socialScore. For append-only daily notes use append_page_notes.",
       inputSchema: {
         ticker: z.string().min(1).describe("Ticker symbol"),
         ...patchPortfolioInputSchema.shape,
@@ -603,7 +603,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Upsert watchlist",
       description:
-        "Upsert a watchlist row by ticker. May set analystTarget/bullTarget/stopLoss/entryZone/earningsDate; writing analystTarget recomputes upsidePct. Does not write currentPrice or upsidePct directly.",
+        "Upsert a watchlist row by ticker. May set analystTarget/bullTarget/stopLoss/entryZone/earningsDate; entryZone up to 2000 chars. Writing analystTarget recomputes upsidePct. Does not write currentPrice or upsidePct directly.",
       inputSchema: upsertWatchlistInputSchema.shape,
     },
     async (args, extra) => {
@@ -656,7 +656,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Upsert decision review",
       description:
-        "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry. Defaults reviewStatus to PENDING.",
+        "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry (bare key, no LIVE:/CANDIDATE: prefix). evidence[].observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date (e.g. '2026-08-11 US close'). Defaults reviewStatus to PENDING.",
       inputSchema: upsertDecisionReviewInputSchema.shape,
     },
     async (args, extra) => {
@@ -677,7 +677,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Add evidence",
       description:
-        "Append EvidenceItem rows to an existing Decision Review (by decisionReviewId or idempotencyKey, within branch — default LIVE). Additive — use upsert_decision_review's evidence[] to replace-on-replay instead. 404 when the DR is not found on that branch.",
+        "Append EvidenceItem rows to an existing Decision Review (by decisionReviewId or idempotencyKey, within branch — default LIVE). observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date. Additive — use upsert_decision_review's evidence[] to replace-on-replay instead. 404 when the DR is not found on that branch.",
       inputSchema: addEvidenceFieldsSchema.shape,
     },
     async (args, extra) => {
@@ -780,7 +780,8 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     "upsert_idea",
     {
       title: "Upsert idea",
-      description: "Upsert an idea by stockSector or leadTicker. Does not write prices.",
+      description:
+        "Upsert an idea by stockSector or leadTicker. foundVia up to 1000 chars. Does not write prices.",
       inputSchema: upsertIdeaFieldsSchema.shape,
     },
     async (args, extra) => {

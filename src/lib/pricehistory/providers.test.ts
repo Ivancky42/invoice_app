@@ -3,7 +3,13 @@ import { CSPX_EODHD_SYMBOL } from "@/lib/eodhd/quote";
 import { writeBackfillBars, type PriceHistoryWriter } from "@/lib/pricehistory/backfill";
 import { easternSessionDate, fetchFinnhubDailyBar } from "@/lib/pricehistory/providers/finnhub";
 import { parseStooqCsv } from "@/lib/pricehistory/providers/stooq";
-import { eodhdUsSymbol, stooqUsSymbol } from "@/lib/pricehistory/symbols";
+import {
+  absorbUniverseTicker,
+  CSPX_TICKER,
+  eodhdUsSymbol,
+  orderPriceHistoryUniverse,
+  stooqUsSymbol,
+} from "@/lib/pricehistory/symbols";
 import {
   isCurrentSessionBar,
   lookbackWindow,
@@ -53,6 +59,26 @@ describe("parseStooqCsv", () => {
   });
 });
 
+describe("absorbUniverseTicker", () => {
+  it("adds cleaned equity symbols and skips cash", () => {
+    const tickers = new Set<string>();
+    absorbUniverseTicker(tickers, "oklo");
+    absorbUniverseTicker(tickers, "CASH_USD");
+    absorbUniverseTicker(tickers, "  ");
+    expect([...tickers]).toEqual(["OKLO"]);
+  });
+
+  it("normalises CSPX and keeps idea lead tickers that are not yet on the book", () => {
+    const tickers = new Set<string>();
+    absorbUniverseTicker(tickers, "CSPX");
+    absorbUniverseTicker(tickers, "CRWV");
+    absorbUniverseTicker(tickers, "SPCX");
+    expect(tickers.has(CSPX_TICKER)).toBe(true);
+    expect(tickers.has("CRWV")).toBe(true);
+    expect(tickers.has("SPCX")).toBe(true);
+  });
+});
+
 describe("provider symbol mapping", () => {
   it("maps plain US tickers to their exchange-suffixed symbols", () => {
     expect(eodhdUsSymbol("AAPL")).toBe("AAPL.US");
@@ -69,20 +95,39 @@ describe("provider symbol mapping", () => {
   });
 });
 
+describe("orderPriceHistoryUniverse", () => {
+  it("puts calendar anchors first so idea leads cannot starve Finnhub", () => {
+    expect(orderPriceHistoryUniverse(["CRWV", "SPY", "ALOY", "MSFT", "AAPL", "QQQ"])).toEqual([
+      "AAPL",
+      "MSFT",
+      "QQQ",
+      "SPY",
+      "ALOY",
+      "CRWV",
+    ]);
+  });
+});
+
 describe("resumeIndex", () => {
+  const ordered = orderPriceHistoryUniverse(["ALOY", "AAPL", "CRWV", "MSFT", "QQQ", "SPY"]);
+
   it("starts at 0 with no cursor", () => {
-    expect(resumeIndex(["AAPL", "MSFT", "SPY"], "")).toBe(0);
+    expect(resumeIndex(ordered, "")).toBe(0);
   });
 
-  it("resumes at the first ticker strictly after `after`", () => {
-    expect(resumeIndex(["AAPL", "MSFT", "SPY"], "AAPL")).toBe(1);
+  it("resumes at the next ticker in anchors-first order", () => {
+    expect(resumeIndex(ordered, "AAPL")).toBe(1);
+    expect(ordered[1]).toBe("MSFT");
+    expect(resumeIndex(ordered, "SPY")).toBe(4);
+    expect(ordered[4]).toBe("ALOY");
   });
 
-  it("survives a mid-chain universe insertion without skipping a ticker", () => {
-    // Tick #1 processed up to MSFT; a watchlist add then prepends ABNB,
-    // shifting every position. A positional cursor would skip QQQ.
-    expect(resumeIndex(["ABNB", "AAPL", "MSFT", "QQQ", "SPY"].sort(), "MSFT")).toBe(3);
-    expect(["AAPL", "ABNB", "MSFT", "QQQ", "SPY"][3]).toBe("QQQ");
+  it("survives a mid-chain universe insertion without skipping an anchor", () => {
+    // Tick #1 processed up to MSFT; an idea lead ALOY then appears. A
+    // positional / A–Z cursor would jump into the leads and skip QQQ/SPY.
+    const next = orderPriceHistoryUniverse(["ABNB", "AAPL", "MSFT", "QQQ", "SPY"]);
+    expect(resumeIndex(next, "MSFT")).toBe(2);
+    expect(next[2]).toBe("QQQ");
   });
 
   it("returns universe.length when everything up to `after` is done", () => {
@@ -92,6 +137,9 @@ describe("resumeIndex", () => {
 
   it("mid-chain removal of the `after` ticker still resumes at the next one", () => {
     expect(resumeIndex(["AAPL", "SPY"], "MSFT")).toBe(1);
+    const afterMissingLead = orderPriceHistoryUniverse(["AAPL", "MSFT", "QQQ", "SPY", "CRWV"]);
+    expect(resumeIndex(afterMissingLead, "ALOY")).toBe(4);
+    expect(afterMissingLead[4]).toBe("CRWV");
   });
 });
 

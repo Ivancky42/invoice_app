@@ -6,7 +6,12 @@ import { isFinnhubRateLimit } from "@/lib/finnhub/quote";
 import { fetchEodhdHistory } from "@/lib/pricehistory/providers/eodhd";
 import { fetchFinnhubDailyBar, easternSessionDate } from "@/lib/pricehistory/providers/finnhub";
 import { fetchStooqHistory } from "@/lib/pricehistory/providers/stooq";
-import { buildPriceHistoryUniverse, CSPX_TICKER, eodhdUsSymbol } from "@/lib/pricehistory/symbols";
+import {
+  buildPriceHistoryUniverse,
+  CALENDAR_ANCHOR_TICKERS,
+  CSPX_TICKER,
+  eodhdUsSymbol,
+} from "@/lib/pricehistory/symbols";
 import type { DailyBar } from "@/lib/pricehistory/types";
 import { prisma } from "@/lib/prisma";
 
@@ -64,14 +69,28 @@ function parseCursor(cursor: Prisma.JsonValue | null): PriceHistorySyncCursor {
 }
 
 /**
- * First index in the sorted universe strictly after `after` ("" = start).
- * Tickers added mid-chain that sort before `after` are picked up on the next
- * daily run; nothing from the in-progress sequence is ever skipped.
+ * First index in the ordered universe after `after` ("" = start).
+ * `ordered` must be {@link orderPriceHistoryUniverse} output (anchors first,
+ * then A–Z). A vanished `after` resumes at the next remaining member of that
+ * order; a ticker inserted earlier in the order is picked up next daily run.
  */
-export function resumeIndex(universeSorted: string[], after: string): number {
+const ANCHOR_SET = new Set<string>(CALENDAR_ANCHOR_TICKERS);
+
+export function resumeIndex(ordered: string[], after: string): number {
   if (after === "") return 0;
-  const idx = universeSorted.findIndex((ticker) => ticker > after);
-  return idx === -1 ? universeSorted.length : idx;
+  const idx = ordered.indexOf(after);
+  if (idx !== -1) return idx + 1;
+
+  if (ANCHOR_SET.has(after)) {
+    const nextAnchor = ordered.find((t) => ANCHOR_SET.has(t) && t > after);
+    if (nextAnchor) return ordered.indexOf(nextAnchor);
+    const restStart = ordered.findIndex((t) => !ANCHOR_SET.has(t));
+    return restStart === -1 ? ordered.length : restStart;
+  }
+  const restStart = ordered.findIndex((t) => !ANCHOR_SET.has(t));
+  if (restStart === -1) return ordered.length;
+  const j = ordered.findIndex((t, i) => i >= restStart && t > after);
+  return j === -1 ? ordered.length : j;
 }
 
 function toDateOnly(ymd: string): Date {

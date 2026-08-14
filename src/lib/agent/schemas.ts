@@ -142,8 +142,8 @@ export const patchPortfolioInputSchema = z.object({
   thesis: reportBlocksSchema.nullable().optional(),
   pageNotes: reportBlocksSchema.nullable().optional(),
   notes: reportBlocksSchema.nullable().optional(),
-  entryZone: z.string().max(500).nullable().optional(),
-  addZone: z.string().max(500).nullable().optional(),
+  entryZone: z.string().max(2000).nullable().optional(),
+  addZone: z.string().max(2000).nullable().optional(),
   nextAddTrigger: z.string().max(2000).nullable().optional(),
   keyRisk: z.string().max(2000).nullable().optional(),
   theme: z.enum(enumValues(Theme)).nullable().optional(),
@@ -155,8 +155,8 @@ export const patchPortfolioInputSchema = z.object({
    * from this + stored `currentPrice`. Do not write `upsidePct` directly.
    */
   analystTarget: z.number().positive().nullable().optional(),
-  /** Earnings beat history summary, e.g. "4/4" or "Rev+EPS beat Q2'26". */
-  beatRate: z.string().max(200).nullable().optional(),
+  /** Earnings beat history recap (not just "4/4"). */
+  beatRate: z.string().max(1000).nullable().optional(),
   /** Expected move into earnings, e.g. "±5%" — informational. */
   impliedMove: z.string().max(100).nullable().optional(),
   /** YYYY-MM-DD; recomputes daysToEarnings. Null clears both. */
@@ -182,7 +182,7 @@ export const upsertWatchlistInputSchema = z.object({
   riskLevel: z.enum(enumValues(RiskLevel)).nullable().optional(),
   analystRating: z.enum(enumValues(AnalystRating)).nullable().optional(),
   marketCapBucket: z.enum(enumValues(MarketCapBucket)).nullable().optional(),
-  entryZone: z.string().max(500).nullable().optional(),
+  entryZone: z.string().max(2000).nullable().optional(),
   stopLoss: z.number().positive().nullable().optional(),
   /** Consensus analyst price target USD; server recomputes `upsidePct`. */
   analystTarget: z.number().positive().nullable().optional(),
@@ -238,11 +238,24 @@ const decisionIdempotencyKeySchema = z
     message: "reserved_idempotency_key_prefix",
   });
 
-/** Accepts YYYY-MM-DD or a full ISO datetime — evidence observedAt granularity varies. */
+/**
+ * Accepts YYYY-MM-DD, a full ISO datetime, or a session label that *starts*
+ * with a date (`2026-08-11 US close`). Daily has written the last form twice.
+ */
+const YMD_PREFIX = /^(\d{4}-\d{2}-\d{2})/;
+
+function normalizeObservedAt(v: string): string {
+  const trimmed = v.trim();
+  if (!Number.isNaN(Date.parse(trimmed))) return trimmed;
+  const m = YMD_PREFIX.exec(trimmed);
+  return m ? m[1] : trimmed;
+}
+
 const observedAtSchema = z
   .string()
   .min(1)
-  .max(40)
+  .max(80)
+  .transform(normalizeObservedAt)
   .refine((v) => !Number.isNaN(Date.parse(v)), { message: "observedAt must be a valid date" });
 
 export const evidenceItemInputSchema = z.object({
@@ -288,7 +301,7 @@ export const upsertDecisionReviewInputSchema = z.object({
   // breadth_classify job (see src/lib/fitness/breadthClassify.ts) — like upsidePct, they
   // are never accepted from the caller, only derived and written back.
   priceAtDecision: z.number().positive().nullable().optional(),
-  entryZone: z.string().max(500).nullable().optional(),
+  entryZone: z.string().max(2000).nullable().optional(),
   stopLoss: z.number().positive().nullable().optional(),
   target: z.number().positive().nullable().optional(),
   convictionScore: z.number().int().min(1).max(5).nullable().optional(),
@@ -406,7 +419,7 @@ export const upsertIdeaFieldsSchema = z.object({
   status: z.enum(enumValues(IdeaStatus)).nullable().optional(),
   ideaStage: z.enum(enumValues(IdeaStage)).nullable().optional(),
   socialBuzz: z.string().max(500).nullable().optional(),
-  foundVia: z.string().max(200).nullable().optional(),
+  foundVia: z.string().max(1000).nullable().optional(),
   whyInteresting: reportBlocksSchema.nullable().optional(),
   keyRisk: z.string().max(2000).nullable().optional(),
   notes: reportBlocksSchema.nullable().optional(),
