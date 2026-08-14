@@ -4,7 +4,14 @@ import { writeBackfillBars, type PriceHistoryWriter } from "@/lib/pricehistory/b
 import { easternSessionDate, fetchFinnhubDailyBar } from "@/lib/pricehistory/providers/finnhub";
 import { parseStooqCsv } from "@/lib/pricehistory/providers/stooq";
 import { eodhdUsSymbol, stooqUsSymbol } from "@/lib/pricehistory/symbols";
-import { mergeBarUpdate, resumeIndex } from "@/lib/pricehistory/sync";
+import {
+  isCurrentSessionBar,
+  lookbackWindow,
+  mergeBarUpdate,
+  resumeIndex,
+  sortBarsByDate,
+  syncFailureMessage,
+} from "@/lib/pricehistory/sync";
 
 describe("parseStooqCsv", () => {
   it("parses a happy-path CSV", () => {
@@ -185,6 +192,50 @@ describe("mergeBarUpdate", () => {
   });
 });
 
+describe("lookbackWindow", () => {
+  it("returns an inclusive window ending on the given session date", () => {
+    expect(lookbackWindow("2026-08-13", 7)).toEqual({ from: "2026-08-06", to: "2026-08-13" });
+  });
+
+  it("crosses month boundaries in UTC", () => {
+    expect(lookbackWindow("2026-08-03", 7)).toEqual({ from: "2026-07-27", to: "2026-08-03" });
+  });
+});
+
+describe("isCurrentSessionBar", () => {
+  const bar = {
+    ticker: "MSFT",
+    date: "2026-08-10",
+    close: 506.06,
+    source: "finnhub" as const,
+  };
+
+  it("accepts a bar dated the expected session", () => {
+    expect(isCurrentSessionBar(bar, "2026-08-10")).toBe(true);
+  });
+
+  it("rejects a prior-session Finnhub stamp so the run falls through to EODHD", () => {
+    expect(isCurrentSessionBar(bar, "2026-08-13")).toBe(false);
+  });
+});
+
+describe("sortBarsByDate / syncFailureMessage", () => {
+  it("orders newest last so at(-1) is the latest session", () => {
+    const sorted = sortBarsByDate([
+      { ticker: "OKLO", date: "2026-08-13", close: 46.45, source: "eodhd" },
+      { ticker: "OKLO", date: "2026-08-10", close: 44.49, source: "eodhd" },
+    ]);
+    expect(sorted.map((b) => b.date)).toEqual(["2026-08-10", "2026-08-13"]);
+  });
+
+  it("keeps both Finnhub and fallback reasons", () => {
+    expect(syncFailureMessage("No Finnhub quote", "eodhd: 402")).toBe(
+      "No Finnhub quote; eodhd: 402",
+    );
+    expect(syncFailureMessage(null, null)).toBe("unknown error");
+  });
+});
+
 describe("easternSessionDate", () => {
   it("derives the US Eastern calendar date from an epoch-seconds timestamp", () => {
     // 2026-08-07 20:00:00 UTC = 16:00 EDT (UTC-4) same day.
@@ -241,6 +292,23 @@ describe("fetchFinnhubDailyBar", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("throws FinnhubRateLimitError on HTTP 429 so the nightly run can stop calling Finnhub", async () => {
+    const { FinnhubRateLimitError, isFinnhubRateLimit } = await import("@/lib/finnhub/quote");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      ({ ok: false, status: 429, json: async () => ({}) }) as Response) as typeof fetch;
+    try {
+      await expect(fetchFinnhubDailyBar("MSFT", "key")).rejects.toBeInstanceOf(FinnhubRateLimitError);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(isFinnhubRateLimit(new FinnhubRateLimitError())).toBe(true);
+    expect(isFinnhubRateLimit(Object.assign(new Error("Finnhub rate limit (429)"), { name: "FinnhubRateLimitError" }))).toBe(
+      true,
+    );
+    expect(isFinnhubRateLimit(new Error("No Finnhub quote"))).toBe(false);
   });
 
   it("rejects a quote with a missing timestamp", async () => {
@@ -303,5 +371,29 @@ describe("eodhd row mapping (via fetchEodhdHistory)", () => {
     await expect(
       fetchEodhdHistory("AAPL", "AAPL.US", "2026-08-01", "2026-08-08", ""),
     ).rejects.toThrow(/EODHD_API_KEY/);
+  });
+});
+
+describe("fetchFallbackBars", () => {
+  it("returns the EODHD lookback window when Finnhub is unavailable", async () => {
+    const { fetchFallbackBars } = await import("@/lib/pricehistory/sync");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      ({
+        ok: true,
+        json: async () => [
+          { date: "2026-08-13", open: 44.92, close: 46.45, adjusted_close: 46.45, volume: 9144800 },
+          { date: "2026-08-10", open: 47.23, close: 44.49, adjusted_close: 44.49, volume: 14239400 },
+        ],
+      }) as Response) as typeof fetch;
+    try {
+      const result = await fetchFallbackBars("OKLO", "2026-08-13", "key");
+      expect(result.error).toBeNull();
+      expect(result.bars.map((b) => b.date)).toEqual(["2026-08-10", "2026-08-13"]);
+      expect(result.bars.at(-1)?.date).toBe("2026-08-13");
+      expect(result.bars[0]?.source).toBe("eodhd");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

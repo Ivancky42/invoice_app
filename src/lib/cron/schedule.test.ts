@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { JobStatus } from "@/generated/prisma/enums";
 import {
+  isJobStale,
   isMonthlyDue,
   remainingBudget,
   shouldRunJob,
@@ -130,6 +131,30 @@ describe("shouldRunJob", () => {
       run: false,
       reason: "not-due",
     });
+  });
+});
+
+describe("isJobStale", () => {
+  const midMonth = new Date(Date.UTC(2026, 7, 14));
+  const first = new Date(Date.UTC(2026, 8, 1));
+
+  it("flags a daily job that has never succeeded", () => {
+    expect(isJobStale("daily", null, midMonth)).toBe(true);
+  });
+
+  it("does not flag a monthly job that has never run until the 1st", () => {
+    expect(isJobStale("monthly", null, midMonth)).toBe(false);
+    expect(isJobStale("monthly", null, first)).toBe(true);
+  });
+
+  it("flags a daily job whose last success is more than 2 days old", () => {
+    expect(isJobStale("daily", new Date(Date.UTC(2026, 7, 11)), midMonth)).toBe(true);
+    expect(isJobStale("daily", new Date(Date.UTC(2026, 7, 12)), midMonth)).toBe(false);
+  });
+
+  it("uses a 35-day window for monthly jobs", () => {
+    expect(isJobStale("monthly", new Date(Date.UTC(2026, 7, 1)), midMonth)).toBe(false);
+    expect(isJobStale("monthly", new Date(Date.UTC(2026, 6, 1)), midMonth)).toBe(true);
   });
 });
 

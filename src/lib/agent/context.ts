@@ -28,6 +28,7 @@ import {
 } from "@/lib/stocks/format";
 import { listStockEnums } from "@/lib/agent/enums";
 import { CRON_JOBS } from "@/lib/cron/jobs";
+import { isJobStale } from "@/lib/cron/schedule";
 import { getRuleSet } from "@/lib/rules/resolve";
 import { shadowContextBlock } from "@/lib/shadow/read";
 import { ensureContentPages } from "@/lib/agent/contentPages";
@@ -166,13 +167,11 @@ export type StaleJob = {
   daysBehind: number | null;
 };
 
-/** A registered cron job is stale once its last SUCCESS is older than this. */
-const STALE_JOB_DAYS = 2;
-
 /**
- * Registered cron jobs whose last SUCCESS is more than {@link STALE_JOB_DAYS} old.
- * Surfaced in context so a routine can see that (e.g.) price_history stopped feeding
- * the marks it is about to reason over, instead of trusting silently stale data.
+ * Registered cron jobs whose last SUCCESS is older than the cadence allows
+ * (2 days for daily, 35 for monthly). Monthly jobs that have never run are
+ * not flagged until their first 1st UTC — `rule_scoring` sitting idle mid-month
+ * is expected, not a fault.
  */
 async function staleJobsSummary(): Promise<StaleJob[]> {
   const grouped = await prisma.jobRun.groupBy({
@@ -181,28 +180,22 @@ async function staleJobsSummary(): Promise<StaleJob[]> {
     _max: { runDay: true },
   });
   const lastByJob = new Map(grouped.map((g) => [g.job, g._max.runDay ?? null]));
-
-  const todayMs = Date.UTC(
-    new Date().getUTCFullYear(),
-    new Date().getUTCMonth(),
-    new Date().getUTCDate(),
-  );
+  const now = new Date();
+  const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 
   const out: StaleJob[] = [];
   for (const descriptor of CRON_JOBS) {
     const last = lastByJob.get(descriptor.job) ?? null;
+    if (!isJobStale(descriptor.cadence, last, now)) continue;
     if (!last) {
       out.push({ job: descriptor.job, lastSuccess: null, daysBehind: null });
       continue;
     }
-    const daysBehind = Math.round((todayMs - last.getTime()) / 86_400_000);
-    if (daysBehind > STALE_JOB_DAYS) {
-      out.push({
-        job: descriptor.job,
-        lastSuccess: last.toISOString().slice(0, 10),
-        daysBehind,
-      });
-    }
+    out.push({
+      job: descriptor.job,
+      lastSuccess: last.toISOString().slice(0, 10),
+      daysBehind: Math.round((todayMs - last.getTime()) / 86_400_000),
+    });
   }
   return out;
 }

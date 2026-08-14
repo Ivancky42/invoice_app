@@ -791,7 +791,7 @@ model PriceHistory {
   close     Decimal  @db.Decimal(14, 4)
   adjClose  Decimal? @db.Decimal(14, 4)
   volume    BigInt?
-  /// "finnhub" | "eodhd" | "stooq"
+  /// "finnhub" | "eodhd" | "stooq" | "yahoo"
   source    String
   createdAt DateTime @default(now())
 

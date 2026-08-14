@@ -8,6 +8,22 @@ export type FinnhubQuote = {
   t?: number;
 };
 
+/** Thrown when Finnhub returns HTTP 429 so callers can stop burning the remaining quota. */
+export class FinnhubRateLimitError extends Error {
+  constructor(message = "Finnhub rate limit (429)") {
+    super(message);
+    this.name = "FinnhubRateLimitError";
+  }
+}
+
+/** True for a real instance or a bundled copy that only preserved `name`. */
+export function isFinnhubRateLimit(error: unknown): boolean {
+  return (
+    error instanceof FinnhubRateLimitError ||
+    (error instanceof Error && error.name === "FinnhubRateLimitError")
+  );
+}
+
 /**
  * Full Finnhub US-equities quote (current, open, high, low, prev close, timestamp).
  * @see https://finnhub.io/docs/api/stock-candles
@@ -19,6 +35,7 @@ export async function finnhubQuote(symbol: string, apiKey: string): Promise<Finn
   u.searchParams.set("symbol", sym);
   u.searchParams.set("token", apiKey);
   const res = await fetch(u.toString(), { cache: "no-store" });
+  if (res.status === 429) throw new FinnhubRateLimitError();
   if (!res.ok) return null;
   return (await res.json()) as FinnhubQuote;
 }
@@ -28,8 +45,13 @@ export async function finnhubQuote(symbol: string, apiKey: string): Promise<Finn
  * @see https://finnhub.io/docs/api/stock-candles
  */
 export async function finnhubLastPrice(symbol: string, apiKey: string): Promise<number | null> {
-  const j = await finnhubQuote(symbol, apiKey);
-  const c = j?.c;
-  if (typeof c !== "number" || !Number.isFinite(c) || c <= 0) return null;
-  return c;
+  try {
+    const j = await finnhubQuote(symbol, apiKey);
+    const c = j?.c;
+    if (typeof c !== "number" || !Number.isFinite(c) || c <= 0) return null;
+    return c;
+  } catch (e) {
+    if (isFinnhubRateLimit(e)) return null;
+    throw e;
+  }
 }

@@ -25,6 +25,40 @@ export function isMonthlyDue(runDay: Date): boolean {
   return runDay.getUTCDate() === 1;
 }
 
+/** Daily jobs are stale once the last SUCCESS is older than this many UTC days. */
+export const DAILY_STALE_JOB_DAYS = 2;
+/** Monthly jobs are stale once the last SUCCESS is older than this many UTC days. */
+export const MONTHLY_STALE_JOB_DAYS = 35;
+
+/**
+ * Whether a registered cron job should appear in `lastRun.staleJobs`.
+ * Monthly jobs that have never succeeded are expected until their first 1st;
+ * after that, a missed 1st (or a success older than {@link MONTHLY_STALE_JOB_DAYS})
+ * is stale. Daily jobs with no success are always stale.
+ */
+export function isJobStale(
+  cadence: Cadence,
+  lastSuccess: Date | null,
+  todayUtc: Date,
+): boolean {
+  if (!lastSuccess) {
+    return cadence === "monthly" ? isMonthlyDue(utcRunDay(todayUtc)) : true;
+  }
+  const todayMs = Date.UTC(
+    todayUtc.getUTCFullYear(),
+    todayUtc.getUTCMonth(),
+    todayUtc.getUTCDate(),
+  );
+  const lastMs = Date.UTC(
+    lastSuccess.getUTCFullYear(),
+    lastSuccess.getUTCMonth(),
+    lastSuccess.getUTCDate(),
+  );
+  const daysBehind = Math.round((todayMs - lastMs) / 86_400_000);
+  const threshold = cadence === "monthly" ? MONTHLY_STALE_JOB_DAYS : DAILY_STALE_JOB_DAYS;
+  return daysBehind > threshold;
+}
+
 /**
  * Decide whether a job should run for `runDay` given the ledger for that day.
  * `force` re-runs jobs that already succeeded but still honours dependencies.

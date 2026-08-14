@@ -1,5 +1,5 @@
 /** Valid price-history sources — must match PriceHistory.source strings written to Neon. */
-export type PriceHistorySource = "finnhub" | "eodhd" | "stooq";
+export type PriceHistorySource = "finnhub" | "eodhd" | "stooq" | "yahoo";
 
 /** One daily OHLC bar, provider-agnostic. */
 export type DailyBar = {
