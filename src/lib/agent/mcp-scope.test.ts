@@ -6,6 +6,9 @@ import {
   MCP_SCOPE,
   MCP_SHADOW_SCOPE,
   normalizeMcpScopeRequest,
+  paperBookRequiresShadowScopeError,
+  resolveShadowCall,
+  shadowScopeLiveBranchError,
 } from "@/lib/agent/mcp-scope";
 import {
   COUNTERFACTUAL_HORIZON_SESSIONS,
@@ -31,6 +34,72 @@ describe("mcp scopes", () => {
     expect(canWriteRealBook([MCP_SCOPE])).toBe(true);
     expect(canWriteRealBook([MCP_SCOPE, MCP_SHADOW_SCOPE])).toBe(true);
     expect(isShadowOnlyScope([MCP_SCOPE, MCP_SHADOW_SCOPE])).toBe(false);
+  });
+
+  it("resolveShadowCall: shadow + LIVE on a book-aware tool is ok and book is PAPER", () => {
+    const resolved = resolveShadowCall(
+      { branch: "LIVE" as const },
+      [MCP_SHADOW_SCOPE],
+      { bookAware: true },
+    );
+    expect(resolved).toEqual({ branch: "LIVE", book: "PAPER" });
+  });
+
+  it("resolveShadowCall: shadow + LIVE on upsert_daily_log is refused", () => {
+    const resolved = resolveShadowCall(
+      { branch: "LIVE" as const },
+      [MCP_SHADOW_SCOPE],
+      { bookAware: false },
+    );
+    expect(resolved).toEqual({ __error: JSON.stringify(shadowScopeLiveBranchError()) });
+  });
+
+  it("resolveShadowCall: shadow omitted branch defaults to CANDIDATE and book PAPER", () => {
+    const resolved = resolveShadowCall({}, [MCP_SHADOW_SCOPE], { bookAware: true });
+    expect(resolved).toEqual({ branch: "CANDIDATE", book: "PAPER" });
+  });
+
+  it("resolveShadowCall: mcp:tools + book=PAPER is refused on writes / get_context", () => {
+    const resolved = resolveShadowCall(
+      { book: "PAPER" as const },
+      [MCP_SCOPE],
+      { bookAware: true },
+    );
+    expect(resolved).toEqual({ __error: JSON.stringify(paperBookRequiresShadowScopeError()) });
+  });
+
+  it("resolveShadowCall: listing tools leave omitted book unset for mcp:tools / HTTP", () => {
+    expect(
+      resolveShadowCall({}, [MCP_SCOPE], { bookAware: true, defaultBook: "none" }),
+    ).toEqual({});
+    expect(
+      resolveShadowCall(
+        { branch: "CANDIDATE" as const },
+        undefined,
+        { bookAware: true, defaultBook: "none" },
+      ),
+    ).toEqual({ branch: "CANDIDATE" });
+  });
+
+  it("resolveShadowCall: listing tools allow mcp:tools to pass book=PAPER", () => {
+    expect(
+      resolveShadowCall(
+        { book: "PAPER" as const, branch: "CANDIDATE" as const },
+        [MCP_SCOPE],
+        { bookAware: true, defaultBook: "none" },
+      ),
+    ).toEqual({ book: "PAPER", branch: "CANDIDATE" });
+  });
+
+  it("resolveShadowCall: listing tools still force PAPER for mcp:shadow", () => {
+    expect(
+      resolveShadowCall({}, [MCP_SHADOW_SCOPE], { bookAware: true, defaultBook: "none" }),
+    ).toEqual({ branch: "CANDIDATE", book: "PAPER" });
+  });
+
+  it("resolveShadowCall: legacy no-scope defaults to REAL on writes / get_context", () => {
+    expect(resolveShadowCall({}, undefined, { bookAware: true })).toEqual({ book: "REAL" });
+    expect(resolveShadowCall({}, [], { bookAware: false })).toEqual({ book: "REAL" });
   });
 
   it("normalizes OAuth scope requests to a single primary scope", () => {

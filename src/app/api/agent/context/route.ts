@@ -6,6 +6,8 @@ import {
   isAgentRoutine,
   AGENT_ROUTINES,
 } from "@/lib/agent/context";
+import { resolveShadowCall } from "@/lib/agent/mcp-scope";
+import type { DecisionBook } from "@/generated/prisma/client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -42,9 +44,29 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const bookParam = req.nextUrl.searchParams.get("book");
+  if (bookParam !== null && bookParam !== "REAL" && bookParam !== "PAPER") {
+    return NextResponse.json(
+      { ok: false, error: "invalid_book", message: "book must be REAL or PAPER" },
+      { status: 400 },
+    );
+  }
+  // HTTP AGENT_TOKEN has no scopes → mcp:tools-equivalent: REAL only.
+  const resolved = resolveShadowCall(
+    { book: bookParam === "REAL" || bookParam === "PAPER" ? bookParam : undefined },
+    undefined,
+    { bookAware: true },
+  );
+  if ("__error" in resolved) {
+    return NextResponse.json(JSON.parse(resolved.__error) as object, { status: 400 });
+  }
+
   const started = Date.now();
   try {
-    const context = await withBudget(buildAgentContext(routine), CONTEXT_BUDGET_MS);
+    const context = await withBudget(
+      buildAgentContext(routine, "LIVE", (resolved.book ?? "REAL") as DecisionBook),
+      CONTEXT_BUDGET_MS,
+    );
     const res = NextResponse.json(context);
     res.headers.set("Server-Timing", `context;dur=${Date.now() - started}`);
     return res;

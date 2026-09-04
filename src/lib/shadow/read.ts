@@ -58,6 +58,19 @@ export async function listShadowPositions(input: ListShadowPositionsInput = {}) 
   };
 }
 
+/**
+ * Open paper tickers for a branch. Missing ShadowBranch → empty set (unseeded
+ * book), never throws — callers treat that as "no positions".
+ */
+export async function openPaperTickers(branch: Branch): Promise<Set<string>> {
+  try {
+    const listed = await listShadowPositions({ branch, includeClosed: false });
+    return new Set(listed.positions.map((p) => p.ticker.trim().toUpperCase()));
+  } catch {
+    return new Set();
+  }
+}
+
 export type ListShadowOrdersInput = {
   branch?: Branch;
   status?: ShadowOrderStatus;
@@ -145,5 +158,74 @@ export async function shadowContextBlock(
     cash: roundMoney(cash),
     openPositions: positions.length,
     lastMarkSession: day(lastMarkSession),
+  };
+}
+
+export type PaperBookPositionForContext = {
+  ticker: string;
+  shares: number;
+  avgCost: number;
+  lastMark: number | null;
+  lastMarkSession: string | null;
+  markStale: boolean;
+  marketValue: number | null;
+};
+
+export type PaperPendingOrderForContext = {
+  ticker: string;
+  side: string;
+  decisionType: string | null;
+  sizeFraction: number | null;
+  createdAt: string | null;
+};
+
+export type PaperBookForContext = {
+  cash: number;
+  lastMarkSession: string | null;
+  positions: PaperBookPositionForContext[];
+  pendingOrders: PaperPendingOrderForContext[];
+};
+
+/**
+ * Paper book as `get_context(book=PAPER)` needs it: open positions + cash + pending
+ * orders. Metadata (sleeve, zones, earnings, …) is joined later from shared
+ * Portfolio/Watchlist rows — this helper stays paper-ledger-only.
+ */
+export async function paperBookForContext(branch: Branch): Promise<PaperBookForContext> {
+  const [branchRow, listed, orders] = await Promise.all([
+    prisma.shadowBranch.findUnique({
+      where: { branch },
+      select: { cash: true },
+    }),
+    listShadowPositions({ branch, includeClosed: false }),
+    listShadowOrders({ branch, status: "PENDING", limit: 200 }),
+  ]);
+
+  let lastMarkSession: string | null = null;
+  for (const p of listed.positions) {
+    if (p.lastMarkSession && (!lastMarkSession || p.lastMarkSession > lastMarkSession)) {
+      lastMarkSession = p.lastMarkSession;
+    }
+  }
+
+  return {
+    cash: roundMoney(decToNum(branchRow?.cash ?? null) ?? 0),
+    lastMarkSession,
+    positions: listed.positions.map((p) => ({
+      ticker: p.ticker,
+      shares: p.shares,
+      avgCost: p.avgCost ?? 0,
+      lastMark: p.lastMark,
+      lastMarkSession: p.lastMarkSession,
+      markStale: p.markStale,
+      marketValue: p.marketValue,
+    })),
+    pendingOrders: orders.orders.map((o) => ({
+      ticker: o.ticker,
+      side: o.side,
+      decisionType: o.decisionType,
+      sizeFraction: o.sizeFraction,
+      createdAt: o.createdAt,
+    })),
   };
 }

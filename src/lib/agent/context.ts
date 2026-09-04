@@ -30,13 +30,13 @@ import { listStockEnums } from "@/lib/agent/enums";
 import { CRON_JOBS } from "@/lib/cron/jobs";
 import { isJobStale } from "@/lib/cron/schedule";
 import { getRuleSet } from "@/lib/rules/resolve";
-import { shadowContextBlock } from "@/lib/shadow/read";
+import { paperBookForContext, shadowContextBlock } from "@/lib/shadow/read";
 import { ensureContentPages } from "@/lib/agent/contentPages";
 import {
   earningsRiskFromDays,
   type DerivedEarningsRisk,
 } from "@/lib/stocks/derived";
-import type { Branch, Portfolio, Watchlist, Trade, Trend, Idea, DecisionReview, ContentPage } from "@/generated/prisma/client";
+import type { Branch, DecisionBook, Portfolio, Watchlist, Trade, Trend, Idea, DecisionReview, ContentPage } from "@/generated/prisma/client";
 import type { Decimal } from "@/generated/prisma/internal/prismaNamespace";
 import type { EarningsRiskThresholds } from "@/lib/stocks/derived";
 import {
@@ -507,6 +507,7 @@ export function serializeDecisionReviewRow(r: DecisionReview) {
     notionId: r.notionId,
     idempotencyKey: r.idempotencyKey,
     branch: r.branch,
+    book: r.book,
     title: r.title,
     ticker: r.ticker,
     decisionDate: iso(r.decisionDate),
@@ -774,7 +775,14 @@ export async function getPromptMarkdown(
   return fs.readFile(filePath, "utf8");
 }
 
-export async function buildAgentContext(routine: AgentRoutine, branch: Branch = "LIVE") {
+export async function buildAgentContext(
+  routine: AgentRoutine,
+  branch: Branch = "LIVE",
+  book: DecisionBook = "REAL",
+) {
+  if (book === "PAPER") {
+    return buildPaperAgentContext(routine, branch);
+  }
   const trendDetail = routine !== "earnings";
 
   // Batched: 1 Config query (+ optional cash fallback) + 5 table reads + 1 SyncStatus.
@@ -937,5 +945,303 @@ export async function buildAgentContext(routine: AgentRoutine, branch: Branch = 
     /// Paper-only shadow ledger for this branch — never the real book, never executable.
     shadow,
     lastRun,
+  };
+}
+
+/**
+ * Shared analytics metadata for a paper position. Portfolio/Watchlist may supply
+ * company, sleeve, theme, stop, zones, earnings, risk, rating, target, pageNotes —
+ * those describe the name, not Ivan's real-book decisions.
+ *
+ * Do NOT join `action`, `conviction`, or `addsUsed` from Portfolio: those are Ivan's
+ * real-book decisions and would bias the paper pass. `action` is always null;
+ * conviction / averageDownsUsed come from the paper decision stream / filled
+ * AVERAGE_DOWN orders (see {@link paperBookDecisionState}).
+ */
+function paperMetaForTicker(
+  ticker: string,
+  portfolioByTicker: Map<string, Portfolio>,
+  watchlistByTicker: Map<string, Watchlist>,
+) {
+  const p = portfolioByTicker.get(ticker);
+  const w = watchlistByTicker.get(ticker);
+  return {
+    company: p?.company ?? w?.company ?? null,
+    sleeve: p?.sleeve ?? null,
+    stopLoss: decToNum(p?.stopLoss) ?? decToNum(w?.stopLoss) ?? null,
+    theme: p?.theme ?? w?.theme ?? null,
+    earningsDate: p?.earningsDate ?? w?.earningsDate ?? null,
+    daysToEarnings: p?.daysToEarnings ?? w?.daysToEarnings ?? null,
+    riskLevel: p?.riskLevel ?? w?.riskLevel ?? null,
+    marketCapBucket: p?.marketCapBucket ?? w?.marketCapBucket ?? null,
+    analystRating: p?.analystRating ?? w?.analystRating ?? null,
+    entryZone: p?.entryZone ?? w?.entryZone ?? null,
+    addZone: p?.addZone ?? null,
+    nextAddTrigger: p?.nextAddTrigger ?? null,
+    analystTarget: decToNum(p?.analystTarget) ?? decToNum(w?.analystTarget) ?? null,
+    upsidePctStored: decToNum(p?.upsidePct) ?? decToNum(w?.upsidePct) ?? null,
+    lastPriceUpdate: p?.lastPriceUpdate ?? w?.lastPriceUpdate ?? null,
+    pageNotes: p?.pageNotes ?? w?.pageNotes ?? null,
+    sharedCurrentPrice: decToNum(p?.currentPrice) ?? decToNum(w?.currentPrice) ?? null,
+  };
+}
+
+const PAPER_CONVICTION_TYPES = ["BUY", "ADD", "AVERAGE_DOWN"] as const;
+
+/**
+ * Paper-only decision state for open positions: latest PAPER convictionScore and
+ * count of FILLED AVERAGE_DOWN orders, both after the branch's resetAt.
+ * Two queries total (not per ticker). Missing branch → empty maps.
+ */
+async function paperBookDecisionState(
+  branch: Branch,
+  tickers: string[],
+): Promise<{
+  convictionByTicker: Map<string, number | null>;
+  averageDownsByTicker: Map<string, number>;
+}> {
+  const convictionByTicker = new Map<string, number | null>();
+  const averageDownsByTicker = new Map<string, number>();
+  if (tickers.length === 0) return { convictionByTicker, averageDownsByTicker };
+
+  const branchRow = await prisma.shadowBranch.findUnique({
+    where: { branch },
+    select: { id: true, resetAt: true },
+  });
+  const since = branchRow?.resetAt ?? null;
+
+  const [reviews, avgDownOrders] = await Promise.all([
+    prisma.decisionReview.findMany({
+      where: {
+        branch,
+        book: "PAPER",
+        ticker: { in: tickers },
+        decisionType: { in: [...PAPER_CONVICTION_TYPES] },
+        ...(since ? { createdAt: { gte: since } } : {}),
+      },
+      select: { ticker: true, convictionScore: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    branchRow
+      ? prisma.shadowOrder.findMany({
+          where: {
+            branchId: branchRow.id,
+            status: "FILLED",
+            decisionType: "AVERAGE_DOWN",
+            ticker: { in: tickers },
+            ...(since ? { createdAt: { gte: since } } : {}),
+          },
+          select: { ticker: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  for (const r of reviews) {
+    const t = r.ticker?.trim().toUpperCase();
+    if (!t || convictionByTicker.has(t)) continue;
+    convictionByTicker.set(t, r.convictionScore);
+  }
+  for (const o of avgDownOrders) {
+    const t = o.ticker.trim().toUpperCase();
+    averageDownsByTicker.set(t, (averageDownsByTicker.get(t) ?? 0) + 1);
+  }
+  return { convictionByTicker, averageDownsByTicker };
+}
+
+async function buildPaperAgentContext(routine: AgentRoutine, branch: Branch) {
+  const trendDetail = routine !== "earnings";
+
+  const [
+    runtime,
+    portfolio,
+    watchlistRaw,
+    trends,
+    ideas,
+    lastRun,
+    documents,
+    shadow,
+    paper,
+    candidateLog,
+  ] = await Promise.all([
+    getAgentRuntimeConfig(branch),
+    getPortfolio(),
+    getWatchlist(),
+    getTrends(),
+    getIdeas(),
+    lastRunSummary(),
+    listContentPages(),
+    shadowContextBlock(branch).catch(() => null),
+    paperBookForContext(branch),
+    // PAPER lastRun is the latest CANDIDATE daily log (the combined two-pass write).
+    prisma.dailyLog.findFirst({
+      where: { branch: "CANDIDATE" },
+      orderBy: [{ logDate: "desc" }, { createdAt: "desc" }],
+    }),
+  ]);
+
+  const watchlist = watchlistRaw.filter(
+    (w) => w.action !== "DEMOTED" && w.action !== "DROPPED",
+  );
+
+  const { limits, sentimentThresholds, earningsRiskThresholds, ruleVersionId, degraded } =
+    runtime;
+
+  const portfolioByTicker = new Map(portfolio.map((p) => [p.ticker.trim().toUpperCase(), p]));
+  const watchlistByTicker = new Map(
+    watchlistRaw.map((w) => [w.ticker.trim().toUpperCase(), w]),
+  );
+  const failedTickers = new Set(lastRun.prices?.failedTickers ?? []);
+
+  const paperCash = paper.cash;
+  let equitiesValue = 0;
+  let unrealizedPnl = 0;
+  let hasPnl = false;
+  for (const p of paper.positions) {
+    if (p.marketValue !== null) equitiesValue += p.marketValue;
+    const mark = p.lastMark;
+    if (mark !== null) {
+      unrealizedPnl += (mark - p.avgCost) * p.shares;
+      hasPnl = true;
+    }
+  }
+  const totalValue = paperCash + equitiesValue;
+  const paperNav = totalValue;
+
+  const paperTickers = paper.positions.map((p) => p.ticker.trim().toUpperCase());
+  const { convictionByTicker, averageDownsByTicker } = await paperBookDecisionState(
+    branch,
+    paperTickers,
+  );
+
+  const positions = paper.positions.map((p) => {
+    const ticker = p.ticker.trim().toUpperCase();
+    const meta = paperMetaForTicker(ticker, portfolioByTicker, watchlistByTicker);
+    const currentPrice = p.lastMark ?? meta.sharedCurrentPrice;
+    const marketValue =
+      currentPrice !== null ? p.shares * currentPrice : p.marketValue;
+    const weightPct =
+      marketValue !== null && paperNav > 0 ? (marketValue / paperNav) * 100 : null;
+    const earn = earningsFields(
+      meta.earningsDate,
+      meta.daysToEarnings,
+      earningsRiskThresholds,
+    );
+    const stop = meta.stopLoss;
+    const stopDistancePct =
+      currentPrice !== null && stop !== null && currentPrice > 0
+        ? (stop - currentPrice) / currentPrice
+        : null;
+    const markDate = p.lastMarkSession
+      ? new Date(`${p.lastMarkSession}T12:00:00.000Z`)
+      : meta.lastPriceUpdate;
+    return {
+      ticker,
+      company: meta.company,
+      shares: p.shares,
+      currentPrice,
+      myAvgCost: p.avgCost,
+      marketValue,
+      weightPct,
+      action: null,
+      sleeve: meta.sleeve,
+      stopLoss: stop,
+      stopDistancePct,
+      theme: meta.theme,
+      averageDownsUsed: averageDownsByTicker.get(ticker) ?? 0,
+      earningsDate: earn.earningsDate,
+      daysToEarnings: earn.daysToEarnings,
+      earningsRisk: earn.earningsRisk,
+      earningsStale: earn.earningsStale,
+      riskLevel: meta.riskLevel,
+      conviction: convictionByTicker.get(ticker) ?? null,
+      marketCapBucket: meta.marketCapBucket,
+      analystRating: meta.analystRating,
+      entryZone: meta.entryZone,
+      addZone: meta.addZone,
+      nextAddTrigger: meta.nextAddTrigger,
+      analystTarget: meta.analystTarget,
+      upsidePct:
+        computeUpsidePct(currentPrice, meta.analystTarget) ?? meta.upsidePctStored,
+      lastPriceUpdate: iso(markDate),
+      priceStatus: priceStatusFromUpdate(markDate, failedTickers, ticker),
+      ...pageNotesPreview(meta.pageNotes),
+    };
+  });
+
+  const sleeveExposure = {
+    QUALITY_CORE: 0,
+    MOMENTUM_CATALYST: 0,
+    SPECULATIVE: 0,
+    UNASSIGNED: 0,
+  };
+  if (paperNav > 0) {
+    for (const p of positions) {
+      if (p.weightPct == null) continue;
+      const key = p.sleeve ?? "UNASSIGNED";
+      if (key in sleeveExposure) {
+        sleeveExposure[key as keyof typeof sleeveExposure] += p.weightPct / 100;
+      } else {
+        sleeveExposure.UNASSIGNED += p.weightPct / 100;
+      }
+    }
+  }
+
+  const watchlistTickers = watchlist.map((w) => w.ticker);
+
+  // lastRun keeps the shared price-sync shape (prompts read lastRun.prices.failedTickers)
+  // and overlays the latest CANDIDATE daily log so the paper pass sees its own last write.
+  const lastRunPaper = {
+    ...lastRun,
+    dailyLog: candidateLog ? serializeDailyLogRow(candidateLog) : null,
+  };
+
+  return {
+    routine,
+    rulesVersion: rulesVersion(),
+    branch,
+    bookMode: "PAPER" as const,
+    paperBrief: `This context is the PAPER book for branch ${branch}. Follow the PAPER PASS brief returned by get_prompt.`,
+    pendingOrders: paper.pendingOrders,
+    ruleVersionId,
+    degraded,
+    asOf: asOfNow(),
+    timezone: TIMEZONE,
+    cash: {
+      usd: paperCash,
+      myr: null,
+      fxRate: runtime.cash.fxRate,
+      lastUpdated: paper.lastMarkSession,
+    },
+    nav: {
+      totalValue,
+      equitiesValue,
+      cashValue: paperCash,
+      exCspxNav: totalValue,
+      unrealizedPnl,
+      hasPnl,
+      sleeveExposure,
+    },
+    positions,
+    watchlist: watchlist.map((w) =>
+      serializeWatchlistRow(w, {
+        earningsRiskThresholds,
+        failedTickers,
+      }),
+    ),
+    trends: trends.map((t) => serializeTrendRow(t, trendDetail)),
+    ideas: ideas.map((i) => serializeIdeaRow(i, { failedTickers })),
+    documents,
+    limits,
+    thresholds: {
+      sentiment: sentimentThresholds,
+      earningsRisk: earningsRiskThresholds,
+    },
+    trackedTickers: {
+      portfolio: paperTickers,
+      watchlist: watchlistTickers,
+    },
+    enums: listStockEnums(),
+    shadow,
+    lastRun: lastRunPaper,
   };
 }

@@ -3,6 +3,8 @@ import {
   branchKeyRejection,
   dailyLogInputSchema,
   evidenceItemInputSchema,
+  getContextInputSchema,
+  listDecisionReviewsQuerySchema,
   logTradeInputSchema,
   patchConfigInputSchema,
   patchPortfolioInputSchema,
@@ -133,6 +135,32 @@ describe("branchKeyRejection", () => {
     );
     expect(branchKeyRejection({ hard: "true" })).toBeNull();
     expect(branchKeyRejection(null)).toBeNull();
+  });
+});
+
+describe("decision book on context / review schemas", () => {
+  it("accepts REAL / PAPER / omitted on get_context, upsert_decision_review, list_decision_reviews", () => {
+    expect(
+      getContextInputSchema.safeParse({ routine: "daily", book: "PAPER" }).success,
+    ).toBe(true);
+    expect(
+      getContextInputSchema.safeParse({ routine: "daily", book: "REAL" }).success,
+    ).toBe(true);
+    expect(getContextInputSchema.safeParse({ routine: "daily" }).success).toBe(true);
+    expect(
+      upsertDecisionReviewInputSchema.safeParse({ title: "t", book: "PAPER" }).success,
+    ).toBe(true);
+    expect(listDecisionReviewsQuerySchema.safeParse({ book: "REAL" }).success).toBe(true);
+  });
+
+  it("rejects an unknown book value", () => {
+    expect(getContextInputSchema.safeParse({ routine: "daily", book: "SHADOW" }).success).toBe(
+      false,
+    );
+    expect(
+      upsertDecisionReviewInputSchema.safeParse({ title: "t", book: "LIVE" }).success,
+    ).toBe(false);
+    expect(listDecisionReviewsQuerySchema.safeParse({ book: "CANDIDATE" }).success).toBe(false);
   });
 });
 

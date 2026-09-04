@@ -40,7 +40,12 @@ import {
   expandPageNoteEntries,
   truncatePageNotes,
 } from "@/lib/content/blocks";
-import type { Branch, WatchlistAction } from "@/generated/prisma/client";
+import type { Branch, DecisionBook, WatchlistAction } from "@/generated/prisma/client";
+import { openPaperTickers } from "@/lib/shadow/read";
+import {
+  namespacedDecisionIdempotencyKey,
+  validatePaperDecision,
+} from "@/lib/shadow/paperValidation";
 import { contentPageTitle, ensureContentPages } from "@/lib/agent/contentPages";
 import {
   clearRuleSetCache,
@@ -585,12 +590,14 @@ async function replaceEvidenceItems(
 export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
   const ticker = input.ticker?.trim().toUpperCase() || null;
   const branch = input.branch ?? "LIVE";
-  // `idempotencyKey` is globally unique, but the two branches replay the SAME routine
+  const book: DecisionBook = input.book ?? "REAL";
+  // `idempotencyKey` is globally unique, but the two streams replay the SAME routine
   // with the same keys — an unprefixed CANDIDATE key would collide with (and overwrite)
-  // the LIVE decision. LIVE keeps the bare key so existing keys keep replaying.
+  // the LIVE decision. LIVE/REAL keeps the bare key so existing keys keep replaying;
+  // LIVE/PAPER uses `LIVE:PAPER:` so a paper replay cannot move a real row.
   const rawKey = input.idempotencyKey?.trim() || null;
   const idempotencyKey =
-    rawKey === null ? null : branch === "LIVE" ? rawKey : `${branch}:${rawKey}`;
+    rawKey === null ? null : namespacedDecisionIdempotencyKey(rawKey, branch, book);
   const decisionDate =
     input.decisionDate === undefined
       ? undefined
@@ -609,6 +616,38 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
   const existing = idempotencyKey
     ? await prisma.decisionReview.findUnique({ where: { idempotencyKey } })
     : null;
+
+  // PAPER create (or an update that changes decisionType/ticker) is checked against
+  // the open paper book so the agent gets a corrective 400 instead of a later
+  // silent `no_position` reject at enqueue.
+  const typeForPaper = input.decisionType ?? existing?.decisionType ?? null;
+  const tickerForPaper = ticker ?? existing?.ticker ?? null;
+  const tickerChanged = Boolean(existing && ticker !== null && ticker !== existing.ticker);
+  const typeChanged = Boolean(
+    existing && input.decisionType !== undefined && input.decisionType !== existing.decisionType,
+  );
+  if (book === "PAPER" && (!existing || tickerChanged || typeChanged)) {
+    const openTickers = await openPaperTickers(branch);
+    const paperErr = validatePaperDecision(
+      {
+        decisionType: typeForPaper,
+        ticker: tickerForPaper,
+        convictionScore:
+          input.convictionScore !== undefined
+            ? input.convictionScore
+            : (existing?.convictionScore ?? null),
+      },
+      openTickers,
+    );
+    if (paperErr) {
+      return {
+        ok: false as const,
+        status: 400 as const,
+        error: paperErr.error,
+        message: paperErr.message,
+      };
+    }
+  }
 
   // Mirror the server-derived priorThesisState logic further down (a caller-omitted or
   // stale prior must not desync from what the write will actually persist). Both an
@@ -709,6 +748,7 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
     updateStrategy: input.updateStrategy ?? undefined,
     rulesVersion: input.rulesVersion ?? undefined,
     branch,
+    book,
     // Server-derived; on the idempotent-replay path this re-stamps with the version at
     // the latest write. A degraded write (null) preserves any prior stamp.
     ruleVersionId: (await branchRuleVersionId(branch)) ?? undefined,
@@ -716,10 +756,10 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
   };
 
   if (idempotencyKey && existing) {
-    // `branch` is dropped alongside `idempotencyKey`: a replay updates the row the key
-    // already identifies and must never move it across branches — that would flip a
-    // CANDIDATE decision to LIVE (and let it enqueue into the real branch's book).
-    const { idempotencyKey: _k, branch: _b, ...update } = data;
+    // `branch` and `book` are dropped alongside `idempotencyKey`: a replay updates the
+    // row the key already identifies and must never move it across streams — that would
+    // flip a PAPER decision onto REAL (or a CANDIDATE decision to LIVE).
+    const { idempotencyKey: _k, branch: _b, book: _book, ...update } = data;
     // Server-derived on the update path (same pattern as ruleVersionId above): when
     // the replay changes thesisState, priorThesisState must be the state actually
     // being replaced — a caller-omitted (or stale) value would preserve an old prior
@@ -824,6 +864,9 @@ export async function listDecisionReviews(query: ListDecisionReviewsQuery = {}) 
   }
   if (query.branch) {
     where.branch = query.branch;
+  }
+  if (query.book) {
+    where.book = query.book;
   }
   if (query.pendingDueWithinDays != null) {
     const now = new Date();

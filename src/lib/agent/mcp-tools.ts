@@ -22,8 +22,9 @@ import {
   canWriteRealBook,
   isShadowOnlyScope,
   realBookWriteBlockedError,
-  shadowScopeLiveBranchError,
+  resolveShadowCall,
 } from "@/lib/agent/mcp-scope";
+import { paperPassBrief } from "@/lib/shadow/brief";
 import { getShadowFitness, listCounterfactuals } from "@/lib/fitness/read";
 import { applyGapFix } from "@/lib/evolution/gapfix";
 import { listEvolutionEvents } from "@/lib/evolution/log";
@@ -38,6 +39,7 @@ import { scoreRuleVersion } from "@/lib/evolution/scoring";
 import { listShadowOrders, listShadowPositions } from "@/lib/shadow/read";
 import {
   dailyLogInputSchema,
+  decisionBookInputSchema,
   getContentPageInputSchema,
   getPriceHistoryInputSchema,
   getShadowFitnessInputSchema,
@@ -128,18 +130,14 @@ function denyRealBookWrite(extra: ToolExtra | undefined) {
 }
 
 /**
- * Shadow connectors must address CANDIDATE. LIVE is refused; omitted branch becomes
- * CANDIDATE.
+ * Bind branch + book for this tool. See resolveShadowCall for the decision table.
  */
-function forceShadowBranch<T extends { branch?: "LIVE" | "CANDIDATE" }>(
+function resolveCall<T extends { branch?: "LIVE" | "CANDIDATE"; book?: "REAL" | "PAPER" }>(
   input: T,
   extra: ToolExtra | undefined,
+  opts: { bookAware: boolean; defaultBook?: "none" | "REAL" },
 ): T | { __error: string } {
-  if (!isShadowOnlyScope(toolScopes(extra))) return input;
-  if (input.branch === "LIVE") {
-    return { __error: JSON.stringify(shadowScopeLiveBranchError()) };
-  }
-  return { ...input, branch: "CANDIDATE" };
+  return resolveShadowCall(input, toolScopes(extra), opts);
 }
 
 /** Register Stock HQ read MCP tools. */
@@ -149,25 +147,28 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get agent context",
       description:
-        "Bundle portfolio state, watchlist, trends, ideas, limits, enums, and rulesVersion for a routine.",
+        "Bundle portfolio state, watchlist, trends, ideas, limits, enums, and rulesVersion for a routine. book=PAPER means the paper book for that branch is the book under management (positions/nav/cash come from the shadow ledger). mcp:shadow connectors are always PAPER and may address branch LIVE or CANDIDATE.",
       inputSchema: {
         routine: z.enum(AGENT_ROUTINES).describe("Which Cowork routine is running"),
         branch: z
           .enum(["LIVE", "CANDIDATE"])
           .optional()
-          .describe("Ruleset branch (default LIVE); CANDIDATE is shadow-only"),
+          .describe("Ruleset branch (default LIVE for mcp:tools, CANDIDATE for mcp:shadow)"),
+        book: decisionBookInputSchema.describe(
+          "REAL (live portfolio, mcp:tools only) or PAPER (shadow ledger). mcp:shadow is always PAPER.",
+        ),
       },
     },
-    async ({ routine, branch }, extra) => {
+    async ({ routine, branch, book }, extra) => {
       if (!isAgentRoutine(routine)) {
         return textError(`Invalid routine. Allowed: ${AGENT_ROUTINES.join(", ")}`);
       }
-      const branched = forceShadowBranch({ branch }, extra);
-      if ("__error" in branched) return textError(branched.__error);
+      const resolved = resolveCall({ branch, book }, extra, { bookAware: true });
+      if ("__error" in resolved) return textError(resolved.__error);
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const ctx = await Promise.race([
-          buildAgentContext(routine, branched.branch ?? "LIVE"),
+          buildAgentContext(routine, resolved.branch ?? "LIVE", resolved.book ?? "REAL"),
           new Promise<never>((_, reject) => {
             timer = setTimeout(() => reject(new Error("context_timeout")), 20_000);
           }),
@@ -193,25 +194,28 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get prompt markdown",
       description:
-        "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only.",
+        "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only. mcp:shadow callers receive a PAPER PASS brief prepended; book=PAPER means the paper book for that branch is the book under management.",
       inputSchema: {
         name: z.enum(PROMPT_NAMES).describe("Prompt basename without .md"),
         branch: z
           .enum(["LIVE", "CANDIDATE"])
           .optional()
-          .describe("Ruleset branch (default LIVE); CANDIDATE is shadow-only"),
+          .describe("Ruleset branch (default LIVE for mcp:tools, CANDIDATE for mcp:shadow)"),
       },
     },
     async ({ name, branch }, extra) => {
       if (!isPromptName(name)) {
         return textError(`Invalid prompt name. Allowed: ${PROMPT_NAMES.join(", ")}`);
       }
-      const branched = forceShadowBranch({ branch }, extra);
-      if ("__error" in branched) return textError(branched.__error);
+      const resolved = resolveCall({ branch }, extra, { bookAware: true });
+      if ("__error" in resolved) return textError(resolved.__error);
       try {
-        const markdown = await getPromptMarkdown(name, branched.branch ?? "LIVE");
+        const markdown = await getPromptMarkdown(name, resolved.branch ?? "LIVE");
+        const text = isShadowOnlyScope(toolScopes(extra))
+          ? `${paperPassBrief(name)}\n\n---\n\n${markdown}`
+          : markdown;
         return {
-          content: [{ type: "text" as const, text: markdown }],
+          content: [{ type: "text" as const, text }],
         };
       } catch {
         return textError(`Prompt not found: ${name}`);
@@ -227,7 +231,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       description: "List current portfolio positions with weightPct, averageDownsUsed, lastPriceUpdate, priceStatus. lastPriceUpdate is the GMT+8 session date (noon UTC), not the sync clock time. pageNotes preview is newest ~3 dated entries, char-budgeted (see pageNotesTruncated / get_page_notes).",
       inputSchema: {},
     },
-    async () => textJson(await listPortfolioPositions()),
+    async (_args, extra) => {
+      if (isShadowOnlyScope(toolScopes(extra))) {
+        return textError(JSON.stringify(realBookWriteBlockedError()));
+      }
+      return textJson(await listPortfolioPositions());
+    },
   );
 
   server.registerTool(
@@ -252,15 +261,15 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List decision reviews",
       description:
-        "List Decision Review Log rows (filter by ticker, reviewStatus, branch LIVE|CANDIDATE, or pendingDueWithinDays).",
+        "List Decision Review Log rows (filter by ticker, reviewStatus, branch LIVE|CANDIDATE, book REAL|PAPER, or pendingDueWithinDays). book=PAPER is the paper book for that branch; mcp:shadow is always PAPER and may address LIVE or CANDIDATE.",
       inputSchema: listDecisionReviewsQuerySchema.shape,
     },
     async (args, extra) => {
       const parsed = parseTool(listDecisionReviewsQuerySchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      return textJson(await listDecisionReviews(branched));
+      const resolved = resolveCall(parsed, extra, { bookAware: true, defaultBook: "none" });
+      if ("__error" in resolved) return textError(resolved.__error);
+      return textJson(await listDecisionReviews(resolved));
     },
   );
 
@@ -275,9 +284,9 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     async (args, extra) => {
       const parsed = parseTool(listDailyLogsQuerySchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      return textJson(await listDailyLogItems(branched));
+      const resolved = resolveCall(parsed, extra, { bookAware: false });
+      if ("__error" in resolved) return textError(resolved.__error);
+      return textJson(await listDailyLogItems(resolved));
     },
   );
 
@@ -292,9 +301,9 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     async (args, extra) => {
       const parsed = parseTool(listReportsQuerySchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      return textJson(await listStockReportItems(branched));
+      const resolved = resolveCall(parsed, extra, { bookAware: false });
+      if ("__error" in resolved) return textError(resolved.__error);
+      return textJson(await listStockReportItems(resolved));
     },
   );
 
@@ -337,7 +346,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       description: "List trade log rows.",
       inputSchema: {},
     },
-    async () => textJson(await listTradeItems()),
+    async (_args, extra) => {
+      if (isShadowOnlyScope(toolScopes(extra))) {
+        return textError(JSON.stringify(realBookWriteBlockedError()));
+      }
+      return textJson(await listTradeItems());
+    },
   );
 
   server.registerTool(
@@ -381,9 +395,9 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     async (args, extra) => {
       const parsed = parseTool(listShadowPositionsInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      return textJson(await listShadowPositions(branched));
+      const resolved = resolveCall(parsed, extra, { bookAware: true, defaultBook: "none" });
+      if ("__error" in resolved) return textError(resolved.__error);
+      return textJson(await listShadowPositions(resolved));
     },
   );
 
@@ -398,9 +412,9 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     async (args, extra) => {
       const parsed = parseTool(listShadowOrdersInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      return textJson(await listShadowOrders(branched));
+      const resolved = resolveCall(parsed, extra, { bookAware: true, defaultBook: "none" });
+      if ("__error" in resolved) return textError(resolved.__error);
+      return textJson(await listShadowOrders(resolved));
     },
   );
 
@@ -415,9 +429,9 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     async (args, extra) => {
       const parsed = parseTool(getShadowFitnessInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      return textJson(await getShadowFitness(branched));
+      const resolved = resolveCall(parsed, extra, { bookAware: true, defaultBook: "none" });
+      if ("__error" in resolved) return textError(resolved.__error);
+      return textJson(await getShadowFitness(resolved));
     },
   );
 
@@ -432,9 +446,9 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     async (args, extra) => {
       const parsed = parseTool(listCounterfactualsInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      return textJson(await listCounterfactuals(branched));
+      const resolved = resolveCall(parsed, extra, { bookAware: true, defaultBook: "none" });
+      if ("__error" in resolved) return textError(resolved.__error);
+      return textJson(await listCounterfactuals(resolved));
     },
   );
 
@@ -551,9 +565,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     async (args, extra) => {
       const parsed = parseTool(dailyLogInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      return textJson({ ok: true, dailyLog: await upsertDailyLog(branched) });
+      const resolved = resolveCall(parsed, extra, { bookAware: false });
+      if ("__error" in resolved) return textError(resolved.__error);
+      return textJson({ ok: true, dailyLog: await upsertDailyLog(resolved) });
     },
   );
 
@@ -567,9 +581,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     async (args, extra) => {
       const parsed = parseTool(stockReportInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      return textJson({ ok: true, report: await upsertStockReport(branched) });
+      const resolved = resolveCall(parsed, extra, { bookAware: false });
+      if ("__error" in resolved) return textError(resolved.__error);
+      return textJson({ ok: true, report: await upsertStockReport(resolved) });
     },
   );
 
@@ -656,15 +670,15 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Upsert decision review",
       description:
-        "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry (bare key, no LIVE:/CANDIDATE: prefix). evidence[].observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date (e.g. '2026-08-11 US close'). Defaults reviewStatus to PENDING.",
+        "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry (bare key, no LIVE:/CANDIDATE:/LIVE:PAPER: prefix). book=PAPER means the paper book for that branch is the book under management; mcp:shadow is always PAPER and may address branch LIVE or CANDIDATE. evidence[].observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date (e.g. '2026-08-11 US close'). Defaults reviewStatus to PENDING.",
       inputSchema: upsertDecisionReviewInputSchema.shape,
     },
     async (args, extra) => {
       const parsed = parseTool(upsertDecisionReviewInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      const result = await upsertDecisionReview(branched);
+      const resolved = resolveCall(parsed, extra, { bookAware: true });
+      if ("__error" in resolved) return textError(resolved.__error);
+      const result = await upsertDecisionReview(resolved);
       if (!result.ok) {
         return { ...textJson(result), isError: true as const };
       }
@@ -683,9 +697,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     async (args, extra) => {
       const parsed = parseTool(addEvidenceInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const branched = forceShadowBranch(parsed, extra);
-      if ("__error" in branched) return textError(branched.__error);
-      const result = await addEvidence(branched);
+      const resolved = resolveCall(parsed, extra, { bookAware: false });
+      if ("__error" in resolved) return textError(resolved.__error);
+      const result = await addEvidence(resolved);
       if (!result.ok) {
         return { ...textJson(result), isError: true as const };
       }

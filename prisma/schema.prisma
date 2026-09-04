@@ -613,6 +613,13 @@ enum ThesisState {
   BROKEN
 }
 
+/// Which book a DecisionReview addresses. REAL is Ivan's live portfolio stream;
+/// PAPER is a shadow-ledger paper book (one per Branch).
+enum DecisionBook {
+  REAL
+  PAPER
+}
+
 model DecisionReview {
   id                   String                    @id @default(cuid())
   notionId             String?                   @unique
@@ -672,6 +679,8 @@ model DecisionReview {
   rulesVersion         String?
   /// LIVE = real decision; CANDIDATE = shadow decision under a candidate ruleset.
   branch               Branch                    @default(LIVE)
+  /// REAL = live-book advisory stream; PAPER = that branch's paper book.
+  book                 DecisionBook              @default(REAL)
   /// RuleVersion.id this decision was made under (null for pre-versioning rows).
   ruleVersionId        Int?
   syncedAt             DateTime                  @updatedAt
@@ -683,6 +692,7 @@ model DecisionReview {
   @@index([reviewStatus])
   @@index([decisionType])
   @@index([branch])
+  @@index([branch, book, createdAt])
 }
 
 /// Evidence source strength, weakest→strongest is T4→T1 (Cowork §9 signal-tier semantics,

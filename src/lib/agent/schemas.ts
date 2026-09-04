@@ -77,6 +77,16 @@ const dateYmd = z
  */
 export const branchInputSchema = z.enum(["LIVE", "CANDIDATE"]).optional();
 
+/** REAL = Ivan's live book; PAPER = a branch's shadow-ledger paper book. */
+export const DECISION_BOOKS = ["REAL", "PAPER"] as const;
+export const decisionBookInputSchema = z.enum(DECISION_BOOKS).optional();
+
+export const getContextInputSchema = z.object({
+  routine: z.enum(["daily", "weekly", "earnings", "monthly"]),
+  branch: branchInputSchema,
+  book: decisionBookInputSchema,
+});
+
 /**
  * Guard field for REAL-BOOK writes (trades, portfolio, watchlist, ideas, trends,
  * documents, tracked tickers). Those rows exist only on LIVE, so a `branch` key is a
@@ -225,10 +235,11 @@ export const listReportsQuerySchema = z.object({
 });
 
 /**
- * `LIVE:` / `CANDIDATE:` are reserved: the server prefixes CANDIDATE keys to keep the two
- * branches' replays apart, so a caller-supplied key already carrying a branch prefix could
- * address the OTHER branch's row (a LIVE write with "CANDIDATE:x" would replay onto the
- * CANDIDATE decision). Refused rather than silently rewritten.
+ * `LIVE:` / `CANDIDATE:` are reserved (this also covers the server's `LIVE:PAPER:`
+ * namespace): the server prefixes CANDIDATE and LIVE/PAPER keys to keep replays apart, so
+ * a caller-supplied key already carrying a branch prefix could address the OTHER stream
+ * (a LIVE write with "CANDIDATE:x" would replay onto the CANDIDATE decision). Refused
+ * rather than silently rewritten.
  */
 const decisionIdempotencyKeySchema = z
   .string()
@@ -332,6 +343,8 @@ export const upsertDecisionReviewInputSchema = z.object({
   /** Evidence cited for this decision; checked (warn/strict) in upsertDecisionReview. */
   evidence: evidenceItemsInputSchema.optional(),
   branch: branchInputSchema,
+  /** REAL (default for mcp:tools) or PAPER (mcp:shadow only; forced PAPER on that connector). */
+  book: decisionBookInputSchema,
 });
 
 export const getPriceHistoryInputSchema = z.object({
@@ -372,6 +385,8 @@ export const listDecisionReviewsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   /** LIVE (default when omitted = all branches) or CANDIDATE paper decisions. */
   branch: z.enum(["LIVE", "CANDIDATE"]).optional(),
+  /** Optional book filter (REAL | PAPER). */
+  book: decisionBookInputSchema,
 });
 
 export const upsertContentPageInputSchema = z.object({
@@ -623,6 +638,7 @@ export const LEGAL_ENUM_VALUES: Record<string, string[]> = {
   DailyLogRoutine: Object.values(DailyLogRoutine),
   RuleStatus: Object.values(RuleStatus),
   EvolutionEventKind: Object.values(EvolutionEventKind),
+  DecisionBook: [...DECISION_BOOKS],
 };
 
 /** Map zod path leaf → enum name when known. */
@@ -651,6 +667,7 @@ const PATH_TO_ENUM: Record<string, string> = {
   key: "ContentPageKey",
   routineType: "DailyLogRoutine",
   kind: "EvolutionEventKind",
+  book: "DecisionBook",
 };
 
 /** Disambiguate `status` / `action` when multiple enums share the field name. */
