@@ -98,14 +98,15 @@ Also summarise in `upsert_daily_log.actionTaken` as a table ReportBlock.
 
 `upsert_daily_log` for today's MYT date as `logDate` (`YYYY-MM-DD`) with
 **`routineType=EARNINGS`** (required — must not overwrite the Daily row for the same
-date). All narrative fields are `ReportBlock[]`. Stamp `rulesVersion`. Include a **Run
-ledger** in `notes` (`_shared` §16). Required table in `actionTaken` or
-`portfolioMove`:
+date). All narrative fields are `ReportBlock[]`. Stamp `rulesVersion`. Start
+`actionTaken` with a 1–3 bullet **Headline** (what matters this week). Then the
+required table in `actionTaken` or `portfolioMove`:
 
 Headers: `Ticker`, `DTE`, `Earnings Risk`, `Pending Action Status`, `Recommendation`,
 `Key Metric To Watch`.
 
-Plus: a **Date Corrections** list (§1) naming every stale `earningsDate` you fixed, and a
-short list of Decision Review ids/titles created this run.
+End `notes` with the one-line Run check (`_shared` §16). Plus: a **Date Corrections**
+list (§1) naming every stale `earningsDate` you fixed, and a short list of Decision
+Review ids/titles created this run.
 
 Set `alertEmailSent=false`. No email.

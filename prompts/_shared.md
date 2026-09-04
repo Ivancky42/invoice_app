@@ -61,6 +61,18 @@ Do not rely on stale config copied into a routine.
   Ticker-list hygiene uses `sync_tracked_tickers`.
 - Never email Ivan. All output goes to Neon.
 
+### Writing for Ivan
+
+Ivan is not a technical reader. Write like a good analyst briefing a busy client.
+Short sentences. Lead with what changed, what it means, then what Ivan should do.
+In narrative: no section marks, enum codes, field names, rule ids, or evidence-tier
+codes — write "still valid", "test-size position". Structured fields keep their
+exact values. One line per ticker. Empty section → "Nothing new." Round to whole
+dollars and one decimal for percents. No filler, no repeated caveats, no restating
+the rules. Keep required tables; keep cells short. Prefer 3–5 bullets over a long
+paragraph. Decision Review narrative follows the same style; the 7-criteria
+scorecard line stays exactly as specified.
+
 ### Portfolio `action` vs recommendation language
 
 `patch_portfolio.action` accepts only `PositionAction`: `HOLD` | `ADD_ON_DIP` |
@@ -204,12 +216,12 @@ close >~3% below the zone floor invalidates the setup (MU rule).
 
 ### Recommendation tone (§10.7)
 
-Decision-support monitor, not an execution engine. Prefer **"recommend execution"** /
-"Confirm / reassess" / "Wait" — never imply the agent placed a trade. Use urgent
-"recommend execution now" only when `STILL_VALID` and high-confidence; "Confirm /
-reassess" when the signal changed; "Wait" on mixed evidence; "Expired"; "Superseded";
-"Reset strategy". Every recommendation answers: (1) what changed, (2) why the old action
-does or doesn't still apply, (3) what Ivan should decide next.
+Decision-support monitor, not an execution engine. Never imply the agent placed a
+trade. Use urgent "Sell now" only when the original action is still valid and
+high-confidence; "Check and decide" when the signal changed; "Wait" on mixed
+evidence; "No longer applies" when the alert expired or was replaced. Every
+recommendation answers: (1) what changed, (2) why the old action does or doesn't
+still apply, (3) what Ivan should decide next.
 
 ### Evidence provenance (material recommendations)
 
@@ -539,21 +551,17 @@ Urgency-language cap and Outstanding Decisions: see §4 Escalation cap (§11.8).
 
 ## 16. Routine-run ledger
 
-Every routine that writes (`daily`, `earnings`, `weekly`, `monthly`) must include a short
-**Run ledger** block in the primary write (`upsert_daily_log.notes` or report `content`)
-covering:
+Every routine that writes (`daily`, `earnings`, `weekly`, `monthly`) must include a
+one-line **Run check** in the primary write (`upsert_daily_log.notes` or report
+`content`):
 
-| Field | Content |
-|---|---|
-| Scheduled / start / completion | MYT timestamps (approx OK) |
-| Routine + `rulesVersion` | From context |
-| Success / failure + error | Tool/data failures, not vibes |
-| Price freshness summary | Counts of `OK` / `STALE` / `SYNC_FAILED` / `UNKNOWN`; list failed tickers |
-| Rows read / written | Approximate tool counts |
-| Source count | Distinct web/filing sources cited |
-| Forbidden tool attempts | `log_trade` / `patch_config` / etc. — should be none; say so |
+`Run check: OK — prices fresh (n stale: X, Y), rules vN, no forbidden tool attempts`
 
-This is audit evidence, not narrative padding.
+or, if anything failed:
+
+`Run check: issues — <what failed>`
+
+Failed tickers must still be listed. This is audit evidence, not narrative padding.
 
 <!-- KERNEL:BEGIN id=fitness-definition v=1 -->
 ## 17. Fitness definition (kernel)

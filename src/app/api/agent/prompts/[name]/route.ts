@@ -6,6 +6,7 @@ import {
   isPromptName,
   PROMPT_NAMES,
 } from "@/lib/agent/context";
+import { composePromptText } from "@/lib/agent/styleBlock";
 import { getRuleSet, readDiskRuleFiles, sha256Hex } from "@/lib/rules/resolve";
 import type { Branch } from "@/generated/prisma/client";
 
@@ -62,8 +63,11 @@ export async function GET(req: NextRequest, { params }: Params) {
       });
     }
 
+    // Agent-facing body: prepend the non-versioned style note. The ?diff=1
+    // path above compares raw stored/disk text and must not include it.
     const markdown = await getPromptMarkdown(raw, branch);
-    return new NextResponse(markdown, {
+    const text = composePromptText(markdown, { shadow: false, name: raw });
+    return new NextResponse(text, {
       status: 200,
       headers: {
         "Content-Type": "text/markdown; charset=utf-8",

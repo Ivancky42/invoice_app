@@ -140,8 +140,10 @@ calls that helped vs misled; reversals correctly or incorrectly recognised.
 **Format:** `heading_2` + table or bullets per section — one row/bullet per ticker or
 lesson. Do not pack multi-ticker narratives into a single paragraph.
 
-Required sections:
+Required sections. Lead with **Summary for Ivan**. Any required table with nothing
+to report may be one line: "Nothing this month."
 
+- **Summary for Ivan** — max 5 bullets: what changed this month, what to do, what to watch
 - **Discovery Scorecard** (§2) — discovery P&L, earliness lag, average stage at graduation,
   EARLY ENTRY and QUALITY REBOUND tracked separately
 - **Conviction re-rank by sleeve** (§1) — including re-buy test YES/NO per holding
@@ -149,7 +151,8 @@ Required sections:
   Apply To
 - **Rules To Add / Modify** — Existing Rule | Problem Found | Updated Rule | Confidence
 - **Orphaned Reviews Cleared** count (§5)
-- **Shadow Test** progress or verdict (§3)
+- **Shadow Test** — in plain words: is the trailing-stop trial still running or finished,
+  and which approach is ahead (fixed target vs trailing stop)
 
 Rule changes are **recommendations to Ivan**, delivered in the report. Agents never edit
 `/prompts` and never call `patch_config` — the system must not rewrite the rules it is

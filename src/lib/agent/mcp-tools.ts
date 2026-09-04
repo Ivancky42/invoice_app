@@ -24,7 +24,7 @@ import {
   realBookWriteBlockedError,
   resolveShadowCall,
 } from "@/lib/agent/mcp-scope";
-import { paperPassBrief } from "@/lib/shadow/brief";
+import { composePromptText } from "@/lib/agent/styleBlock";
 import { getShadowFitness, listCounterfactuals } from "@/lib/fitness/read";
 import { applyGapFix } from "@/lib/evolution/gapfix";
 import { listEvolutionEvents } from "@/lib/evolution/log";
@@ -194,7 +194,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get prompt markdown",
       description:
-        "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only. mcp:shadow callers receive a PAPER PASS brief prepended; book=PAPER means the paper book for that branch is the book under management.",
+        "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only. Every caller receives a Writing for Ivan style note prepended; mcp:shadow callers also receive a PAPER PASS brief. Stored RuleVersion files are untouched. book=PAPER means the paper book for that branch is the book under management.",
       inputSchema: {
         name: z.enum(PROMPT_NAMES).describe("Prompt basename without .md"),
         branch: z
@@ -211,9 +211,10 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       if ("__error" in resolved) return textError(resolved.__error);
       try {
         const markdown = await getPromptMarkdown(name, resolved.branch ?? "LIVE");
-        const text = isShadowOnlyScope(toolScopes(extra))
-          ? `${paperPassBrief(name)}\n\n---\n\n${markdown}`
-          : markdown;
+        const text = composePromptText(markdown, {
+          shadow: isShadowOnlyScope(toolScopes(extra)),
+          name,
+        });
         return {
           content: [{ type: "text" as const, text }],
         };
@@ -559,7 +560,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Upsert daily log",
       description:
-        "Upsert DailyLog on (logDate, routineType). Default routineType=DAILY; Earnings must pass EARNINGS so the two do not overwrite each other. Narrative fields are ReportBlock[].",
+        "Upsert DailyLog on (logDate, routineType). Default routineType=DAILY; Earnings must pass EARNINGS so the two do not overwrite each other. Narrative fields are ReportBlock[]. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt).",
       inputSchema: dailyLogInputSchema.shape,
     },
     async (args, extra) => {
@@ -575,7 +576,8 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     "upsert_report",
     {
       title: "Upsert stock report",
-      description: "Upsert StockReport on (reportType, reportDate). content is ReportBlock[].",
+      description:
+        "Upsert StockReport on (reportType, reportDate). content is ReportBlock[]. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt).",
       inputSchema: stockReportInputSchema.shape,
     },
     async (args, extra) => {
@@ -670,7 +672,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Upsert decision review",
       description:
-        "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry (bare key, no LIVE:/CANDIDATE:/LIVE:PAPER: prefix). book=PAPER means the paper book for that branch is the book under management; mcp:shadow is always PAPER and may address branch LIVE or CANDIDATE. evidence[].observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date (e.g. '2026-08-11 US close'). Defaults reviewStatus to PENDING.",
+        "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry (bare key, no LIVE:/CANDIDATE:/LIVE:PAPER: prefix). book=PAPER means the paper book for that branch is the book under management; mcp:shadow is always PAPER and may address branch LIVE or CANDIDATE. evidence[].observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date (e.g. '2026-08-11 US close'). Defaults reviewStatus to PENDING. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt).",
       inputSchema: upsertDecisionReviewInputSchema.shape,
     },
     async (args, extra) => {

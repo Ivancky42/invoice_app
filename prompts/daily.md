@@ -66,9 +66,8 @@ For every pending STOP LOSS / TAKE PROFIT / TRIM / ADD / BUY / EXIT action:
    (`_shared` §4).
 
 Include a Pending Action Review **table** ReportBlock in `upsert_daily_log.actionTaken`
-with headers: `Ticker`, `Original Action`, `Current Status`, `Evidence Today`,
-`Updated Recommendation`. Also list Outstanding Decisions that hit the urgency cap but
-remain `STILL_VALID`.
+with headers: `Ticker`, `What was suggested`, `Status now`, `Do this`. Also list
+Outstanding Decisions that hit the urgency cap but remain `STILL_VALID`.
 
 ## 2. Per-ticker pass
 
@@ -245,12 +244,12 @@ overwrite this row. All narrative fields are `ReportBlock[]`. Stamp `rulesVersio
 
 | Field | Content |
 |---|---|
-| `marketContext` | Short paragraphs or bullets — backdrop + sector/theme momentum (not a wall of text) |
-| `topNews` | Prefer `bulleted_list_item` — one story per bullet; bold ticker in the line |
-| `portfolioMove` | **One `bulleted_list_item` (or table row) per position.** Never pack multiple tickers into one paragraph. Line shape: `TICKER $price move · action · one-line reason` |
+| `marketContext` | Max 3 bullets — backdrop + sector/theme momentum |
+| `topNews` | Max 5 bullets — one story each; bold ticker in the line |
+| `portfolioMove` | One plain line per position: `TICKER $price, +1.2% — hold, thesis intact` |
 | `watchlistMove` | Prefer the curation **table** (§6). If freeform, still **one bullet per ticker** |
-| `actionTaken` | Pending Action Review table (§1); Outstanding Decisions; summarise DR creates |
-| `notes` | Shadow Test (§8), post-sync reconciliation (§7), hygiene flags, **Run ledger** (`_shared` §16) |
+| `actionTaken` | Begin with **What to do today** (max 5 bullets, plain words, most important first; "Nothing to do today" if empty). Then the pending table: Ticker \| What was suggested \| Status now \| Do this. Outstanding Decisions as a short list. Summarise DR creates. |
+| `notes` | Exceptions only (Shadow Test, post-sync orphans, hygiene flags) plus the one-line Run check (`_shared` §16) |
 | `flaggedTickers` | String array — one entry per ticker, e.g. `"MRVL +12.8"` / `"VST -8.1"` (not one giant UP/DOWN sentence) |
 
 **UI readability:** the portal splits legacy walls-of-text at `TICKER $price` boundaries, but

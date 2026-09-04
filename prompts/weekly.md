@@ -33,8 +33,8 @@ all** — see §4.
 
 Read `list_daily_logs` for ~30 days and `list_decision_reviews` for pattern memory.
 Backfill null `sleeve`/`theme` in §3 before sleeve-dependent judgments. Decision Review
-migration seed is complete — do not re-seed. Include a **Run ledger** in the weekly report
-(`_shared` §16). Append ticker notes only on material changes (`_shared` §12).
+migration seed is complete — do not re-seed. Include a one-line **Run check** in the
+weekly report (`_shared` §16). Append ticker notes only on material changes (`_shared` §12).
 
 ---
 
@@ -332,8 +332,10 @@ as `ReportBlock[]` (headings + tables as JSON blocks, not markdown). Stamp `rule
 **Format:** every section is `heading_2` then a **table** or `bulleted_list_item` list —
 never a single paragraph that lists many tickers. One row/bullet per ticker.
 
-Required sections (as `heading_2` + table/paragraph blocks):
+Required sections (as `heading_2` + table/paragraph blocks). Lead with **Summary for
+Ivan**. Any required table with nothing to report may be one line: "Nothing this week."
 
+- **Summary for Ivan** — max 5 bullets: what changed this week, what to do, what to watch
 - **Strategy Changes This Week** — Ticker | Old Strategy | New Evidence | Updated Strategy |
   Reason
 - **Reversal Watch** — Ticker | Prior Signal | Reversal Evidence | Confidence | Action
@@ -345,7 +347,7 @@ Required sections (as `heading_2` + table/paragraph blocks):
 - **EARLY ENTRY block** — separate and labelled, never mixed with standard BUYs
 - **Decision Reviews this week** — summarise rows written via `upsert_decision_review`
   (`_shared` §11)
-- **Evolution loop summary** (§0) — shadow-fitness trend for LIVE and CANDIDATE, any
-  proposal made or rejected this week (with code), any gap-fix applied, any version scored,
-  and the current state of the challenger book (idle / running / age in sessions). State
-  plainly that promotion is server-side and none occurred by agent action.
+- **Evolution loop summary** — in plain words: which rules are being tested, whether the
+  new rules are ahead or behind, how many trading days are done, and any rule change
+  proposed, corrected or scored this week (one line each). No event codes, no z-scores.
+  State that promotion is automatic and none occurred by agent action.

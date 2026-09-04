@@ -82,10 +82,39 @@ export type ApplyGapFixSuccess = {
   mirror: { ok: boolean; skipped?: string; error?: string };
 };
 
-function changedPathsOf(row: { changedPaths: Prisma.JsonValue }): string[] {
+export function changedPathsOf(row: { changedPaths: Prisma.JsonValue }): string[] {
   return Array.isArray(row.changedPaths)
     ? (row.changedPaths as unknown[]).filter((p): p is string => typeof p === "string")
     : [];
+}
+
+/**
+ * Re-apply a candidate's own prose hunks on top of a new ACTIVE corpus. Sections the
+ * candidate never touched therefore pick up the new ACTIVE text; ones it did keep its
+ * wording. PURE — the caller runs kernelGate on the result.
+ */
+export function reapplyCandidateHunks(
+  baseFiles: Record<string, string>,
+  candidateFiles: Record<string, string>,
+  candidateChangedPaths: readonly string[],
+): Record<string, string> {
+  const next = { ...baseFiles };
+  for (const path of candidateChangedPaths) {
+    if (!path.startsWith("prompts:")) continue;
+    const [rawFile, section] = path.slice("prompts:".length).split("#");
+    const target = normaliseRuleFile(rawFile);
+    if (!target) continue;
+    const source = candidateFiles[target] ?? "";
+    if (!section) {
+      next[target] = source;
+      continue;
+    }
+    const candidateSlice = findSection(source, section);
+    if (!candidateSlice) continue;
+    const applied = replaceSection(next[target] ?? "", section, candidateSlice.text);
+    if (applied !== null) next[target] = applied;
+  }
+  return next;
 }
 
 export async function applyGapFix(
@@ -215,25 +244,11 @@ export async function applyGapFix(
 
   let rebasedFiles: Record<string, string> | null = null;
   if (candidate && decision === "rebase") {
-    // Re-apply the candidate's own prose hunks on top of the corrected ACTIVE text. Sections
-    // the candidate never touched therefore pick up the gap-fix; ones it did keep its wording.
-    const candidateFiles = filesFromRow(candidate.files);
-    const next = { ...newFiles };
-    for (const path of candidatePaths) {
-      if (!path.startsWith("prompts:")) continue;
-      const [rawFile, section] = path.slice("prompts:".length).split("#");
-      const target = normaliseRuleFile(rawFile);
-      if (!target) continue;
-      const source = candidateFiles[target] ?? "";
-      if (!section) {
-        next[target] = source;
-        continue;
-      }
-      const candidateSlice = findSection(source, section);
-      if (!candidateSlice) continue;
-      const applied = replaceSection(next[target] ?? "", section, candidateSlice.text);
-      if (applied !== null) next[target] = applied;
-    }
+    const next = reapplyCandidateHunks(
+      newFiles,
+      filesFromRow(candidate.files),
+      candidatePaths,
+    );
     const rebaseGate = kernelGate(next);
     if (!rebaseGate.ok || scanForbiddenPatterns(next).length > 0) {
       // The merge produced an invalid corpus — treat it exactly like a textual conflict.
