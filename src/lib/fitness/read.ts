@@ -4,6 +4,10 @@
  * no real-book state. Thresholds and PAPER decision counts match evolution_evaluate.
  */
 import type { Branch, CounterfactualStatus } from "@/generated/prisma/client";
+import {
+  countPaperDecisionsSinceCutoff,
+  evolutionEvidenceCutoff,
+} from "@/lib/evolution/evaluate";
 import { prisma } from "@/lib/prisma";
 import { getEvolutionThresholds, type EvolutionThresholds } from "@/lib/stocks/config";
 import { decToNum } from "@/lib/stocks/format";
@@ -36,18 +40,11 @@ async function paperDecisionsSinceCandidateCutoff(): Promise<{
     select: { evidenceCutoff: true, createdAt: true },
   });
   // Same floor evolution_evaluate pairs from: max(version cutoff, branch reset).
-  const cutoff = new Date(
-    Math.max(
-      (version?.evidenceCutoff ?? version?.createdAt ?? candidateBranch.resetAt).getTime(),
-      candidateBranch.resetAt.getTime(),
-    ),
-  );
-  const where = { book: "PAPER" as const, createdAt: { gt: cutoff } };
-  const [LIVE, CANDIDATE] = await Promise.all([
-    prisma.decisionReview.count({ where: { ...where, branch: "LIVE" } }),
-    prisma.decisionReview.count({ where: { ...where, branch: "CANDIDATE" } }),
-  ]);
-  return { LIVE, CANDIDATE };
+  const cutoff = version
+    ? evolutionEvidenceCutoff(version, candidateBranch.resetAt)
+    : candidateBranch.resetAt;
+  const { live, candidate } = await countPaperDecisionsSinceCutoff(cutoff);
+  return { LIVE: live, CANDIDATE: candidate };
 }
 
 /** Fitness snapshots for one branch, newest session first. */

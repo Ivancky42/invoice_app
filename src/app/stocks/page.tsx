@@ -243,7 +243,7 @@ export default async function StocksOverview() {
           <div className="text-sm font-medium mt-2 text-gray-700">Review log →</div>
         </Link>
         <Link href="/stocks/shadow" className="card p-4 hover:shadow-sm transition">
-          <div className="text-xs text-gray-500">Shadow books</div>
+          <div className="text-xs text-gray-500">Shadow test — are the new rules better?</div>
           <div className="text-sm font-medium mt-2 text-gray-700">Evolution loop →</div>
         </Link>
         <div className="card p-4">

@@ -68,6 +68,84 @@ export async function countTurnoverSessions(branchId?: string): Promise<number> 
   });
 }
 
+/**
+ * Lower bound of the paired series — same floor `runEvolutionEvaluate` uses.
+ * A deposed champion's own evidenceCutoff predates the promotion, so the branch
+ * RESET is what marks where this trial actually starts.
+ */
+export function evolutionEvidenceCutoff(
+  candidate: { evidenceCutoff: Date | null; createdAt: Date },
+  resetAt: Date,
+): Date {
+  return new Date(
+    Math.max((candidate.evidenceCutoff ?? candidate.createdAt).getTime(), resetAt.getTime()),
+  );
+}
+
+/** PAPER decisions on each book since the paired-series cutoff. */
+export async function countPaperDecisionsSinceCutoff(cutoff: Date): Promise<{
+  candidate: number;
+  live: number;
+}> {
+  const [candidate, live] = await Promise.all([
+    prisma.decisionReview.count({
+      where: { branch: "CANDIDATE", book: "PAPER", createdAt: { gt: cutoff } },
+    }),
+    prisma.decisionReview.count({
+      where: { branch: "LIVE", book: "PAPER", createdAt: { gt: cutoff } },
+    }),
+  ]);
+  return { candidate, live };
+}
+
+export type PairableSnapshot = {
+  fitnessIncrement: number | null;
+  maxDrawdown: number;
+  nav: number;
+};
+
+export type PairedFitnessSeries = {
+  dailyDeltas: number[];
+  candidateMaxDrawdown: number;
+  liveMaxDrawdown: number;
+  latestCandidateNav: number;
+  latestCandidateSessionMs: number | undefined;
+};
+
+/**
+ * Pair OK snapshots that share a session and differ their fitness increments.
+ * Worst rolling drawdown on each book during the paired window is kept — a
+ * mid-trial blow-up that later rolls off must still block crowning.
+ */
+export function pairFitnessIncrements(
+  candRows: Map<number, PairableSnapshot>,
+  liveRows: Map<number, PairableSnapshot>,
+): PairedFitnessSeries {
+  const dailyDeltas: number[] = [];
+  let candidateMaxDrawdown = 0;
+  let liveMaxDrawdown = 0;
+  for (const [session, cand] of candRows) {
+    const live = liveRows.get(session);
+    if (!live) continue;
+    if (cand.fitnessIncrement === null || live.fitnessIncrement === null) continue;
+    dailyDeltas.push(cand.fitnessIncrement - live.fitnessIncrement);
+    if (cand.maxDrawdown > candidateMaxDrawdown) candidateMaxDrawdown = cand.maxDrawdown;
+    if (live.maxDrawdown > liveMaxDrawdown) liveMaxDrawdown = live.maxDrawdown;
+  }
+  const latestCandidateSessionMs = [...candRows.keys()].sort((a, b) => b - a)[0];
+  const latestCandidateNav =
+    latestCandidateSessionMs !== undefined
+      ? (candRows.get(latestCandidateSessionMs)?.nav ?? 0)
+      : 0;
+  return {
+    dailyDeltas,
+    candidateMaxDrawdown,
+    liveMaxDrawdown,
+    latestCandidateNav,
+    latestCandidateSessionMs,
+  };
+}
+
 export type EvolutionEvaluateDetail = {
   candidateId: number | null;
   skipped?: string;
@@ -141,12 +219,7 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
   // the max also hardens a fresh candidate (its reset and its cutoff are the same instant)
   // and closes cross-attribution: sessions a PREDECESSOR candidate traded on this book are
   // always before this challenger's reset and can never be inherited.
-  const cutoff = new Date(
-    Math.max(
-      (candidate.evidenceCutoff ?? candidate.createdAt).getTime(),
-      candidateBranch.resetAt.getTime(),
-    ),
-  );
+  const cutoff = evolutionEvidenceCutoff(candidate, candidateBranch.resetAt);
 
   const rows = await prisma.fitnessSnapshot.findMany({
     where: {
@@ -164,9 +237,8 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     orderBy: { session: "asc" },
   });
 
-  type Row = { fitnessIncrement: number | null; maxDrawdown: number; nav: number };
-  const candRows = new Map<number, Row>();
-  const liveRows = new Map<number, Row>();
+  const candRows = new Map<number, PairableSnapshot>();
+  const liveRows = new Map<number, PairableSnapshot>();
   for (const r of rows) {
     const target = r.branchId === candidateBranch.id ? candRows : liveRows;
     target.set(r.session.getTime(), {
@@ -176,42 +248,31 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     });
   }
 
-  const dailyDeltas: number[] = [];
-  // Each snapshot stores rolling-window DD. The promote risk gate wants the WORST rolling
-  // DD during the paired trial (did the challenger ever print a bad 30-day trough?), not
-  // only the tip — a mid-trial blow-up that later rolls off must still block crowning.
-  let candidateMaxDrawdown = 0;
-  let liveMaxDrawdown = 0;
-  for (const [session, cand] of candRows) {
-    const live = liveRows.get(session);
-    if (!live) continue;
-    if (cand.fitnessIncrement === null || live.fitnessIncrement === null) continue;
-    dailyDeltas.push(cand.fitnessIncrement - live.fitnessIncrement);
-    if (cand.maxDrawdown > candidateMaxDrawdown) candidateMaxDrawdown = cand.maxDrawdown;
-    if (live.maxDrawdown > liveMaxDrawdown) liveMaxDrawdown = live.maxDrawdown;
-  }
+  const {
+    dailyDeltas,
+    candidateMaxDrawdown,
+    liveMaxDrawdown,
+    latestCandidateNav,
+  } = pairFitnessIncrements(candRows, liveRows);
 
   const thresholds = await getEvolutionThresholds();
-  const [decisions, liveDecisions, promotionsIn90d] = await Promise.all([
-    prisma.decisionReview.count({
-      where: { branch: "CANDIDATE", book: "PAPER", createdAt: { gt: cutoff } },
-    }),
-    prisma.decisionReview.count({
-      where: { branch: "LIVE", book: "PAPER", createdAt: { gt: cutoff } },
-    }),
+  const [paperDecisions, promotionsIn90d] = await Promise.all([
+    countPaperDecisionsSinceCutoff(cutoff),
     countEvolutionEvents({
       kind: "PROMOTE",
       since: new Date(Date.now() - thresholds.promotionRateWindowDays * 86_400_000),
     }),
   ]);
+  const decisions = paperDecisions.candidate;
+  const liveDecisions = paperDecisions.live;
 
   // The kernel drawdown floor is checked against the CANDIDATE BOOK's live drawdown from
   // its own high-water mark, not the snapshot series' worst historical dip.
   const highWater = decToNum(candidateBranch.highWaterNav) ?? 0;
-  const latestSession = [...candRows.keys()].sort((a, b) => b - a)[0];
-  const latestNav = latestSession !== undefined ? (candRows.get(latestSession)?.nav ?? 0) : 0;
   const branchMaxDrawdown =
-    highWater > 0 && latestNav > 0 ? Math.max(0, (highWater - latestNav) / highWater) : 0;
+    highWater > 0 && latestCandidateNav > 0
+      ? Math.max(0, (highWater - latestCandidateNav) / highWater)
+      : 0;
 
   const { z, delta, se, n } = sequentialZ(dailyDeltas);
   const lane: RuleLane = candidate.lane ?? "SLOW";
