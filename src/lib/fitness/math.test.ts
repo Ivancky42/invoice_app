@@ -187,7 +187,20 @@ describe("windowReturn / maxDrawdown", () => {
     expect(maxDrawdown([100, 110, 88, 95])).toBe(0.2);
     expect(maxDrawdown([100, 110, 120])).toBe(0);
   });
+
+  it("is relative, so a cloned book that does not start at $100k is not special", () => {
+    // cloneBranchBook sets startNav = highWaterNav = LIVE's current NAV (e.g. 150k).
+    // dailyIncrement is nav/priorNav − 1; maxDrawdown is peak-to-trough of that path.
+    expect(windowReturn([150_000, 165_000])).toBe(0.1);
+    expect(maxDrawdown([150_000, 165_000, 135_000])).toBe(round6((165_000 - 135_000) / 165_000));
+    expect(maxDrawdown([150_000, 150_000])).toBe(0);
+  });
 });
+
+function round6(value: number): number {
+  const rounded = Math.round(value * 1e6) / 1e6;
+  return rounded === 0 ? 0 : rounded;
+}
 
 describe("drawdownPenalty", () => {
   it("is zero inside the free band", () => {
@@ -335,6 +348,40 @@ describe("evaluateCandidate", () => {
     expect(evaluateCandidate({ ...base, z: null, branchMaxDrawdown: 0.4 })).toBe(
       "HARD_REVERT",
     );
+  });
+
+  it("two-tier promote: strong z at the lane session floor, patient z at 30", () => {
+    const slow = {
+      ...base,
+      lane: "SLOW" as const,
+      decisions: 20,
+      liveDecisions: 20,
+    };
+    expect(evaluateCandidate({ ...slow, z: 2.1, sessions: 20 })).toBe("PROMOTE");
+    expect(evaluateCandidate({ ...slow, z: 1.8, sessions: 25 })).toBe("CONTINUE");
+    expect(evaluateCandidate({ ...slow, z: 1.8, sessions: 30 })).toBe("PROMOTE");
+    expect(
+      evaluateCandidate({ ...base, z: 1.8, sessions: 15, decisions: 15, liveDecisions: 15 }),
+    ).toBe("CONTINUE");
+  });
+
+  it("calls it inconclusive at the configured session cap", () => {
+    expect(evaluateCandidate({ ...base, sessions: 50, decisions: 5, z: 0.4 })).toBe(
+      "INCONCLUSIVE",
+    );
+  });
+
+  it("blocks promote when only one book meets the lane decision minimum", () => {
+    expect(
+      evaluateCandidate({
+        ...base,
+        lane: "SLOW",
+        z: 2.1,
+        sessions: 20,
+        decisions: 20,
+        liveDecisions: 5,
+      }),
+    ).toBe("CONTINUE");
   });
 });
 

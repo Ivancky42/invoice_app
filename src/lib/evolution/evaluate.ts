@@ -19,27 +19,17 @@ import { prisma } from "@/lib/prisma";
 import { challengerLegitimacy } from "@/lib/rules/challenger";
 import { mirrorRuleVersion } from "@/lib/rules/gitMirror";
 import { clearRuleSetCache } from "@/lib/rules/resolve";
-import { ensureShadowBranches, resetBranch } from "@/lib/shadow/branches";
-import { CONFIG_KEYS, getConfig } from "@/lib/stocks/config";
+import { cloneBranchBook, ensureShadowBranches, resetBranch } from "@/lib/shadow/branches";
+import {
+  CONFIG_KEYS,
+  getConfig,
+  getEvolutionThresholds,
+  type EvolutionThresholds,
+} from "@/lib/stocks/config";
 import { decToNum } from "@/lib/stocks/format";
-
-/** Window the promotion rate limit is measured over. */
-const PROMOTION_RATE_WINDOW_DAYS = 90;
 
 /** Config / env key: set to `"0"` / `false` to freeze promotion until a clean re-replay. */
 export const EVOLUTION_PROMOTE_KEY = "EVOLUTION_PROMOTE";
-
-/**
- * Hard readiness gate: do not promote while avoided-loss credit is still dark.
- * Counts RESOLVED counterfactuals whose signed credit is non-zero (either sign).
- */
-export const MIN_RESOLVED_NONZERO_CREDITS_FOR_PROMOTE = 20;
-
-/**
- * Hard readiness gate: do not promote while fill friction has never hit the fitness
- * stream — otherwise the first hyperactive challenger wins on free trades.
- */
-export const MIN_TURNOVER_SESSIONS_FOR_PROMOTE = 3;
 
 /**
  * True when promotion is intentionally frozen (re-replay in progress, or ops kill switch).
@@ -85,6 +75,8 @@ export type EvolutionEvaluateDetail = {
   lane?: RuleLane;
   sessions?: number;
   decisions?: number;
+  liveDecisions?: number;
+  thresholds?: EvolutionThresholds;
   z?: number | null;
   delta?: number;
   se?: number;
@@ -199,13 +191,17 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     if (live.maxDrawdown > liveMaxDrawdown) liveMaxDrawdown = live.maxDrawdown;
   }
 
-  const [decisions, promotionsIn90d] = await Promise.all([
+  const thresholds = await getEvolutionThresholds();
+  const [decisions, liveDecisions, promotionsIn90d] = await Promise.all([
     prisma.decisionReview.count({
-      where: { branch: "CANDIDATE", createdAt: { gt: cutoff } },
+      where: { branch: "CANDIDATE", book: "PAPER", createdAt: { gt: cutoff } },
+    }),
+    prisma.decisionReview.count({
+      where: { branch: "LIVE", book: "PAPER", createdAt: { gt: cutoff } },
     }),
     countEvolutionEvents({
       kind: "PROMOTE",
-      since: new Date(Date.now() - PROMOTION_RATE_WINDOW_DAYS * 86_400_000),
+      since: new Date(Date.now() - thresholds.promotionRateWindowDays * 86_400_000),
     }),
   ]);
 
@@ -223,11 +219,13 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     z,
     sessions: n,
     decisions,
+    liveDecisions,
     lane,
     candidateMaxDrawdown,
     liveMaxDrawdown,
     branchMaxDrawdown,
     promotionsIn90d,
+    thresholds,
   });
 
   const stats = {
@@ -236,6 +234,8 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     delta,
     se,
     decisions,
+    liveDecisions,
+    thresholds,
     lane,
     candidateMaxDrawdown,
     liveMaxDrawdown,
@@ -249,6 +249,8 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     lane,
     sessions: n,
     decisions,
+    liveDecisions,
+    thresholds,
     z,
     delta,
     se,
@@ -270,7 +272,7 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
       countResolvedNonZeroCredits(),
       countTurnoverSessions(liveBranch.id),
     ]);
-    if (resolvedNonZeroCredits < MIN_RESOLVED_NONZERO_CREDITS_FOR_PROMOTE) {
+    if (resolvedNonZeroCredits < thresholds.minResolvedNonzeroCredits) {
       return {
         done: true,
         detail: {
@@ -282,7 +284,7 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
         } as unknown as Prisma.InputJsonValue,
       };
     }
-    if (turnoverSessions < MIN_TURNOVER_SESSIONS_FOR_PROMOTE) {
+    if (turnoverSessions < thresholds.minTurnoverSessions) {
       return {
         done: true,
         detail: {
@@ -405,7 +407,7 @@ async function promote(
       // to a 0.18 cap while log_trade still refused at 0.15 would desync the two surfaces.
       // The move is bounded three ways before it ever reaches here: the FAST_LANE_PARAMS
       // hard ranges, the 90-day/v1 drift rails + consecutive-loosening ratchet at propose
-      // time, and the 8-promotions-per-90-days rail inside evaluateCandidate.
+      // time, and the promotion-rate rail inside evaluateCandidate (Config.EVOLUTION_THRESHOLDS).
       await tx.config.upsert({
         where: { key: CONFIG_KEYS.LIMITS },
         create: { key: CONFIG_KEYS.LIMITS, value: candidateLimits as Prisma.InputJsonValue },
@@ -437,14 +439,15 @@ async function promote(
   clearRuleSetCache();
   // Re-points LIVE at the promoted version…
   await ensureShadowBranches();
-  // …and the DEPOSED CHAMPION becomes the challenger: its book restarts under the version
-  // that just lost, so the next comparison is "new champion vs the rules it replaced".
+  // The deposed champion (or the new incumbent after a revert) becomes the challenger.
+  // Clone LIVE's paper book into CANDIDATE so both books start identical — only the
+  // rules differ. Kill / HARD_REVERT / INCONCLUSIVE keep resetBranch (idle $100k book).
   //
   // After a REVERT there is nothing left to re-litigate — the challenger that just lost was
-  // itself the challenger's challenger — so the book goes IDLE on the new incumbent instead
+  // itself the challenger's challenger — so the book goes idle on the new incumbent instead
   // of starting a third round of the same duel. (Pointing it at the loser would also be
   // illegitimate: the loser is not the new ACTIVE's parentId.)
-  await resetBranch("CANDIDATE", isRevert ? candidateId : activeId);
+  await cloneBranchBook("LIVE", "CANDIDATE", isRevert ? candidateId : activeId);
 
   const mirror = await mirrorRuleVersion(candidateId);
   await appendEvolutionEvent({

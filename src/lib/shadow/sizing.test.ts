@@ -68,6 +68,64 @@ describe("buySizeFraction", () => {
     const result = buySizeFraction(1, 0, bands);
     expect(result).toEqual({ ok: true, sizeFraction: 0.012346, capped: false });
   });
+
+  it("shrinks a BUY so paper cash stays at cashFloorPct × NAV", () => {
+    // 8% conviction, 8% cash, 5% floor → only 3% may be spent.
+    expect(buySizeFraction(5, 0, limits, { cashFraction: 0.08 })).toEqual({
+      ok: true,
+      sizeFraction: 0.03,
+      capped: true,
+    });
+  });
+
+  it("rejects when a BUY would take cash through the floor", () => {
+    expect(buySizeFraction(5, 0, limits, { cashFraction: 0.05 })).toEqual({
+      ok: false,
+      reason: "cash_floor",
+    });
+    expect(buySizeFraction(5, 0, limits, { cashFraction: 0.04 })).toEqual({
+      ok: false,
+      reason: "cash_floor",
+    });
+  });
+
+  it("shrinks a SPECULATIVE BUY to the sleeve headroom", () => {
+    expect(
+      buySizeFraction(5, 0, limits, {
+        sleeve: "SPECULATIVE",
+        speculativeSleeveWeight: 0.14,
+      }),
+    ).toEqual({ ok: true, sizeFraction: 0.01, capped: true });
+  });
+
+  it("rejects a SPECULATIVE BUY when the sleeve is already at the cap", () => {
+    expect(
+      buySizeFraction(5, 0, limits, {
+        sleeve: "SPECULATIVE",
+        speculativeSleeveWeight: limits.speculativeSleevePct,
+      }),
+    ).toEqual({ ok: false, reason: "sleeve_cap" });
+  });
+
+  it("does not apply the sleeve cap to a non-speculative (UNASSIGNED / CORE) name", () => {
+    const expected = {
+      ok: true as const,
+      sizeFraction: limits.tierBands.CONVICTION[1],
+      capped: false,
+    };
+    expect(
+      buySizeFraction(5, 0, limits, {
+        sleeve: null,
+        speculativeSleeveWeight: 0.15,
+      }),
+    ).toEqual(expected);
+    expect(
+      buySizeFraction(5, 0, limits, {
+        sleeve: "CORE",
+        speculativeSleeveWeight: 0.15,
+      }),
+    ).toEqual(expected);
+  });
 });
 
 describe("sellSizeFraction", () => {

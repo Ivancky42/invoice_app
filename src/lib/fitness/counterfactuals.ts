@@ -13,19 +13,20 @@
  * compare them quarterly — disagreement is a lesson, but not every debit is a horizon
  * artifact (check permittedSize headroom first).
  *
- * LIVE seeds size against the real book (the book those refusals were about). CANDIDATE
- * seeds size against the paper book only. Reads PriceHistory, DecisionReview, ruleset,
- * shadow ledger; LIVE sizing also reads Portfolio/Trade for headroom — never writes them.
+ * Both books seed size against their own paper book (the LIVE paper stream is about
+ * the LIVE paper book). Sleeve metadata is joined from shared Portfolio rows so a
+ * SPECULATIVE name is sized with the same sleeve cap a BUY would have faced.
+ * Reads PriceHistory, DecisionReview, ruleset, shadow ledger — never the real book.
  */
 import type { Prisma } from "@/generated/prisma/client";
 import type { DecisionType } from "@/generated/prisma/client";
 import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { counterfactualCredit, permittedSize } from "@/lib/fitness/math";
-import { loadLiveBookExposure } from "@/lib/fitness/liveBookExposure";
 import { prisma } from "@/lib/prisma";
 import { getRuleSet } from "@/lib/rules/resolve";
 import { branchBook, ensureShadowBranches, listBranches } from "@/lib/shadow/branches";
 import { dedupeDecisionsForShadow } from "@/lib/shadow/dedupe";
+import { loadSharedSleeves } from "@/lib/shadow/sleeves";
 import {
   decisionSessionForReview,
   latestSessionOnOrBeforeIn,
@@ -143,20 +144,23 @@ export async function seedCounterfactualsForBranch(
   const latestSession = latestSessionOnOrBeforeIn(sessions, ymd(runDay));
   if (!latestSession) return { seeded, skipped: decisions.length, truncated: false };
 
-  const [book, ruleSet, liveExposure] = await Promise.all([
+  const [book, ruleSet, sleeves] = await Promise.all([
     branchBook(branchRow.id, latestSession),
     getRuleSet(branchRow.branch),
-    // LIVE refusals are about the real book; paper weights alone invent phantom adds
-    // (BULL DNAD at permittedSize 0.06 while already over the Speculative band).
-    branchRow.branch === "LIVE" ? loadLiveBookExposure() : Promise.resolve(null),
+    loadSharedSleeves(),
   ]);
 
-  // Open shadow weights: WAIT-on-held double-count guard is paper-only; DNAD/AVOID size
-  // for LIVE prefers real-book weight below.
+  // Paper-book weights for BOTH branches. WAIT-on-held skip is paper-only so a
+  // refusal of a name the book already holds cannot double-count the same move.
   const weightByTicker = new Map<string, number>();
+  let speculativeSleeveWeight = 0;
   for (const position of book.positions) {
     const value = position.mark === null ? 0 : position.shares * position.mark;
-    weightByTicker.set(position.ticker, book.nav > 0 ? value / book.nav : 0);
+    const weight = book.nav > 0 ? value / book.nav : 0;
+    weightByTicker.set(position.ticker, weight);
+    if (sleeves.get(position.ticker.trim().toUpperCase()) === "SPECULATIVE") {
+      speculativeSleeveWeight += weight;
+    }
   }
 
   // A decision already seeded on any horizon still needs missing horizons filled in;
@@ -201,15 +205,12 @@ export async function seedCounterfactualsForBranch(
 
     const ticker = dr.ticker!.trim().toUpperCase();
     const decisionType = dr.decisionType!;
-    const paperWeight = weightByTicker.get(ticker) ?? 0;
-    const heldWeight = liveExposure?.weightByTicker.get(ticker) ?? paperWeight;
-    const sleeve = liveExposure?.sleeveByTicker.get(ticker) ?? null;
-    const speculativeSleeveWeight = liveExposure?.speculativeSleeveWeight ?? 0;
+    const heldWeight = weightByTicker.get(ticker) ?? 0;
+    const sleeve = sleeves.get(ticker) ?? null;
 
     // WAIT on a name the branch ALREADY HOLDS is a HOLD, not a refusal to deploy: the
     // position's own P&L is already in NAV, so crediting it again would double-count the
     // same price move (once in the book, once as avoided loss). No counterfactual.
-    // Paper hold is the double-count trigger; real-only hold still sizes via headroom.
     if (decisionType === "WAIT" && weightByTicker.has(ticker)) {
       skipped += 1;
       continue;
@@ -293,6 +294,7 @@ async function seedForBranch(
   const raw = await prisma.decisionReview.findMany({
     where: {
       branch: branchRow.branch,
+      book: "PAPER",
       createdAt: { gte: since },
       ticker: { not: null },
       decisionType: { in: [...SEEDABLE_DECISION_TYPES] },

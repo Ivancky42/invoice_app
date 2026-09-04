@@ -5,7 +5,7 @@
  * its own high-water mark. Nothing here reads the real book (no Portfolio, no Trade, no
  * Config cash) — the shadow ledger must stay uncontaminated by live accounting.
  */
-import type { Branch } from "@/generated/prisma/client";
+import type { Branch, Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { challengerLegitimacy } from "@/lib/rules/challenger";
 import { decToNum } from "@/lib/stocks/format";
@@ -72,8 +72,8 @@ function rowToBranch(row: {
  * cash, startNav or high-water mark. The ruleVersion pointer is then reconciled on its
  * own: a promotion that changed the ACTIVE version would otherwise leave LIVE's pointer
  * stale and mis-attribute that branch's fitness to the wrong ruleset. Only that one column
- * is written here; {@link resetBranch} (promotion / propose) is the other writer of it, and
- * it also restarts the book.
+ * is written here; {@link resetBranch} / {@link cloneBranchBook} (kill / propose / promote)
+ * are the other writers of it, and they also restart the book.
  *
  * The CANDIDATE pointer is only reconciled when its target is ILLEGITIMATE — see
  * {@link challengerLegitimacy}. A legitimate target (a status-CANDIDATE row, or the
@@ -239,10 +239,67 @@ export async function branchNav(branchId: string, session: string | Date): Promi
   return (await branchBook(branchId, session)).nav;
 }
 
+export type CloneRestartPosition = {
+  shares: number;
+  lastMark: number | null;
+  avgCost: number;
+};
+
+/**
+ * NAV a cloned book restarts at: cash + Σ shares × (lastMark ?? avgCost).
+ * Used for `startNav` / `highWaterNav` so both books begin the paired series
+ * at the same level; fitness increments are NAV ratios, so the absolute
+ * starting dollar amount is not special.
+ */
+export function cloneRestartNav(positions: CloneRestartPosition[], cash: number): number {
+  let equity = 0;
+  for (const p of positions) {
+    const mark = p.lastMark ?? p.avgCost;
+    if (Number.isFinite(p.shares) && Number.isFinite(mark)) {
+      equity += p.shares * mark;
+    }
+  }
+  return roundMoney(cash + equity);
+}
+
+/**
+ * Wipe the branch's derived series, reject its orders as `branch_reset` markers,
+ * and delete its positions. Shared by {@link resetBranch} and {@link cloneBranchBook}
+ * so a clone cannot leave the previous tenure's credits or idempotency holes.
+ */
+async function wipeBranchLedger(
+  tx: Prisma.TransactionClient,
+  branchId: string,
+  now: Date,
+): Promise<void> {
+  // Derived series belongs to the old book. Leaving it would let the first post-reset
+  // fitness snapshot (prior=null) sum every historical RESOLVED credit into day one.
+  await tx.counterfactual.deleteMany({ where: { branchId } });
+  await tx.fitnessSnapshot.deleteMany({ where: { branchId } });
+  // Keep rows as REJECTED markers so enqueue cannot recreate them; clear fill fields so
+  // status=FILLED notionals cannot leak into a post-reset turnover span.
+  await tx.shadowOrder.updateMany({
+    where: { branchId },
+    data: {
+      status: "REJECTED",
+      rejectReason: "branch_reset",
+      fillSession: null,
+      fillPrice: null,
+      notional: null,
+      shares: null,
+    },
+  });
+  await tx.shadowPosition.updateMany({
+    where: { branchId, closedAt: null },
+    data: { closedAt: now, shares: 0, markStale: false },
+  });
+  await tx.shadowPosition.deleteMany({ where: { branchId } });
+}
+
 /**
  * Close every open paper position and restart the book at {@link SHADOW_INITIAL_NAV}
- * under `ruleVersionId`. Used when a candidate is promoted — the new ruleset must not
- * inherit the previous one's positions or its high-water mark.
+ * under `ruleVersionId`. Used on kill / HARD_REVERT / INCONCLUSIVE — the idle book
+ * must not inherit the previous one's positions or its high-water mark.
  *
  * Orders are REJECTED in place (not deleted): the `(branchId, decisionReviewId, side)`
  * unique rows are the enqueue idempotency markers. Deleting them let the next cron
@@ -258,30 +315,9 @@ export async function resetBranch(branch: Branch, ruleVersionId: number): Promis
   // Stamp tenure boundary with the DB clock so fill/credit filters that compare to
   // Postgres createdAt/updatedAt cannot miss rows under app-vs-DB skew.
   const [{ now }] = await prisma.$queryRaw<[{ now: Date }]>`SELECT NOW() AS now`;
-  await prisma.$transaction([
-    // Derived series belongs to the old book. Leaving it would let the first post-reset
-    // fitness snapshot (prior=null) sum every historical RESOLVED credit into day one.
-    prisma.counterfactual.deleteMany({ where: { branchId: row.id } }),
-    prisma.fitnessSnapshot.deleteMany({ where: { branchId: row.id } }),
-    // Keep rows as REJECTED markers so enqueue cannot recreate them; clear fill fields so
-    // status=FILLED notionals cannot leak into a post-reset turnover span.
-    prisma.shadowOrder.updateMany({
-      where: { branchId: row.id },
-      data: {
-        status: "REJECTED",
-        rejectReason: "branch_reset",
-        fillSession: null,
-        fillPrice: null,
-        notional: null,
-        shares: null,
-      },
-    }),
-    prisma.shadowPosition.updateMany({
-      where: { branchId: row.id, closedAt: null },
-      data: { closedAt: now, shares: 0, markStale: false },
-    }),
-    prisma.shadowPosition.deleteMany({ where: { branchId: row.id } }),
-    prisma.shadowBranch.update({
+  await prisma.$transaction(async (tx) => {
+    await wipeBranchLedger(tx, row.id, now);
+    await tx.shadowBranch.update({
       where: { id: row.id },
       data: {
         ruleVersionId,
@@ -290,6 +326,93 @@ export async function resetBranch(branch: Branch, ruleVersionId: number): Promis
         highWaterNav: SHADOW_INITIAL_NAV,
         resetAt: now,
       },
+    });
+  });
+}
+
+/**
+ * Reset `to` exactly as {@link resetBranch} does, then copy `from`'s open positions
+ * and cash so both paper books start identical — only the rules differ.
+ *
+ * Pending orders are not copied. There is no `openedAt` column; `openedSession` is
+ * copied so holding-period / tenure displays stay with the original open, not the
+ * clone instant. If `from` has no row, falls back to {@link resetBranch} ($100k cash).
+ */
+export async function cloneBranchBook(
+  from: Branch,
+  to: Branch,
+  ruleVersionId: number,
+): Promise<void> {
+  const [fromRow, toRow] = await Promise.all([
+    prisma.shadowBranch.findUnique({
+      where: { branch: from },
+      select: { id: true },
+    }),
+    prisma.shadowBranch.findUnique({
+      where: { branch: to },
+      select: { id: true },
     }),
   ]);
+  if (!toRow) return;
+  if (!fromRow) {
+    await resetBranch(to, ruleVersionId);
+    return;
+  }
+
+  const [{ now }] = await prisma.$queryRaw<[{ now: Date }]>`SELECT NOW() AS now`;
+  await prisma.$transaction(async (tx) => {
+    const [open, fromFresh] = await Promise.all([
+      tx.shadowPosition.findMany({
+        where: { branchId: fromRow.id, closedAt: null },
+        select: {
+          ticker: true,
+          shares: true,
+          avgCost: true,
+          lastMark: true,
+          lastMarkSession: true,
+          markStale: true,
+          openedSession: true,
+        },
+      }),
+      tx.shadowBranch.findUnique({
+        where: { id: fromRow.id },
+        select: { cash: true },
+      }),
+    ]);
+    const cash = decToNum(fromFresh?.cash ?? null) ?? 0;
+    const nav = cloneRestartNav(
+      open.map((p) => ({
+        shares: decToNum(p.shares) ?? 0,
+        lastMark: decToNum(p.lastMark),
+        avgCost: decToNum(p.avgCost) ?? 0,
+      })),
+      cash,
+    );
+
+    await wipeBranchLedger(tx, toRow.id, now);
+    if (open.length > 0) {
+      await tx.shadowPosition.createMany({
+        data: open.map((p) => ({
+          branchId: toRow.id,
+          ticker: p.ticker,
+          shares: p.shares,
+          avgCost: p.avgCost,
+          lastMark: p.lastMark,
+          lastMarkSession: p.lastMarkSession,
+          markStale: p.markStale,
+          openedSession: p.openedSession,
+        })),
+      });
+    }
+    await tx.shadowBranch.update({
+      where: { id: toRow.id },
+      data: {
+        ruleVersionId,
+        cash,
+        startNav: nav,
+        highWaterNav: nav,
+        resetAt: now,
+      },
+    });
+  });
 }

@@ -44,7 +44,7 @@ import {
   kernelGate,
   sha256Hex,
 } from "@/lib/rules/resolve";
-import { ensureShadowBranches, resetBranch } from "@/lib/shadow/branches";
+import { cloneBranchBook, ensureShadowBranches } from "@/lib/shadow/branches";
 import { DEFAULT_LIMITS, parseLimits, type LimitsConfig } from "@/lib/stocks/config";
 import { decToNum } from "@/lib/stocks/format";
 
@@ -581,12 +581,13 @@ export async function proposeRuleChange(
     throw err;
   }
 
-  // The challenger must start from a clean book: inheriting the previous candidate's (or
-  // the superseded revert series') positions or high-water mark would attribute someone
-  // else's P&L to this ruleset. resetBranch also stamps `resetAt`, which is the lower bound
-  // evaluate pairs from — so sessions traded by a predecessor can never be counted here.
+  // Clone LIVE's paper book into CANDIDATE so both books start identical and only the
+  // rules differ. resetBranch would restart CANDIDATE at $100k cash while LIVE kept its
+  // positions, which is not a rules-vs-rules test. cloneBranchBook also stamps `resetAt`,
+  // which is the lower bound evaluate pairs from — so sessions traded by a predecessor
+  // can never be counted here.
   await ensureShadowBranches();
-  await resetBranch("CANDIDATE", created.id);
+  await cloneBranchBook("LIVE", "CANDIDATE", created.id);
 
   await appendEvolutionEvent({
     kind: "PROPOSE",

@@ -1,9 +1,11 @@
 /**
  * Read-only views of the fitness ledger for the agent surface (MCP + HTTP).
- * Reads FitnessSnapshot / Counterfactual / ShadowBranch only — no real-book state.
+ * Reads FitnessSnapshot / Counterfactual / ShadowBranch / DecisionReview / Config —
+ * no real-book state. Thresholds and PAPER decision counts match evolution_evaluate.
  */
 import type { Branch, CounterfactualStatus } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getEvolutionThresholds, type EvolutionThresholds } from "@/lib/stocks/config";
 import { decToNum } from "@/lib/stocks/format";
 
 function iso(d: Date | null | undefined): string | null {
@@ -19,15 +21,53 @@ export type GetShadowFitnessInput = {
   limit?: number;
 };
 
+async function paperDecisionsSinceCandidateCutoff(): Promise<{
+  LIVE: number;
+  CANDIDATE: number;
+}> {
+  const candidateBranch = await prisma.shadowBranch.findUnique({
+    where: { branch: "CANDIDATE" },
+    select: { resetAt: true, ruleVersionId: true },
+  });
+  if (!candidateBranch) return { LIVE: 0, CANDIDATE: 0 };
+
+  const version = await prisma.ruleVersion.findUnique({
+    where: { id: candidateBranch.ruleVersionId },
+    select: { evidenceCutoff: true, createdAt: true },
+  });
+  // Same floor evolution_evaluate pairs from: max(version cutoff, branch reset).
+  const cutoff = new Date(
+    Math.max(
+      (version?.evidenceCutoff ?? version?.createdAt ?? candidateBranch.resetAt).getTime(),
+      candidateBranch.resetAt.getTime(),
+    ),
+  );
+  const where = { book: "PAPER" as const, createdAt: { gt: cutoff } };
+  const [LIVE, CANDIDATE] = await Promise.all([
+    prisma.decisionReview.count({ where: { ...where, branch: "LIVE" } }),
+    prisma.decisionReview.count({ where: { ...where, branch: "CANDIDATE" } }),
+  ]);
+  return { LIVE, CANDIDATE };
+}
+
 /** Fitness snapshots for one branch, newest session first. */
 export async function getShadowFitness(input: GetShadowFitnessInput = {}) {
   const branch = input.branch ?? "LIVE";
   const limit = Math.min(input.limit ?? 30, 90);
-  const branchRow = await prisma.shadowBranch.findUnique({
-    where: { branch },
-    select: { id: true },
-  });
-  if (!branchRow) return { branch, snapshots: [] };
+  const [branchRow, thresholds, decisionsSinceCutoff] = await Promise.all([
+    prisma.shadowBranch.findUnique({
+      where: { branch },
+      select: { id: true },
+    }),
+    getEvolutionThresholds(),
+    paperDecisionsSinceCandidateCutoff(),
+  ]);
+  const extras: {
+    thresholds: EvolutionThresholds;
+    decisionsSinceCutoff: { LIVE: number; CANDIDATE: number };
+  } = { thresholds, decisionsSinceCutoff };
+
+  if (!branchRow) return { branch, snapshots: [], ...extras };
 
   const rows = await prisma.fitnessSnapshot.findMany({
     where: { branchId: branchRow.id },
@@ -52,6 +92,7 @@ export async function getShadowFitness(input: GetShadowFitnessInput = {}) {
       openPositions: s.openPositions,
       createdAt: iso(s.createdAt),
     })),
+    ...extras,
   };
 }
 

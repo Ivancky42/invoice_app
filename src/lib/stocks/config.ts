@@ -17,6 +17,7 @@ export const CONFIG_KEYS = {
   SENTIMENT_THRESHOLDS: "SENTIMENT_THRESHOLDS",
   EARNINGS_RISK_THRESHOLDS: "EARNINGS_RISK_THRESHOLDS",
   TRACKED_TICKERS: "TRACKED_TICKERS",
+  EVOLUTION_THRESHOLDS: "EVOLUTION_THRESHOLDS",
 } as const;
 
 export type ConfigKey = (typeof CONFIG_KEYS)[keyof typeof CONFIG_KEYS] | string;
@@ -190,6 +191,103 @@ export async function setConfig(key: ConfigKey, value: Prisma.InputJsonValue): P
 export async function getLimits(): Promise<LimitsConfig> {
   const raw = await getConfig(CONFIG_KEYS.LIMITS);
   return parseLimits(raw) ?? DEFAULT_LIMITS;
+}
+
+export type EvolutionLaneMins = { FAST: number; SLOW: number };
+
+export type EvolutionThresholds = {
+  promote: {
+    strong: { z: number; minSessions: EvolutionLaneMins };
+    patient: { z: number; minSessions: number };
+  };
+  minDecisions: EvolutionLaneMins;
+  earlyKill: { z: number; minSessions: number };
+  inconclusiveSessions: number;
+  minResolvedNonzeroCredits: number;
+  minTurnoverSessions: number;
+  promotionRateLimit: number;
+  promotionRateWindowDays: number;
+};
+
+/**
+ * Code defaults for the rules-vs-rules promote/kill gates. A missing or invalid
+ * Config.EVOLUTION_THRESHOLDS row falls back here so evaluate and get_shadow_fitness
+ * always agree.
+ */
+export const DEFAULT_EVOLUTION_THRESHOLDS: EvolutionThresholds = {
+  promote: {
+    strong: { z: 2.0, minSessions: { FAST: 10, SLOW: 20 } },
+    patient: { z: 1.75, minSessions: 30 },
+  },
+  minDecisions: { FAST: 10, SLOW: 15 },
+  earlyKill: { z: -1.5, minSessions: 10 },
+  inconclusiveSessions: 50,
+  minResolvedNonzeroCredits: 12,
+  minTurnoverSessions: 3,
+  promotionRateLimit: 8,
+  promotionRateWindowDays: 90,
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+/**
+ * Merge a Config JSON blob onto {@link DEFAULT_EVOLUTION_THRESHOLDS}.
+ * Partial objects override only the keys they set; invalid / non-object input
+ * (including a JSON string) returns a fresh copy of the code defaults.
+ */
+export function parseEvolutionThresholds(value: unknown): EvolutionThresholds {
+  const d = DEFAULT_EVOLUTION_THRESHOLDS;
+  const o = asRecord(value);
+  const promote = asRecord(o.promote);
+  const strong = asRecord(promote.strong);
+  const strongSessions = asRecord(strong.minSessions);
+  const patient = asRecord(promote.patient);
+  const minDecisions = asRecord(o.minDecisions);
+  const earlyKill = asRecord(o.earlyKill);
+  return {
+    promote: {
+      strong: {
+        z: asNumber(strong.z, d.promote.strong.z),
+        minSessions: {
+          FAST: asNumber(strongSessions.FAST, d.promote.strong.minSessions.FAST),
+          SLOW: asNumber(strongSessions.SLOW, d.promote.strong.minSessions.SLOW),
+        },
+      },
+      patient: {
+        z: asNumber(patient.z, d.promote.patient.z),
+        minSessions: asNumber(patient.minSessions, d.promote.patient.minSessions),
+      },
+    },
+    minDecisions: {
+      FAST: asNumber(minDecisions.FAST, d.minDecisions.FAST),
+      SLOW: asNumber(minDecisions.SLOW, d.minDecisions.SLOW),
+    },
+    earlyKill: {
+      z: asNumber(earlyKill.z, d.earlyKill.z),
+      minSessions: asNumber(earlyKill.minSessions, d.earlyKill.minSessions),
+    },
+    inconclusiveSessions: asNumber(o.inconclusiveSessions, d.inconclusiveSessions),
+    minResolvedNonzeroCredits: asNumber(
+      o.minResolvedNonzeroCredits,
+      d.minResolvedNonzeroCredits,
+    ),
+    minTurnoverSessions: asNumber(o.minTurnoverSessions, d.minTurnoverSessions),
+    promotionRateLimit: asNumber(o.promotionRateLimit, d.promotionRateLimit),
+    promotionRateWindowDays: asNumber(
+      o.promotionRateWindowDays,
+      d.promotionRateWindowDays,
+    ),
+  };
+}
+
+export async function getEvolutionThresholds(): Promise<EvolutionThresholds> {
+  const raw = await getConfig(CONFIG_KEYS.EVOLUTION_THRESHOLDS);
+  return parseEvolutionThresholds(raw);
 }
 
 export async function getSentimentThresholds(): Promise<SentimentThresholds> {

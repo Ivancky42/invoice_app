@@ -1,13 +1,18 @@
 /**
- * Fitness maths. PURE — no prisma, no Config, no real-book state; every function here is
- * a total function of its arguments so the whole scoring rule is unit-testable.
+ * Fitness maths. PURE — no prisma, no live Config reads, no real-book state; every
+ * function here is a total function of its arguments so the whole scoring rule is
+ * unit-testable. Threshold defaults are code constants imported from config.ts.
  *
  * FRACTIONS THROUGHOUT: 0.03 means 3%. Nothing in this module (or its callers) carries a
  * `Pct` suffix or percentage points — the one fraction→pp conversion in the codebase
  * lives in src/lib/shadow/decisionReturns.ts and is not used here.
  */
 import { roundFraction as roundToScale } from "@/lib/shadow/sizing";
-import type { LimitsConfig } from "@/lib/stocks/config";
+import {
+  DEFAULT_EVOLUTION_THRESHOLDS,
+  type EvolutionThresholds,
+  type LimitsConfig,
+} from "@/lib/stocks/config";
 
 /**
  * Round to the 6-decimal scale every fraction column stores, collapsing −0 onto 0 so a
@@ -291,7 +296,14 @@ export type CandidateVerdict =
 export type EvaluateCandidateInput = {
   z: number | null;
   sessions: number;
+  /** PAPER decisions on the CANDIDATE book since cutoff. */
   decisions: number;
+  /**
+   * PAPER decisions on the LIVE book since the same cutoff. Both books must meet
+   * `minDecisions[lane]`. Omitted → treated as equal to `decisions` so existing
+   * tests that pass one count keep working.
+   */
+  liveDecisions?: number;
   lane: "FAST" | "SLOW";
   candidateMaxDrawdown: number;
   liveMaxDrawdown: number;
@@ -301,6 +313,8 @@ export type EvaluateCandidateInput = {
   branchMaxDrawdown: number;
   promotionsIn90d: number;
   rateLimit?: number;
+  /** Effective gates; default = code defaults so unit tests stay stable. */
+  thresholds?: EvolutionThresholds;
 };
 
 /**
@@ -314,12 +328,6 @@ export type EvaluateCandidateInput = {
  */
 export const DRAWDOWN_GATE_FLOOR = 0.05;
 
-/** Minimum evidence a lane must accumulate before a promotion is even considered. */
-const LANE_MINIMUMS = {
-  FAST: { sessions: 10, decisions: 10 },
-  SLOW: { sessions: 30, decisions: 20 },
-} as const;
-
 /**
  * Verdict on a candidate ruleset. Precedence is fixed and deliberate:
  *
@@ -328,34 +336,55 @@ const LANE_MINIMUMS = {
  * The kernel drawdown floor is checked FIRST and beats any z-score: a book that has blown
  * through the floor is reverted even if it looks brilliant, because the statistic cannot
  * un-lose the capital. A null z can only ever CONTINUE (or HARD_REVERT).
+ *
+ * PROMOTE is two-tier: a strong edge (`z >= strong.z` at `strong.minSessions[lane]`)
+ * or a patient edge (`z >= patient.z` at `patient.minSessions`), plus both books
+ * meeting `minDecisions[lane]`, the drawdown gate, and the promotion rate limit.
  */
 export function evaluateCandidate({
   z,
   sessions,
   decisions,
+  liveDecisions,
   lane,
   candidateMaxDrawdown,
   liveMaxDrawdown,
   kernelDrawdownFloor = 0.25,
   branchMaxDrawdown,
   promotionsIn90d,
-  rateLimit = 8,
+  rateLimit,
+  thresholds = DEFAULT_EVOLUTION_THRESHOLDS,
 }: EvaluateCandidateInput): CandidateVerdict {
+  const t = thresholds;
+  const liveCount = liveDecisions ?? decisions;
+  const rate = rateLimit ?? t.promotionRateLimit;
+
   if (branchMaxDrawdown > kernelDrawdownFloor) return "HARD_REVERT";
 
-  if (sessions >= 10 && z !== null && z <= -1.5) return "EARLY_KILL";
-
-  if (z !== null && z >= 2.0) {
-    const minimums = LANE_MINIMUMS[lane];
-    const enoughEvidence =
-      sessions >= minimums.sessions && decisions >= minimums.decisions;
-    const riskOk =
-      candidateMaxDrawdown <= Math.max(liveMaxDrawdown * 1.25, DRAWDOWN_GATE_FLOOR);
-    const underRateLimit = promotionsIn90d < rateLimit;
-    if (enoughEvidence && riskOk && underRateLimit) return "PROMOTE";
+  if (
+    sessions >= t.earlyKill.minSessions &&
+    z !== null &&
+    z <= t.earlyKill.z
+  ) {
+    return "EARLY_KILL";
   }
 
-  if (sessions >= 60) return "INCONCLUSIVE";
+  if (z !== null) {
+    const strongOk =
+      z >= t.promote.strong.z && sessions >= t.promote.strong.minSessions[lane];
+    const patientOk =
+      z >= t.promote.patient.z && sessions >= t.promote.patient.minSessions;
+    const decisionsOk =
+      decisions >= t.minDecisions[lane] && liveCount >= t.minDecisions[lane];
+    const riskOk =
+      candidateMaxDrawdown <= Math.max(liveMaxDrawdown * 1.25, DRAWDOWN_GATE_FLOOR);
+    const underRateLimit = promotionsIn90d < rate;
+    if ((strongOk || patientOk) && decisionsOk && riskOk && underRateLimit) {
+      return "PROMOTE";
+    }
+  }
+
+  if (sessions >= t.inconclusiveSessions) return "INCONCLUSIVE";
   return "CONTINUE";
 }
 

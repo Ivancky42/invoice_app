@@ -1,9 +1,12 @@
 /**
  * `shadow_enqueue`: turn DecisionReview rows into PENDING paper orders.
  *
- * A DR row's own `branch` column decides which paper book it belongs to. Each DR can
- * enqueue at most one order per side per branch (DB unique index is the backstop), so a
- * replayed routine cannot double-size the book. Nothing here reads the real book.
+ * A DR row's own `branch` column decides which paper book it belongs to. Only
+ * `book=PAPER` rows feed the paper books — `book=REAL` is Ivan's advisory stream.
+ * Each DR can enqueue at most one order per side per branch (DB unique index is the
+ * backstop), so a replayed routine cannot double-size the book. Nothing here reads
+ * real-book SIZE or CASH; the only real-book touch is the shared Portfolio `sleeve`
+ * label (analytics metadata) used for the speculative-sleeve cap.
  *
  * Runs AFTER `shadow_fill` (see the cron registry) so yesterday's orders are resolved
  * before today's decisions are judged. Orders still PENDING at this point are exposure
@@ -29,6 +32,7 @@ import {
   ymd,
 } from "@/lib/shadow/sessions";
 import { buySizeFraction, sellSizeFraction } from "@/lib/shadow/sizing";
+import { loadSharedSleeves } from "@/lib/shadow/sleeves";
 import { filterDecisionsAfterReset } from "@/lib/shadow/tenure";
 import { decToNum } from "@/lib/stocks/format";
 
@@ -99,13 +103,14 @@ export async function enqueueDecisionsForBranch(
   if (!latestSession) {
     return { enqueued, rejected, skipped: decisions.length, deferred, truncated: false };
   }
-  const [book, ruleSet, pendingOrders] = await Promise.all([
+  const [book, ruleSet, pendingOrders, sleeves] = await Promise.all([
     branchBook(branchRow.id, latestSession),
     getRuleSet(branchRow.branch),
     prisma.shadowOrder.findMany({
       where: { branchId: branchRow.id, status: "PENDING", side: "BUY" },
       select: { ticker: true, sizeFraction: true },
     }),
+    loadSharedSleeves(),
   ]);
 
   const openByTicker = new Map(book.positions.map((p) => [p.ticker, p]));
@@ -123,6 +128,24 @@ export async function enqueueDecisionsForBranch(
   for (const order of pendingOrders) {
     const fraction = decToNum(order.sizeFraction) ?? 0;
     claimedFraction.set(order.ticker, (claimedFraction.get(order.ticker) ?? 0) + fraction);
+  }
+
+  // Cash available for new BUYs: current paper cash minus pending BUY notionals, as a
+  // NAV fraction. The sizer then refuses to spend through cashFloorPct × NAV.
+  let availableCashFraction = book.nav > 0 ? book.cash / book.nav : 0;
+  let speculativeSleeveWeight = 0;
+  for (const p of book.positions) {
+    const value = p.mark === null ? 0 : p.shares * p.mark;
+    if (sleeves.get(p.ticker.trim().toUpperCase()) === "SPECULATIVE") {
+      speculativeSleeveWeight += book.nav > 0 ? value / book.nav : 0;
+    }
+  }
+  for (const order of pendingOrders) {
+    const fraction = decToNum(order.sizeFraction) ?? 0;
+    availableCashFraction -= fraction;
+    if (sleeves.get(order.ticker.trim().toUpperCase()) === "SPECULATIVE") {
+      speculativeSleeveWeight += fraction;
+    }
   }
 
   for (const dr of decisions) {
@@ -155,10 +178,16 @@ export async function enqueueDecisionsForBranch(
     };
 
     if (intent.kind === "buy") {
+      const sleeve = sleeves.get(ticker) ?? null;
       const sizing = buySizeFraction(
         dr.convictionScore,
         claimedFraction.get(ticker) ?? 0,
         ruleSet.limits,
+        {
+          cashFraction: availableCashFraction,
+          sleeve,
+          speculativeSleeveWeight,
+        },
       );
       if (!sizing.ok) {
         try {
@@ -177,6 +206,8 @@ export async function enqueueDecisionsForBranch(
         });
         enqueued += 1;
         claimedFraction.set(ticker, (claimedFraction.get(ticker) ?? 0) + sizing.sizeFraction);
+        availableCashFraction -= sizing.sizeFraction;
+        if (sleeve === "SPECULATIVE") speculativeSleeveWeight += sizing.sizeFraction;
         // Same-run sells for this ticker must defer (not reject no_position) once a BUY is
         // pending — the book will not show the position until the next session's fill.
         pendingBuyTickers.add(ticker);
@@ -263,6 +294,8 @@ async function enqueueForBranch(
   const raw = await prisma.decisionReview.findMany({
     where: {
       branch: branchRow.branch,
+      // REAL-book advisory DRs must not size the paper book.
+      book: "PAPER",
       createdAt: { gte: since },
       ticker: { not: null },
       decisionType: { in: ["BUY", "ADD", "AVERAGE_DOWN", "REDUCE", "EXIT"] },
