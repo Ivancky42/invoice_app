@@ -199,6 +199,30 @@ seeding) — re-seeding is not the fix once `RuleVersion` rows exist; a mismatch
 point is expected and resolves itself once a promotion or gap-fix brings the DB copy back
 in line, or is otherwise a signal worth investigating rather than auto-fixing.
 
+### 5.1 Publishing a human edit to `/prompts`
+
+Editing `/prompts/*.md` and deploying does **not** change the running ruleset — agents read
+the `ACTIVE` `RuleVersion`, not disk. To publish (after the deploy that ships the edit):
+
+```bash
+# 1. Plan only: shows changed files / sections, rebase decision, diff line count
+DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/publish-rule-version.ts --dry-run
+
+# 2. Publish: retire ACTIVE, create new HUMAN ACTIVE from disk, rebase the in-flight
+#    CANDIDATE onto it (abort if it touches a section the candidate also rewrote)
+DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/publish-rule-version.ts \
+  --confirm-destructive --summary "Plain-language output format"
+
+# 3. Confirm parity
+DATABASE_URL="<prod DATABASE_URL>" npx tsx scripts/verify-rule-parity.ts
+```
+
+The candidate's paper book is **not** reset by a publish — it is the same experiment with
+the same evidence window, now expressed on top of the new prose. If the script prints
+`ABORT: ... conflict`, nothing was written; resolve the overlap by hand (usually: wait for
+the candidate to finish, or narrow the edit). The style note and PAPER PASS brief that
+`get_prompt` prepends are not versioned and take effect on deploy without a publish.
+
 ---
 
 ## 6. `maxDuration=300` requires Fluid Compute

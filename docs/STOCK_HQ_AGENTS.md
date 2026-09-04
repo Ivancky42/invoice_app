@@ -194,6 +194,15 @@ book as `positions` / `cash` / `nav`, plus `bookMode`, `pendingOrders` and `pape
 `get_prompt` for `mcp:shadow` callers is prefixed with the PAPER PASS brief. See
 `docs/SHADOW_EVOLUTION_RUNBOOK.md` §7.
 
+**Writing style.** Every `get_prompt` response (MCP and `GET /api/agent/prompts/:name`,
+except `?diff=1`) starts with a short non-versioned "Writing for Ivan" note
+(`src/lib/agent/styleBlock.ts`): plain language, lead with what changed and what to do, no
+section marks or enum codes in prose, one line per ticker, "Nothing new." for empty
+sections. Structured fields keep their exact enum values. The note is server-side and not
+part of any `RuleVersion`, so it does not affect kernel or parity hashes; the committed
+prompts also ask for a one-line **Run check** instead of the old Run ledger table and a
+**Summary for Ivan** at the top of weekly / monthly reports.
+
 **Evidence on `upsert_decision_review`.** Pass cited evidence inline via the `evidence`
 array (`{ tier, kind, observedAt }` per item, tiers `T1`–`T4`, up to 20 items) rather than
 a separate `add_evidence` follow-up call when writing the DR fresh — `add_evidence` exists

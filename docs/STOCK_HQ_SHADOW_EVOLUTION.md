@@ -134,6 +134,23 @@ someone edit the DB out from under git, or git out from under the DB". A promote
 `rules-mirror` branch — **never `main`**, since a push to `main` would trigger a prod
 deploy (`src/lib/rules/gitMirror.ts`).
 
+**Human publish** (`scripts/publish-rule-version.ts`, pure logic in
+`src/lib/rules/publish.ts`). When Ivan edits `/prompts` on disk (e.g. the plain-language
+output changes), the running ruleset does not change until the edit is published: the
+script retires the current `ACTIVE`, creates a new `ACTIVE`/`HUMAN` row from the disk files
+(kernel gate + forbidden-pattern scan first), and **rebases** any in-flight `CANDIDATE` onto
+it by re-applying the candidate's changed sections — same mechanics as a gap-fix rebase
+(`EARLY_KILL reason=rebased` on the old id, new `CANDIDATE` row keeps its provenance,
+`ShadowBranch.CANDIDATE` pointer moves, paper book is **not** reset). If the publish
+touches a section the candidate also rewrote, the script aborts and leaves everything
+untouched. The event is logged as `GAPFIX` with `actor=HUMAN` and `detail.human=true` —
+there is no dedicated `HUMAN_PUBLISH` kind.
+
+**Non-versioned prefixes.** Two blocks are prepended to every `get_prompt` response at
+read time and are *not* part of any `RuleVersion`, so they never affect kernel or parity
+hashes: the "Writing for Ivan" style note (`src/lib/agent/styleBlock.ts`, all callers) and
+the PAPER PASS brief (`src/lib/shadow/brief.ts`, `mcp:shadow` callers only).
+
 ### 2.4 Challenger resolution — pointer-as-truth (`src/lib/rules/challenger.ts`)
 
 **Delta from the original plan:** the plan assumed the CANDIDATE branch could be resolved
@@ -249,6 +266,18 @@ until ≥12 RESOLVED interim (21-session) counterfactuals have non-zero signed c
 `EVOLUTION_PROMOTE=0` as the ops kill switch. The shadow connector must authorize with
 `mcp:shadow` — real-book reads of size/cash (`list_portfolio`, `list_trades`) and all
 real-book writes are refused server-side.
+
+**Status page** (`/stocks/shadow`, `src/lib/shadow/summary.ts`, pure helpers in
+`summaryMath.ts`). `getShadowTestSummary()` is read-only and reuses the same cutoff,
+pairing and PAPER decision-count helpers as `evolution_evaluate` (exported from
+`src/lib/evolution/evaluate.ts`), so the page's promotion checklist cannot drift from the
+cron's verdict. Above the fold it answers four questions in plain English — what is being
+tested, who is winning (z mapped to a Φ(z) "confidence %"), how close to a decision (gate
+checklist + projected earliest date), what the books did — with both NAV series rebased to
+100 at the test start. Raw tables (orders, counterfactuals, snapshots, DRs, version
+history, kernel fences, rejects) sit under a closed "Details for the curious" block.
+`MIRROR` and `SCORE` events are hidden from the History card; rebase kills and human
+publishes are worded as such rather than as losses.
 
 ### 2.8 Evolution engine (`src/lib/evolution/`)
 
