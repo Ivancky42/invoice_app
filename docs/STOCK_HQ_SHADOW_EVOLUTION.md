@@ -188,8 +188,25 @@ Two independent `ShadowBranch` rows, `LIVE` and `CANDIDATE`, each with its own `
 the paper book is accounting-isolated from the real one by construction (verified by
 grepping those modules for the real-book model names).
 
-- `shadow_enqueue` (`src/lib/shadow/enqueue.ts`) turns a Decision Review into a
-  `ShadowOrder` per branch, sized by `permittedSize` (§4) for the branch's own ruleset.
+- **Two decision streams.** `DecisionReview.book` is `REAL` (the LIVE routines advising
+  Ivan on his real portfolio) or `PAPER` (decisions made *about a paper book*). Only
+  `book=PAPER` rows drive the paper books, seed counterfactuals, or count toward the lane
+  minimums — the real-book advisory stream is invisible to the shadow ledger, so the test
+  is "current rules vs new rules", never "new rules vs whatever Ivan did". PAPER rows are
+  written by the `mcp:shadow` connector, which runs two *paper passes* per day (LIVE rules
+  over the LIVE paper book, then CANDIDATE rules over the CANDIDATE paper book) following
+  the non-versioned PAPER PASS brief that `get_prompt` prepends for that scope
+  (`src/lib/shadow/brief.ts`). `get_context(book="PAPER")` serves the paper positions,
+  cash and NAV *as* `positions` / `cash` / `nav`, joined with shared analytics metadata
+  (sleeve, zones, earnings) but never Ivan's real action/conviction, so the routine
+  prompts apply unchanged.
+- `shadow_enqueue` (`src/lib/shadow/enqueue.ts`) turns a `book=PAPER` Decision Review into
+  a `ShadowOrder` for its branch, sized by conviction tier under `singlePositionPct`,
+  `cashFloorPct` (a BUY never spends through the floor) and `speculativeSleevePct` (sleeve
+  from the shared Portfolio label) for the branch's own ruleset. `upsert_decision_review`
+  rejects PAPER decisions that cannot be executed (REDUCE/EXIT/ADD on an unheld name, BUY
+  on a held name, BUY/ADD without `convictionScore`) with a corrective 400 so the agent
+  fixes them in-run instead of a silent `no_position` reject here.
 - `shadow_fill` (`src/lib/shadow/fill.ts`) fills a `PENDING` order at the **next session's
   `PriceHistory.open`**, never same-session and never at a close — `fillSession >
   decisionSession` is enforced structurally, closing the "traded on a price it could not
@@ -200,10 +217,16 @@ grepping those modules for the real-book model names).
 - `src/lib/shadow/branches.ts` also owns `resetBranch(branch, ruleVersionId)`: closes every
   open position, rejects **all** orders in place (`branch_reset` — rows stay as enqueue
   idempotency markers; fill fields cleared), deletes fitness/counterfactual rows, and
-  restarts the book at
-  `SHADOW_INITIAL_NAV` under the new ruleset. Used on every promotion and every kill —
-  a challenger's book, win or lose, never carries positions or drawdown history into the
-  next experiment.
+  restarts the book at `SHADOW_INITIAL_NAV` under the new ruleset. Used on every kill /
+  HARD_REVERT / INCONCLUSIVE — the idle book never carries positions or drawdown history
+  into the next experiment.
+- `cloneBranchBook(from, to, ruleVersionId)` does the same wipe of `to`, then copies
+  `from`'s open positions and cash and sets `startNav = highWaterNav` to `from`'s NAV.
+  Used on every **propose** and every **promotion**: the challenger starts as an exact copy
+  of the LIVE paper book so the only difference between the two books is the rules.
+  (Fitness increments are NAV ratios and drawdown is relative to the high-water mark, so the
+  absolute starting level is irrelevant.) `scripts/align-paper-books.ts` is the one-time
+  cutover that applied this to the already-running challenger.
 
 ### 2.7 Fitness (`src/lib/fitness/`)
 
@@ -219,10 +242,13 @@ on an already-held position is treated as HOLD, not a counterfactual — there i
 declined). Interim credit enters fitness ~3 weeks after the decision; the 63-session row
 stores the residual vs already-recognized shorter credits so lifetime Σ equals the quarter
 measure. `src/lib/fitness/breadthClassify.ts` computes `MoveClass` per decision.
-`evolution_evaluate` additionally refuses **promotion** until ≥20 RESOLVED interim (21-session)
-counterfactuals have non-zero signed credit (`counterfactual_credit_gate`); kills/reverts still
-run. Keep `EVOLUTION_PROMOTE=0` as the ops kill switch. CANDIDATE Cowork connectors must
-authorize with `mcp:shadow` — real-book writes are refused server-side.
+Counterfactuals are seeded from `book=PAPER` refusals only, sized against the branch's
+own paper book on both branches. `evolution_evaluate` additionally refuses **promotion**
+until ≥12 RESOLVED interim (21-session) counterfactuals have non-zero signed credit
+(`counterfactual_credit_gate`, `minResolvedNonzeroCredits`); kills/reverts still run. Keep
+`EVOLUTION_PROMOTE=0` as the ops kill switch. The shadow connector must authorize with
+`mcp:shadow` — real-book reads of size/cash (`list_portfolio`, `list_trades`) and all
+real-book writes are refused server-side.
 
 ### 2.8 Evolution engine (`src/lib/evolution/`)
 
@@ -367,12 +393,19 @@ HARD_REVERT → EARLY_KILL → PROMOTE → INCONCLUSIVE → CONTINUE
    clause requires this precedence and it cannot be reordered by any rule change.
 2. `EARLY_KILL` — ≥10 sessions and `z ≤ −1.5`: the candidate is losing badly enough to stop
    early rather than exhaust the evidence horizon.
-3. `PROMOTE` — `z ≥ 2.0` **and** the lane's minimum evidence is met (`FAST`: 10
-   sessions/10 decisions; `SLOW`: 30 sessions/20 decisions) **and** the candidate's max
-   drawdown is within `max(live's drawdown × 1.25, 5% floor)` **and** fewer than 8
-   promotions have occurred in the trailing 90 days.
-4. `INCONCLUSIVE` — ≥60 sessions with no promote/revert signal; the experiment is stale.
+3. `PROMOTE` — two tiers, either suffices: **strong** `z ≥ 2.0` at ≥20 paired sessions
+   (`SLOW`; `FAST` needs 10), or **patient** `z ≥ 1.75` at ≥30 paired sessions. Plus, in
+   every case: **both** paper books have written at least the lane's minimum PAPER decisions
+   since the cutoff (`FAST` 10, `SLOW` 15 — an idle LIVE book is not a fair comparator),
+   the candidate's max drawdown is within `max(live's drawdown × 1.25, 5% floor)`, and
+   fewer than 8 promotions have occurred in the trailing 90 days.
+4. `INCONCLUSIVE` — ≥50 sessions with no promote/revert signal; the experiment is stale.
 5. `CONTINUE` — the steady state; keep collecting evidence.
+
+Every number above except the kernel 25% floor lives in `Config.EVOLUTION_THRESHOLDS`
+(JSON, parsed by `getEvolutionThresholds()` in `src/lib/stocks/config.ts` with the code
+defaults shown here), so the gates can be tuned without a deploy. `get_shadow_fitness`
+and the `evolution_evaluate` event detail both report the effective values.
 
 **Promotion is one transaction** (`promote()` in `evolution/evaluate.ts`): retire the
 incumbent (partial unique index allows exactly one `ACTIVE` row), activate the candidate,
@@ -385,9 +418,10 @@ The move is bounded three separate ways before it can ever reach this transactio
 ratchet at propose time, and the 8-promotions-per-90-days rail inside
 `evaluateCandidate` itself.
 
-**Deposed-champion mechanics:** after a promotion, `resetBranch("CANDIDATE",
+**Deposed-champion mechanics:** after a promotion, `cloneBranchBook("LIVE", "CANDIDATE",
 isRevert ? candidateId : activeId)` re-points the challenger book at the version the new
-incumbent just deposed — the new champion has to beat what it replaced, not coast. A
+incumbent just deposed and restarts it as a copy of the LIVE paper book — the new champion
+has to beat what it replaced from the same starting position, not coast. A
 `REVERT` (the deposed champion winning its own revert series) is **not** a separate
 mechanism: it is `PROMOTE` again, `isRevert = candidateId === active.parentId`, same
 transaction, same `PROMOTE` event kind — only the detail records `revert: true`. After a
@@ -466,22 +500,21 @@ own candidate would remove the only selection pressure in the system.
   unset the chain is silently skipped (`chainSkipped` in the tick detail) and the remaining
   jobs wait for tomorrow's scheduled tick. A failed chain fetch is logged into the ledger,
   not retried.
-- **Slow-lane / prose evolution needs the second Cowork schedule.** `DecisionReview` rows
-  are written per-branch, and there is no routine that writes `CANDIDATE`-branch DRs today
-  — only the Weekly LIVE routine exists. Without a second Cowork schedule running
-  `branch=CANDIDATE`, the CANDIDATE book only ever fills the mechanical
-  (limits-driven) shadow orders any DecisionReview on either branch produces; there is no
-  independent CANDIDATE decision stream to test SLOW-lane prose changes against. In
-  concrete terms: `decisions` (the count `evolution_evaluate` reads for the lane minimum)
-  stays at 0 for the CANDIDATE branch until that schedule exists, so `z` for a SLOW-lane
-  candidate can accumulate sessions but never clears the `decisions >= 20` minimum, and
-  **autonomous promotion of a SLOW-lane / prose candidate cannot occur until the CANDIDATE
-  schedule exists.** This is a safe default, not a bug — see the runbook §7.
+- **Both paper books depend on the single `mcp:shadow` daily run.** `book=PAPER`
+  decisions come only from that run's two paper passes. If it stops, both books go idle,
+  `decisions` / `liveDecisions` stop growing, and the symmetric decision gate blocks
+  promotion until it resumes — a safe default. One agent run applies two rulesets back to
+  back; the server stamps `branch`/`book` and validates PAPER decisions against the right
+  book, but reasoning can still bleed between passes. Watch the combined CANDIDATE daily
+  log for that in the first weeks. See the runbook §7.
+- **Sleeve cap in paper sizing is only as good as the shared label.** `Watchlist` has no
+  `sleeve` column, so a watchlist-only name is treated as not speculative until it has a
+  Portfolio row with a sleeve.
 - **Revert series runs on SLOW-lane minimums.** A deposed champion always resumes as a
   full `RuleVersion` (its own `lane` is whatever it was when active, which may be null/SLOW
-  for an old version), so its revert series is held to the SLOW lane's 30-session/20-
-  decision minimum, not the FAST lane's 10/10, even if the version that deposed it was a
-  FAST-lane limits tweak. This means a revert series can take materially longer to resolve
+  for an old version), so its revert series is held to the SLOW lane's 20-session/15-
+  decision minimum (or the patient 30-session tier), not the FAST lane's 10/10, even if the
+  version that deposed it was a FAST-lane limits tweak. This means a revert series can take materially longer to resolve
   than the promotion that triggered it.
 - **DecisionReview has no `sleeve` column (§2.10).** `permittedSize`'s speculative-sleeve
   cap is inert in seeding today — every shadow order and counterfactual is sized as if

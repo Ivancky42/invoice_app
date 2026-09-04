@@ -180,7 +180,19 @@ idea / trend / document writes, `sync_tracked_tickers`, `delete_watchlist` — *
 `branch` param outright with `400 branch_not_allowed_on_real_book`: both branches read the
 same one real book, and a `branch=CANDIDATE` write attempt on the real-book surface must
 never silently mutate it. `CANDIDATE`-branch idempotency keys are server-prefixed
-(`CANDIDATE:${key}`) so a candidate replay can never collide with or address a LIVE row.
+(`CANDIDATE:${key}`) so a candidate replay can never collide with or address a LIVE row;
+LIVE paper-book keys are prefixed `LIVE:PAPER:${key}`.
+
+**`book` param semantics.** `DecisionReview.book` is `REAL` (advice about Ivan's real
+portfolio) or `PAPER` (a decision about a paper book). `get_context`,
+`upsert_decision_review` and `list_decision_reviews` accept `book`. `mcp:tools` and HTTP
+callers are always `REAL` on `get_context` / writes (`400 paper_book_requires_shadow_scope`
+otherwise) and may read either book on listing tools; the `mcp:shadow` connector is always
+`PAPER`, may address `branch=LIVE` on book-aware tools (the LIVE *paper* book), and is
+refused `list_portfolio` / `list_trades`. `get_context(book="PAPER")` returns the paper
+book as `positions` / `cash` / `nav`, plus `bookMode`, `pendingOrders` and `paperBrief`;
+`get_prompt` for `mcp:shadow` callers is prefixed with the PAPER PASS brief. See
+`docs/SHADOW_EVOLUTION_RUNBOOK.md` §7.
 
 **Evidence on `upsert_decision_review`.** Pass cited evidence inline via the `evidence`
 array (`{ tier, kind, observedAt }` per item, tiers `T1`–`T4`, up to 20 items) rather than

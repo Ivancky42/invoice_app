@@ -213,50 +213,86 @@ rather than a clean chain.
 
 ---
 
-## 7. Second Cowork schedule — `branch=CANDIDATE`
+## 7. The paper-pass run (`mcp:shadow`) — how both paper books get their decisions
 
-The current Cowork routines run once each, against `branch=LIVE` (the default). Everything
-in this build **works without a second schedule** — the LIVE shadow book fills, marks,
-scores, and reports normally — but one thing does not:
+The four LIVE routines (Daily / Weekly / Earnings / Monthly, scope `mcp:tools`) advise Ivan
+on his **real** portfolio. Their Decision Reviews are `book=REAL` and are **invisible to the
+shadow ledger**: they do not enqueue paper orders, seed counterfactuals, or count toward
+lane minimums. The shadow test is "current rules vs new rules", not "new rules vs what Ivan
+did".
 
-**Without a `branch=CANDIDATE` schedule, the CANDIDATE book never receives its own
-Decision Review stream.** `DecisionReview` rows are written per-branch; only the existing
-LIVE-branch routines write them today. A SLOW-lane (prose) candidate ruleset can
-accumulate shadow **sessions** on the CANDIDATE book (mechanical fills from whatever
-DecisionReviews exist still enqueue against both branches' current rulesets), but
-`evolution_evaluate`'s `decisions` count — the number of CANDIDATE-branch DecisionReview
-rows since the candidate's evidence cutoff — stays at 0. The SLOW lane's promotion
-minimum is `sessions >= 30 AND decisions >= 20`; with `decisions` permanently 0, that
-minimum is never met, `z` never gets a chance to clear the promote threshold under the
-lane-minimum gate, and the candidate sits at `CONTINUE` forever (or ages out to
-`INCONCLUSIVE` at 60 sessions without ever having been properly tested).
+Both paper books are driven by the single existing `mcp:shadow` daily schedule. No
+schedule text needs to change: for that scope the server
 
-**The truth, stated plainly: autonomous promotion of a SLOW-lane / prose candidate cannot
-occur until the second `branch=CANDIDATE` Cowork schedule exists.** This is a safe
-default, not a missing feature to panic about — it means the system will not promote a
-prose change on thin evidence just because a schedule was forgotten. FAST-lane (numeric
-limits-only) candidates are less affected in principle since their sizing is mechanical,
-but they still accrue their `decisions` count from the same source and are subject to the
-same gate.
+- forces `book=PAPER` on every call and refuses `list_portfolio` / `list_trades` and every
+  real-book write (`shadow_scope_real_book_forbidden`);
+- allows `branch=LIVE` on the book-aware tools (`get_context`, `get_prompt`,
+  `upsert_decision_review`, `list_decision_reviews`, `list_shadow_*`, `get_shadow_fitness`,
+  `list_counterfactuals`) so the run can address the LIVE *paper* book; `upsert_daily_log`
+  / `upsert_report` stay CANDIDATE-only so the run writes one combined log;
+- prepends the **PAPER PASS brief** (`src/lib/shadow/brief.ts`, not part of any
+  RuleVersion) to every `get_prompt` response. The brief tells the run to do Pass A
+  (current rules over the LIVE paper book) then Pass B (new rules over the CANDIDATE paper
+  book), to write a WAIT/AVOID when nothing qualifies ("idle is a decision"), and to finish
+  with one `upsert_daily_log(branch="CANDIDATE")` covering both passes;
+- serves the paper book *as the book* from `get_context(book="PAPER")`: `positions`,
+  `cash`, `nav`, `sleeveExposure`, `trackedTickers` come from the shadow ledger, joined
+  with shared analytics metadata only (never Ivan's real action/conviction);
+- rejects PAPER decisions the book cannot execute (REDUCE/EXIT/ADD on an unheld name, BUY
+  on a held name, BUY/ADD without `convictionScore`) with a corrective 400.
 
-To unlock full autonomous evolution (including SLOW-lane prose testing), set up a second
-Claude Custom Connector schedule identical to the existing Weekly/Daily/Earnings/Monthly
-routines, but calling `get_context` / `get_prompt` / `upsert_decision_review` /
-`upsert_report` with `branch="CANDIDATE"` explicitly on every call. See
-`prompts/weekly.md` §0 ("Branch") for the exact call shape the routine already expects.
+**What to watch after the 09:15 MYT run:**
 
-**Structural guard (required):** authorize the CANDIDATE connector with scope
-`mcp:shadow` (radio on `/api/oauth/authorize`). That token can write branch-aware
-artifacts only; `patch_portfolio` / watchlist / ideas / evolution writes return
-`shadow_scope_real_book_forbidden`. LIVE routines keep `mcp:tools`. Prompt text alone
-is not enough — if the capability is reachable, it eventually gets reached.
+```sql
+SELECT branch, book, "decisionType", count(*)
+FROM "DecisionReview"
+WHERE "createdAt" > now() - interval '1 day'
+GROUP BY 1,2,3 ORDER BY 1,2,3;
+```
 
-**Avoided-loss credit:** each refusal seeds horizons **21 and 63**. Interim credit
-enters fitness ~3 weeks after the decision; the 63-session row stores the residual so
-lifetime Σ equals the quarter measure. When z clears the promote threshold,
-`evolution_evaluate` still refuses to crown until ≥20 RESOLVED **interim** credits are
-non-zero (`skipped: "counterfactual_credit_gate"` → CONTINUE). Kills/reverts are not
-blocked by that gate. Keep `EVOLUTION_PROMOTE=0` until hand-checked.
+Expect `book=PAPER` rows on **both** branches, some BUYs, and `ShadowOrder` rows without
+`no_position` rejects the next morning. `evolution_evaluate`'s detail now carries
+`decisions` (CANDIDATE) **and** `liveDecisions`; both must reach the lane minimum
+(`SLOW` 15, `FAST` 10) before a promotion can fire.
+
+**Book alignment.** On every `propose_rule_change` and every promotion the challenger book
+is restarted as an exact **clone** of the LIVE paper book (`cloneBranchBook`), so the two
+books differ only in rules. The one-time cutover for the already-running challenger is:
+
+```bash
+npx tsx scripts/align-paper-books.ts --confirm-destructive
+```
+
+It refuses to run while `EVOLUTION_PROMOTE` is on (override: `--allow-promote-on`), prints
+both books before and after, and restarts the challenger's paired series from that day.
+
+**Avoided-loss credit:** each refusal seeds horizons **21 and 63**. Interim credit enters
+fitness ~3 weeks after the decision; the 63-session row stores the residual so lifetime Σ
+equals the quarter measure. When z clears a promote tier, `evolution_evaluate` still
+refuses to crown until ≥12 RESOLVED **interim** credits are non-zero
+(`skipped: "counterfactual_credit_gate"` → CONTINUE). Kills/reverts are not blocked by
+that gate. Keep `EVOLUTION_PROMOTE=0` until ~5 clean paper-pass sessions have been
+hand-checked.
+
+**Tuning the gates without a deploy.** All promotion / kill thresholds are read from
+`Config.EVOLUTION_THRESHOLDS` (JSON). Defaults:
+
+```json
+{
+  "promote": { "strong": { "z": 2.0, "minSessions": { "FAST": 10, "SLOW": 20 } },
+               "patient": { "z": 1.75, "minSessions": 30 } },
+  "minDecisions": { "FAST": 10, "SLOW": 15 },
+  "earlyKill": { "z": -1.5, "minSessions": 10 },
+  "inconclusiveSessions": 50,
+  "minResolvedNonzeroCredits": 12,
+  "minTurnoverSessions": 3,
+  "promotionRateLimit": 8,
+  "promotionRateWindowDays": 90
+}
+```
+
+Partial overrides merge onto the defaults; invalid JSON falls back to the defaults. The
+kernel 25% hard-revert floor is not configurable.
 
 ---
 
