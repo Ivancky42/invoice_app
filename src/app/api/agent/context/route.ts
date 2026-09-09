@@ -51,9 +51,18 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
-  // HTTP AGENT_TOKEN has no scopes → mcp:tools-equivalent: REAL only.
+  const branchParam = req.nextUrl.searchParams.get("branch");
+  if (branchParam !== null && branchParam !== "LIVE" && branchParam !== "CANDIDATE") {
+    return NextResponse.json(
+      { ok: false, error: "invalid_branch", message: "branch must be LIVE or CANDIDATE" },
+      { status: 400 },
+    );
+  }
   const resolved = resolveShadowCall(
-    { book: bookParam === "REAL" || bookParam === "PAPER" ? bookParam : undefined },
+    {
+      book: bookParam === "REAL" || bookParam === "PAPER" ? bookParam : undefined,
+      branch: branchParam === "LIVE" || branchParam === "CANDIDATE" ? branchParam : undefined,
+    },
     undefined,
     { bookAware: true },
   );
@@ -64,7 +73,11 @@ export async function GET(req: NextRequest) {
   const started = Date.now();
   try {
     const context = await withBudget(
-      buildAgentContext(routine, "LIVE", (resolved.book ?? "REAL") as DecisionBook),
+      buildAgentContext(
+        routine,
+        resolved.branch ?? "LIVE",
+        (resolved.book ?? "REAL") as DecisionBook,
+      ),
       CONTEXT_BUDGET_MS,
     );
     const res = NextResponse.json(context);

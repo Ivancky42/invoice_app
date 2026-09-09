@@ -147,7 +147,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get agent context",
       description:
-        "Bundle portfolio state, watchlist, trends, ideas, limits, enums, and rulesVersion for a routine. book=PAPER means the paper book for that branch is the book under management (positions/nav/cash come from the shadow ledger). mcp:shadow connectors are always PAPER and may address branch LIVE or CANDIDATE.",
+        "Bundle portfolio state, watchlist, trends, ideas, limits, enums, and rulesVersion for a routine. Default is Ivan's live book (branch LIVE, book REAL). Pass branch=CANDIDATE for the paper test (book is forced PAPER). Pass book=PAPER with branch=LIVE for the current-rules paper book.",
       inputSchema: {
         routine: z.enum(AGENT_ROUTINES).describe("Which Cowork routine is running"),
         branch: z
@@ -155,7 +155,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
           .optional()
           .describe("Ruleset branch (default LIVE for mcp:tools, CANDIDATE for mcp:shadow)"),
         book: decisionBookInputSchema.describe(
-          "REAL (live portfolio, mcp:tools only) or PAPER (shadow ledger). mcp:shadow is always PAPER.",
+          "REAL (Ivan's live book, default) or PAPER (shadow ledger). branch=CANDIDATE is always PAPER.",
         ),
       },
     },
@@ -194,7 +194,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get prompt markdown",
       description:
-        "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only. Every caller receives a Writing for Ivan style note prepended; mcp:shadow callers also receive a PAPER PASS brief. Stored RuleVersion files are untouched. book=PAPER means the paper book for that branch is the book under management.",
+        "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only. Every caller receives a Writing for Ivan style note prepended. branch=CANDIDATE (or book=PAPER) also prepends the PAPER PASS brief. Stored RuleVersion files are untouched.",
       inputSchema: {
         name: z.enum(PROMPT_NAMES).describe("Prompt basename without .md"),
         branch: z
@@ -212,7 +212,8 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       try {
         const markdown = await getPromptMarkdown(name, resolved.branch ?? "LIVE");
         const text = composePromptText(markdown, {
-          shadow: isShadowOnlyScope(toolScopes(extra)),
+          shadow:
+            isShadowOnlyScope(toolScopes(extra)) || resolved.branch === "CANDIDATE",
           name,
         });
         return {

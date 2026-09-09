@@ -245,25 +245,28 @@ shadow ledger**: they do not enqueue paper orders, seed counterfactuals, or coun
 lane minimums. The shadow test is "current rules vs new rules", not "new rules vs what Ivan
 did".
 
-Both paper books are driven by the single existing `mcp:shadow` daily schedule. No
-schedule text needs to change: for that scope the server
+Both paper books are driven by the existing **candidate / shadow daily** Cowork schedule
+on the same Stock HQ connector (`mcp:tools`). Claude only allows one connector per URL, so
+paper is not a second MCP. For that schedule the server
 
-- forces `book=PAPER` on every call and refuses `list_portfolio` / `list_trades` and every
-  real-book write (`shadow_scope_real_book_forbidden`);
-- allows `branch=LIVE` on the book-aware tools (`get_context`, `get_prompt`,
-  `upsert_decision_review`, `list_decision_reviews`, `list_shadow_*`, `get_shadow_fitness`,
-  `list_counterfactuals`) so the run can address the LIVE *paper* book; `upsert_daily_log`
-  / `upsert_report` stay CANDIDATE-only so the run writes one combined log;
+- treats `branch=CANDIDATE` as the paper test: `get_context` / `upsert_decision_review` are
+  forced `book=PAPER` (even if the agent passes `book=REAL`);
+- allows explicit `book=PAPER` with `branch=LIVE` so Pass A can address the current-rules
+  paper book;
 - prepends the **PAPER PASS brief** (`src/lib/shadow/brief.ts`, not part of any
-  RuleVersion) to every `get_prompt` response. The brief tells the run to do Pass A
+  RuleVersion) to `get_prompt` when `branch=CANDIDATE`. The brief tells the run to do Pass A
   (current rules over the LIVE paper book) then Pass B (new rules over the CANDIDATE paper
   book), to write a WAIT/AVOID when nothing qualifies ("idle is a decision"), and to finish
   with one `upsert_daily_log(branch="CANDIDATE")` covering both passes;
-- serves the paper book *as the book* from `get_context(book="PAPER")`: `positions`,
-  `cash`, `nav`, `sleeveExposure`, `trackedTickers` come from the shadow ledger, joined
-  with shared analytics metadata only (never Ivan's real action/conviction);
+- serves the paper book *as the book* from `get_context(branch="CANDIDATE")` (or
+  `book="PAPER"`): `positions`, `cash`, `nav`, `sleeveExposure`, `trackedTickers` come from
+  the shadow ledger, joined with shared analytics metadata only (never Ivan's real
+  action/conviction);
 - rejects PAPER decisions the book cannot execute (REDUCE/EXIT/ADD on an unheld name, BUY
   on a held name, BUY/ADD without `convictionScore`) with a corrective 400.
+
+LIVE Daily / Weekly / Earnings / Monthly omit `branch` and keep advising Ivan's real book.
+Do not point those routines at `branch=CANDIDATE`.
 
 **What to watch after the 09:15 MYT run:**
 

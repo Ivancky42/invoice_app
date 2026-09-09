@@ -6,7 +6,6 @@ import {
   MCP_SCOPE,
   MCP_SHADOW_SCOPE,
   normalizeMcpScopeRequest,
-  paperBookRequiresShadowScopeError,
   resolveShadowCall,
   shadowScopeLiveBranchError,
 } from "@/lib/agent/mcp-scope";
@@ -59,13 +58,22 @@ describe("mcp scopes", () => {
     expect(resolved).toEqual({ branch: "CANDIDATE", book: "PAPER" });
   });
 
-  it("resolveShadowCall: mcp:tools + book=PAPER is refused on writes / get_context", () => {
+  it("resolveShadowCall: mcp:tools + book=PAPER on LIVE is allowed (Pass A)", () => {
     const resolved = resolveShadowCall(
       { book: "PAPER" as const },
       [MCP_SCOPE],
       { bookAware: true },
     );
-    expect(resolved).toEqual({ __error: JSON.stringify(paperBookRequiresShadowScopeError()) });
+    expect(resolved).toEqual({ book: "PAPER" });
+  });
+
+  it("resolveShadowCall: mcp:tools + branch=CANDIDATE forces PAPER even if book=REAL", () => {
+    const resolved = resolveShadowCall(
+      { branch: "CANDIDATE" as const, book: "REAL" as const },
+      [MCP_SCOPE],
+      { bookAware: true },
+    );
+    expect(resolved).toEqual({ branch: "CANDIDATE", book: "PAPER" });
   });
 
   it("resolveShadowCall: listing tools leave omitted book unset for mcp:tools / HTTP", () => {
