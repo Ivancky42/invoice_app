@@ -28,13 +28,20 @@ export function writingStyleBlock(): string {
 
 /**
  * Compose the text `get_prompt` returns: style block first, then the PAPER PASS
- * brief for mcp:shadow callers, then the stored ruleset markdown.
+ * brief for paper callers, then the stored ruleset markdown.
+ *
+ * `passA` is LIVE rules during the paper test (`branch=LIVE`, `book=PAPER`): a
+ * short "rules text only" header so it is not mistaken for Ivan's live-advice daily.
+ * `shadow` is the full two-pass brief (CANDIDATE, or mcp:shadow).
  */
 export function composePromptText(
   markdown: string,
-  opts: { shadow: boolean; name: PromptName },
+  opts: { shadow: boolean; name: PromptName; passA?: boolean },
 ): string {
   const style = writingStyleBlock();
+  if (opts.passA) {
+    return `${style}\n\n---\n\n${paperPassBrief(opts.name, { passA: true })}\n\n---\n\n${markdown}`;
+  }
   if (opts.shadow) {
     return `${style}\n\n---\n\n${paperPassBrief(opts.name)}\n\n---\n\n${markdown}`;
   }

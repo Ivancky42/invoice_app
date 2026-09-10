@@ -151,7 +151,26 @@ async function branchRuleVersionId(branch: Branch = "LIVE"): Promise<number | nu
   return ruleSet.versionId;
 }
 
-export async function upsertDailyLog(input: DailyLogInput) {
+export type UpsertDailyLogResult =
+  | {
+      ok: true;
+      dailyLog: {
+        id: string;
+        title: string;
+        logDate: string | null;
+        routineType: string;
+        branch: string;
+        flaggedTickers: string[];
+        rulesVersion: string | null;
+      };
+    }
+  | { ok: false; error: "pass_a_incomplete"; message: string };
+
+export function passAIncompleteMessage(logDate: string): string {
+  return `Pass A is missing: no LIVE PAPER decision reviews for ${logDate}. Write upsert_decision_review(branch="LIVE", book="PAPER") for the LIVE paper holdings first, then retry this log.`;
+}
+
+export async function upsertDailyLog(input: DailyLogInput): Promise<UpsertDailyLogResult> {
   const logDate = parseYmdNoon(input.logDate);
   const routineType = input.routineType ?? "DAILY";
   const title =
@@ -159,6 +178,33 @@ export async function upsertDailyLog(input: DailyLogInput) {
     (routineType === "EARNINGS" ? `Earnings ${input.logDate}` : input.logDate);
 
   const branch = input.branch ?? "LIVE";
+
+  if (branch === "CANDIDATE" && routineType === "DAILY") {
+    const liveOpen = await openPaperTickers("LIVE");
+    if (liveOpen.size > 0) {
+      const dayStart = new Date(`${input.logDate}T00:00:00.000Z`);
+      const nextDay = new Date(dayStart);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const passACount = await prisma.decisionReview.count({
+        where: {
+          branch: "LIVE",
+          book: "PAPER",
+          OR: [
+            { decisionDate: logDate },
+            { createdAt: { gte: dayStart, lt: nextDay } },
+          ],
+        },
+      });
+      if (passACount === 0) {
+        return {
+          ok: false,
+          error: "pass_a_incomplete",
+          message: passAIncompleteMessage(input.logDate),
+        };
+      }
+    }
+  }
+
   const ruleVersionId = await branchRuleVersionId(branch);
 
   const update: PrismaTypes.DailyLogUpdateInput = {};
@@ -200,13 +246,16 @@ export async function upsertDailyLog(input: DailyLogInput) {
   });
 
   return {
-    id: row.id,
-    title: row.title,
-    logDate: row.logDate?.toISOString() ?? null,
-    routineType: row.routineType,
-    branch: row.branch,
-    flaggedTickers: row.flaggedTickers,
-    rulesVersion: row.rulesVersion,
+    ok: true,
+    dailyLog: {
+      id: row.id,
+      title: row.title,
+      logDate: row.logDate?.toISOString() ?? null,
+      routineType: row.routineType,
+      branch: row.branch,
+      flaggedTickers: row.flaggedTickers,
+      rulesVersion: row.rulesVersion,
+    },
   };
 }
 

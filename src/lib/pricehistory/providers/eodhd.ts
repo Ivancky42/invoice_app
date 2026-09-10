@@ -71,3 +71,9 @@ export async function fetchEodhdHistory(
     .map((row) => mapEodhdRow(ticker, row as EodhdRow))
     .filter((bar): bar is DailyBar => bar !== null);
 }
+
+/** True when EODHD rejected the call because the daily/plan quota is exhausted. */
+export function isEodhdQuotaError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /eodhd .+: 402/.test(msg);
+}

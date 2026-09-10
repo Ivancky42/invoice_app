@@ -20,6 +20,9 @@ export async function POST(req: NextRequest) {
   const parsed = parseOr400(dailyLogInputSchema, body);
   if (!parsed.ok) return parsed.response;
 
-  const row = await upsertDailyLog(parsed.data);
-  return NextResponse.json({ ok: true, dailyLog: row });
+  const result = await upsertDailyLog(parsed.data);
+  if (!result.ok) {
+    return NextResponse.json(result, { status: 409 });
+  }
+  return NextResponse.json(result);
 }

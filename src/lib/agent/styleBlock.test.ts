@@ -35,4 +35,13 @@ describe("composePromptText", () => {
     expect(briefAt).toBeGreaterThan(styleAt);
     expect(bodyAt).toBeGreaterThan(briefAt);
   });
+
+  it("labels Pass A get_prompt as LIVE rules only, not the two-pass procedure", () => {
+    const markdown = "## 1. Daily routine\nDo the work.";
+    const text = composePromptText(markdown, { shadow: true, passA: true, name: "daily" });
+    expect(text).toContain("PAPER PASS A");
+    expect(text).toContain("It is NOT Ivan's live-advice daily");
+    expect(text).not.toContain("### Pass B");
+    expect(text).toContain(markdown);
+  });
 });

@@ -3,12 +3,12 @@ import type { Prisma } from "@/generated/prisma/client";
 import { CSPX_EODHD_SYMBOL } from "@/lib/eodhd/quote";
 import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { isFinnhubRateLimit } from "@/lib/finnhub/quote";
-import { fetchEodhdHistory } from "@/lib/pricehistory/providers/eodhd";
+import { fetchEodhdHistory, isEodhdQuotaError } from "@/lib/pricehistory/providers/eodhd";
 import { fetchFinnhubDailyBar, easternSessionDate } from "@/lib/pricehistory/providers/finnhub";
 import { fetchStooqHistory } from "@/lib/pricehistory/providers/stooq";
 import {
-  buildPriceHistoryUniverse,
   CALENDAR_ANCHOR_TICKERS,
+  collectPriceHistoryUniverse,
   CSPX_TICKER,
   eodhdUsSymbol,
 } from "@/lib/pricehistory/symbols";
@@ -56,6 +56,8 @@ const cursorSchema = z.object({
   failedTickers: z.array(z.string()),
   /** Carried across chained ticks so a 429 keeps Finnhub off for the rest of the day. */
   finnhubDisabled: z.boolean().optional(),
+  /** Carried across chained ticks so a 402 keeps EODHD off for the rest of the day. */
+  eodhdDisabled: z.boolean().optional(),
 });
 
 type PriceHistorySyncCursor = z.infer<typeof cursorSchema>;
@@ -70,24 +72,46 @@ function parseCursor(cursor: Prisma.JsonValue | null): PriceHistorySyncCursor {
 
 /**
  * First index in the ordered universe after `after` ("" = start).
- * `ordered` must be {@link orderPriceHistoryUniverse} output (anchors first,
- * then A–Z). A vanished `after` resumes at the next remaining member of that
- * order; a ticker inserted earlier in the order is picked up next daily run.
+ * `ordered` must be {@link orderPriceHistoryUniverse} output (anchors, then
+ * optional paper priority, then A–Z). A vanished `after` resumes at the next
+ * remaining member of that band; a ticker inserted earlier in the order is
+ * picked up next daily run.
  */
 const ANCHOR_SET = new Set<string>(CALENDAR_ANCHOR_TICKERS);
 
-export function resumeIndex(ordered: string[], after: string): number {
+export function resumeIndex(
+  ordered: string[],
+  after: string,
+  priority: Iterable<string> = [],
+): number {
   if (after === "") return 0;
   const idx = ordered.indexOf(after);
   if (idx !== -1) return idx + 1;
 
-  if (ANCHOR_SET.has(after)) {
+  const prioSet = new Set(
+    [...priority]
+      .map((t) => t.trim().toUpperCase())
+      .filter((t) => t && !ANCHOR_SET.has(t)),
+  );
+
+  const isAnchor = ANCHOR_SET.has(after);
+  const isPrio = prioSet.has(after);
+
+  if (isAnchor) {
     const nextAnchor = ordered.find((t) => ANCHOR_SET.has(t) && t > after);
     if (nextAnchor) return ordered.indexOf(nextAnchor);
     const restStart = ordered.findIndex((t) => !ANCHOR_SET.has(t));
     return restStart === -1 ? ordered.length : restStart;
   }
-  const restStart = ordered.findIndex((t) => !ANCHOR_SET.has(t));
+
+  if (isPrio) {
+    const nextPrio = ordered.find((t) => prioSet.has(t) && t > after);
+    if (nextPrio) return ordered.indexOf(nextPrio);
+    const restStart = ordered.findIndex((t) => !ANCHOR_SET.has(t) && !prioSet.has(t));
+    return restStart === -1 ? ordered.length : restStart;
+  }
+
+  const restStart = ordered.findIndex((t) => !ANCHOR_SET.has(t) && !prioSet.has(t));
   if (restStart === -1) return ordered.length;
   const j = ordered.findIndex((t, i) => i >= restStart && t > after);
   return j === -1 ? ordered.length : j;
@@ -134,19 +158,24 @@ export async function fetchFallbackBars(
   ticker: string,
   todaySession: string,
   eodhdKey: string | undefined,
-): Promise<{ bars: DailyBar[]; error: string | null }> {
+  opts: { eodhdDisabled?: boolean } = {},
+): Promise<{ bars: DailyBar[]; error: string | null; eodhdQuota: boolean }> {
   const { from, to } = lookbackWindow(todaySession);
   const errors: string[] = [];
+  let eodhdQuota = false;
 
-  if (eodhdKey) {
+  if (opts.eodhdDisabled) {
+    errors.push("EODHD skipped (quota earlier this run)");
+  } else if (eodhdKey) {
     try {
       await sleep(MS_BETWEEN_FINNHUB);
       const bars = sortBarsByDate(
         await fetchEodhdHistory(ticker, eodhdUsSymbol(ticker), from, to, eodhdKey),
       );
-      if (bars.length > 0) return { bars, error: null };
+      if (bars.length > 0) return { bars, error: null, eodhdQuota: false };
       errors.push("eodhd: no rows");
     } catch (e) {
+      if (isEodhdQuotaError(e)) eodhdQuota = true;
       errors.push(e instanceof Error ? e.message : String(e));
     }
   } else {
@@ -155,13 +184,13 @@ export async function fetchFallbackBars(
 
   try {
     const bars = sortBarsByDate(await fetchStooqHistory(ticker, from, to));
-    if (bars.length > 0) return { bars, error: null };
+    if (bars.length > 0) return { bars, error: null, eodhdQuota };
     errors.push("stooq: no rows");
   } catch (e) {
     errors.push(e instanceof Error ? e.message : String(e));
   }
 
-  return { bars: [], error: errors.join("; ") };
+  return { bars: [], error: errors.join("; "), eodhdQuota };
 }
 
 function toBigIntOrNull(volume: number | undefined): bigint | null {
@@ -271,9 +300,9 @@ async function fetchCspxBar(eodhdKey: string | undefined): Promise<DailyBar | nu
  * resumable via `cursor` when the tick budget runs low.
  */
 export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
-  const universe = await buildPriceHistoryUniverse();
+  const { ordered: universe, priority } = await collectPriceHistoryUniverse();
   const resume = parseCursor(ctx.cursor);
-  const startIndex = resumeIndex(universe, resume.after);
+  const startIndex = resumeIndex(universe, resume.after, priority);
 
   const finnhubKey = process.env.FINNHUB_API_KEY?.trim();
   const eodhdKey = process.env.EODHD_API_KEY?.trim();
@@ -286,6 +315,8 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
   // price_sync already burned most of the Finnhub minute-quota; once we see a
   // 429, stop calling Finnhub for the rest of this run and heal via EODHD.
   let finnhubDisabled = resume.finnhubDisabled === true || !finnhubKey;
+  // Same for EODHD: a 402 is the daily/plan cap, not a per-ticker miss.
+  let eodhdDisabled = resume.eodhdDisabled === true;
 
   for (let i = startIndex; i < universe.length; i++) {
     if (ctx.budget.remainingMs() <= BUDGET_HEADROOM_MS) {
@@ -297,6 +328,7 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
           failed,
           failedTickers,
           finnhubDisabled,
+          eodhdDisabled,
         } satisfies PriceHistorySyncCursor,
         detail: { updated, failed, failedTickers } satisfies PriceHistorySyncDetail,
       };
@@ -307,12 +339,14 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
 
     if (ticker === CSPX_TICKER) {
       try {
+        if (eodhdDisabled) throw new Error("EODHD skipped (quota earlier this run)");
         const bar = await fetchCspxBar(eodhdKey);
         if (!bar) throw new Error("No EODHD bar for CSPX.LSE");
         await upsertBar(bar);
         await recordStatusSuccess(ticker, bar.source);
         updated += 1;
       } catch (e) {
+        if (isEodhdQuotaError(e)) eodhdDisabled = true;
         const message = e instanceof Error ? e.message : String(e);
         await recordStatusFailure(ticker, message);
         failed += 1;
@@ -362,7 +396,10 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
       continue;
     }
 
-    const fallback = await fetchFallbackBars(ticker, todaySession, eodhdKey);
+    const fallback = await fetchFallbackBars(ticker, todaySession, eodhdKey, {
+      eodhdDisabled,
+    });
+    if (fallback.eodhdQuota) eodhdDisabled = true;
     if (fallback.bars.length === 0) {
       failed += 1;
       failedTickers.push(ticker);

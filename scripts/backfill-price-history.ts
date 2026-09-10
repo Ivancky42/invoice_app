@@ -2,7 +2,7 @@
  * EODHD bulk backfill of PriceHistory (stooq fallback per ticker on EODHD error).
  * Prints a per-ticker coverage table; exits 1 if any ticker ended in error.
  *
- * Usage: npx tsx scripts/backfill-price-history.ts [--days=400] [--dry-run] [--overwrite]
+ * Usage: npx tsx scripts/backfill-price-history.ts [--days=400] [--dry-run] [--overwrite] [--tickers=ISRG,RDDT,VST]
  *
  * --overwrite: upsert every fetched bar, replacing existing `(ticker, date)`
  * rows with the provider's full bar (repairs bad nightly closes). Default is
@@ -22,6 +22,14 @@ const dryRun = process.argv.includes("--dry-run");
 const overwrite = process.argv.includes("--overwrite");
 const daysArg = process.argv.find((a) => a.startsWith("--days="));
 const days = daysArg ? Number(daysArg.slice("--days=".length)) : DEFAULT_DAYS;
+const tickersArg = process.argv.find((a) => a.startsWith("--tickers="));
+const onlyTickers = tickersArg
+  ? tickersArg
+      .slice("--tickers=".length)
+      .split(",")
+      .map((t) => t.trim().toUpperCase())
+      .filter(Boolean)
+  : null;
 
 const pool = new Pool({
   connectionString: normalizePgConnectionString(process.env.DATABASE_URL!),
@@ -47,9 +55,13 @@ async function main() {
     throw new Error(`--days must be a positive number, got: ${daysArg ?? DEFAULT_DAYS}`);
   }
 
-  console.log(`Backfilling PriceHistory: days=${days} dryRun=${dryRun} overwrite=${overwrite}\n`);
+  console.log(
+    `Backfilling PriceHistory: days=${days} dryRun=${dryRun} overwrite=${overwrite}` +
+      (onlyTickers ? ` tickers=${onlyTickers.join(",")}` : "") +
+      `\n`,
+  );
 
-  const universe = await buildPriceHistoryUniverse();
+  const universe = onlyTickers ?? (await buildPriceHistoryUniverse());
   const eodhdKey = process.env.EODHD_API_KEY?.trim();
 
   const results = [];

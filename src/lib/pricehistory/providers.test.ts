@@ -106,6 +106,15 @@ describe("orderPriceHistoryUniverse", () => {
       "CRWV",
     ]);
   });
+
+  it("puts open paper tickers after anchors and before A–Z remainder", () => {
+    expect(
+      orderPriceHistoryUniverse(
+        ["CRWV", "SPY", "ALOY", "MSFT", "AAPL", "QQQ", "ISRG", "COIN", "VST"],
+        ["VST", "ISRG", "COIN"],
+      ),
+    ).toEqual(["AAPL", "MSFT", "QQQ", "SPY", "COIN", "ISRG", "VST", "ALOY", "CRWV"]);
+  });
 });
 
 describe("resumeIndex", () => {
@@ -133,6 +142,28 @@ describe("resumeIndex", () => {
   it("returns universe.length when everything up to `after` is done", () => {
     expect(resumeIndex(["AAPL", "MSFT"], "MSFT")).toBe(2);
     expect(resumeIndex(["AAPL", "MSFT"], "ZZZZ")).toBe(2);
+  });
+
+  it("resumes through paper priority then into A–Z rest", () => {
+    const paper = ["COIN", "ISRG"];
+    const ordered = orderPriceHistoryUniverse(
+      ["AAPL", "MSFT", "QQQ", "SPY", "ALOY", "COIN", "ISRG"],
+      paper,
+    );
+    expect(ordered).toEqual(["AAPL", "MSFT", "QQQ", "SPY", "COIN", "ISRG", "ALOY"]);
+    expect(resumeIndex(ordered, "SPY", paper)).toBe(4);
+    expect(resumeIndex(ordered, "COIN", paper)).toBe(5);
+    expect(resumeIndex(ordered, "ISRG", paper)).toBe(6);
+    expect(ordered[6]).toBe("ALOY");
+  });
+
+  it("vanished paper ticker still in the priority set resumes at the next paper name", () => {
+    const paper = ["COIN", "ISRG"];
+    const ordered = orderPriceHistoryUniverse(
+      ["AAPL", "MSFT", "QQQ", "SPY", "ALOY", "ISRG"],
+      paper,
+    );
+    expect(resumeIndex(ordered, "COIN", paper)).toBe(ordered.indexOf("ISRG"));
   });
 
   it("mid-chain removal of the `after` ticker still resumes at the next one", () => {
@@ -281,6 +312,19 @@ describe("sortBarsByDate / syncFailureMessage", () => {
       "No Finnhub quote; eodhd: 402",
     );
     expect(syncFailureMessage(null, null)).toBe("unknown error");
+  });
+});
+
+describe("isEodhdQuotaError", () => {
+  it("matches the 402 quota error and ignores other EODHD failures", async () => {
+    const { isEodhdQuotaError } = await import("@/lib/pricehistory/providers/eodhd");
+    expect(isEodhdQuotaError(new Error("eodhd AAPL.US: 402 (API quota/plan limit reached)"))).toBe(
+      true,
+    );
+    expect(isEodhdQuotaError(new Error("eodhd AAPL.US: 403 (plan likely does not cover this exchange/symbol)"))).toBe(
+      false,
+    );
+    expect(isEodhdQuotaError(new Error("No Finnhub quote"))).toBe(false);
   });
 });
 

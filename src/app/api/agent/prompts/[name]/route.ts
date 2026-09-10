@@ -40,6 +40,14 @@ export async function GET(req: NextRequest, { params }: Params) {
     );
   }
   const branch: Branch = branchParam === "CANDIDATE" ? "CANDIDATE" : "LIVE";
+  const bookParam = req.nextUrl.searchParams.get("book");
+  if (bookParam !== null && bookParam !== "REAL" && bookParam !== "PAPER") {
+    return NextResponse.json(
+      { ok: false, error: "bad_request", message: "book must be REAL or PAPER" },
+      { status: 400 },
+    );
+  }
+  const passA = branch === "LIVE" && bookParam === "PAPER";
 
   try {
     // Parity check: compare the stored ruleset text against the committed file.
@@ -68,6 +76,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     const markdown = await getPromptMarkdown(raw, branch);
     const text = composePromptText(markdown, {
       shadow: branch === "CANDIDATE",
+      passA,
       name: raw,
     });
     return new NextResponse(text, {

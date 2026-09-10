@@ -147,7 +147,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get agent context",
       description:
-        "Bundle portfolio state, watchlist, trends, ideas, limits, enums, and rulesVersion for a routine. Default is Ivan's live book (branch LIVE, book REAL). Pass branch=CANDIDATE for the paper test (book is forced PAPER). Pass book=PAPER with branch=LIVE for the current-rules paper book.",
+        "Bundle portfolio state, watchlist, trends, ideas, limits, enums, and rulesVersion for a routine. Default is Ivan's live book (branch LIVE, book REAL). Pass branch=CANDIDATE for the paper test (book is forced PAPER); that payload includes paperBooks for both LIVE and CANDIDATE so Pass A is not skipped. Pass book=PAPER with branch=LIVE for the current-rules paper book.",
       inputSchema: {
         routine: z.enum(AGENT_ROUTINES).describe("Which Cowork routine is running"),
         branch: z
@@ -194,26 +194,32 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get prompt markdown",
       description:
-        "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only. Every caller receives a Writing for Ivan style note prepended. branch=CANDIDATE (or book=PAPER) also prepends the PAPER PASS brief. Stored RuleVersion files are untouched.",
+        "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only. Every caller receives a Writing for Ivan style note prepended. branch=CANDIDATE prepends the two-pass PAPER PASS brief. Pass A should call branch=LIVE book=PAPER (LIVE rules text only — not Ivan's live-advice daily). Stored RuleVersion files are untouched.",
       inputSchema: {
         name: z.enum(PROMPT_NAMES).describe("Prompt basename without .md"),
         branch: z
           .enum(["LIVE", "CANDIDATE"])
           .optional()
           .describe("Ruleset branch (default LIVE for mcp:tools, CANDIDATE for mcp:shadow)"),
+        book: decisionBookInputSchema.describe(
+          "Pass A: LIVE + PAPER so the LIVE rules prompt is labelled as paper, not live advice. CANDIDATE is always PAPER.",
+        ),
       },
     },
-    async ({ name, branch }, extra) => {
+    async ({ name, branch, book }, extra) => {
       if (!isPromptName(name)) {
         return textError(`Invalid prompt name. Allowed: ${PROMPT_NAMES.join(", ")}`);
       }
-      const resolved = resolveCall({ branch }, extra, { bookAware: true });
+      const resolved = resolveCall({ branch, book }, extra, { bookAware: true });
       if ("__error" in resolved) return textError(resolved.__error);
       try {
         const markdown = await getPromptMarkdown(name, resolved.branch ?? "LIVE");
+        const resolvedBranch = resolved.branch ?? "LIVE";
+        const isPassA = resolvedBranch === "LIVE" && resolved.book === "PAPER";
         const text = composePromptText(markdown, {
           shadow:
-            isShadowOnlyScope(toolScopes(extra)) || resolved.branch === "CANDIDATE",
+            isShadowOnlyScope(toolScopes(extra)) || resolvedBranch === "CANDIDATE",
+          passA: isPassA,
           name,
         });
         return {
@@ -561,7 +567,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Upsert daily log",
       description:
-        "Upsert DailyLog on (logDate, routineType). Default routineType=DAILY; Earnings must pass EARNINGS so the two do not overwrite each other. Narrative fields are ReportBlock[]. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt).",
+        "Upsert DailyLog on (logDate, routineType). Default routineType=DAILY; Earnings must pass EARNINGS so the two do not overwrite each other. Narrative fields are ReportBlock[]. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt). A CANDIDATE DAILY log is rejected with pass_a_incomplete until LIVE PAPER decision reviews exist for that date.",
       inputSchema: dailyLogInputSchema.shape,
     },
     async (args, extra) => {
@@ -569,7 +575,11 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       if ("__error" in parsed) return textError(parsed.__error);
       const resolved = resolveCall(parsed, extra, { bookAware: false });
       if ("__error" in resolved) return textError(resolved.__error);
-      return textJson({ ok: true, dailyLog: await upsertDailyLog(resolved) });
+      const result = await upsertDailyLog(resolved);
+      if (!result.ok) {
+        return { ...textJson(result), isError: true as const };
+      }
+      return textJson(result);
     },
   );
 

@@ -30,7 +30,11 @@ import { listStockEnums } from "@/lib/agent/enums";
 import { CRON_JOBS } from "@/lib/cron/jobs";
 import { isJobStale } from "@/lib/cron/schedule";
 import { getRuleSet } from "@/lib/rules/resolve";
-import { paperBookForContext, shadowContextBlock } from "@/lib/shadow/read";
+import {
+  paperBookForContext,
+  shadowContextBlock,
+  type PaperBookForContext,
+} from "@/lib/shadow/read";
 import { ensureContentPages } from "@/lib/agent/contentPages";
 import {
   earningsRiskFromDays,
@@ -1048,6 +1052,24 @@ async function paperBookDecisionState(
   return { convictionByTicker, averageDownsByTicker };
 }
 
+function paperBookOverview(book: PaperBookForContext) {
+  return {
+    cash: book.cash,
+    lastMarkSession: book.lastMarkSession,
+    tickers: book.positions.map((p) => p.ticker),
+    positions: book.positions.map((p) => ({
+      ticker: p.ticker,
+      shares: p.shares,
+      avgCost: p.avgCost,
+      lastMark: p.lastMark,
+      lastMarkSession: p.lastMarkSession,
+      markStale: p.markStale,
+      marketValue: p.marketValue,
+    })),
+    pendingOrders: book.pendingOrders,
+  };
+}
+
 async function buildPaperAgentContext(routine: AgentRoutine, branch: Branch) {
   const trendDetail = routine !== "earnings";
 
@@ -1060,7 +1082,8 @@ async function buildPaperAgentContext(routine: AgentRoutine, branch: Branch) {
     lastRun,
     documents,
     shadow,
-    paper,
+    livePaper,
+    candidatePaper,
     candidateLog,
   ] = await Promise.all([
     getAgentRuntimeConfig(branch),
@@ -1071,7 +1094,8 @@ async function buildPaperAgentContext(routine: AgentRoutine, branch: Branch) {
     lastRunSummary(),
     listContentPages(),
     shadowContextBlock(branch).catch(() => null),
-    paperBookForContext(branch),
+    paperBookForContext("LIVE"),
+    paperBookForContext("CANDIDATE"),
     // PAPER lastRun is the latest CANDIDATE daily log (the combined two-pass write).
     prisma.dailyLog.findFirst({
       where: { branch: "CANDIDATE" },
@@ -1085,6 +1109,8 @@ async function buildPaperAgentContext(routine: AgentRoutine, branch: Branch) {
 
   const { limits, sentimentThresholds, earningsRiskThresholds, ruleVersionId, degraded } =
     runtime;
+
+  const paper = branch === "LIVE" ? livePaper : candidatePaper;
 
   const portfolioByTicker = new Map(portfolio.map((p) => [p.ticker.trim().toUpperCase(), p]));
   const watchlistByTicker = new Map(
@@ -1200,7 +1226,11 @@ async function buildPaperAgentContext(routine: AgentRoutine, branch: Branch) {
     rulesVersion: rulesVersion(),
     branch,
     bookMode: "PAPER" as const,
-    paperBrief: `This context is the PAPER book for branch ${branch}. Follow the PAPER PASS brief returned by get_prompt.`,
+    paperBrief: `This context's positions are the PAPER book for branch ${branch}. paperBooks lists both paper books. Finish Pass A (LIVE + PAPER) before Pass B. Follow the PAPER PASS brief from get_prompt(branch="CANDIDATE").`,
+    paperBooks: {
+      LIVE: paperBookOverview(livePaper),
+      CANDIDATE: paperBookOverview(candidatePaper),
+    },
     pendingOrders: paper.pendingOrders,
     ruleVersionId,
     degraded,

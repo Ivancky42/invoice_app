@@ -48,31 +48,56 @@ export function absorbUniverseTicker(tickers: Set<string>, raw: string | null | 
 
 /**
  * Nightly processing order: calendar anchors first (so Finnhub quota hits
- * SPY/QQQ/AAPL/MSFT before idea leads), then the rest A–Z, CSPX included
- * in the remainder (it has its own EODHD path and must not jump the queue).
+ * SPY/QQQ/AAPL/MSFT before idea leads), then open paper-book tickers (so the
+ * shadow marks cannot starve behind A–Z watchlist/idea names), then the
+ * rest A–Z. CSPX stays in the remainder (it has its own EODHD path and must
+ * not jump the queue).
  */
-export function orderPriceHistoryUniverse(tickers: Iterable<string>): string[] {
+export function orderPriceHistoryUniverse(
+  tickers: Iterable<string>,
+  priority: Iterable<string> = [],
+): string[] {
   const set = new Set(tickers);
+  const prioSet = new Set(
+    [...priority]
+      .map((t) => t.trim().toUpperCase())
+      .filter((t) => t && set.has(t) && !ANCHOR_SET.has(t)),
+  );
   const anchors = CALENDAR_ANCHOR_TICKERS.filter((t) => set.has(t)).sort();
-  const rest = [...set].filter((t) => !ANCHOR_SET.has(t)).sort();
-  return [...anchors, ...rest];
+  const prio = [...prioSet].sort();
+  const rest = [...set].filter((t) => !ANCHOR_SET.has(t) && !prioSet.has(t)).sort();
+  return [...anchors, ...prio, ...rest];
+}
+
+/** Open ShadowPosition tickers (both branches), cleaned the same way as the universe. */
+export async function openPaperPriorityTickers(): Promise<string[]> {
+  const rows = await prisma.shadowPosition.findMany({
+    where: { closedAt: null },
+    select: { ticker: true },
+  });
+  const tickers = new Set<string>();
+  for (const row of rows) absorbUniverseTicker(tickers, row.ticker);
+  return [...tickers];
 }
 
 /**
  * Distinct, cleaned ticker universe for price history: Portfolio + Watchlist
- * + Idea `leadTicker`s, plus the calendar anchors and the CSPX benchmark.
- * Idea leads are required for the §12.9 week-move shock listener — without
- * them `get_price_history` is empty and that check is silently un-runnable.
- * Cash rows are excluded; CSPX is special-cased for EODHD.
+ * + Idea `leadTicker`s, plus the calendar anchors, the CSPX benchmark, and
+ * open paper positions.
  *
- * Order is anchors-first (see {@link orderPriceHistoryUniverse}) so adding
- * early-alphabet idea leads cannot starve the session calendar of Finnhub.
+ * Order is anchors, then paper holdings, then A–Z (see
+ * {@link orderPriceHistoryUniverse}) so adding early-alphabet idea leads
+ * cannot starve the session calendar or the paper marks of Finnhub/EODHD.
  */
-export async function buildPriceHistoryUniverse(): Promise<string[]> {
-  const [portfolioRows, watchlistRows, ideaRows] = await Promise.all([
+export async function collectPriceHistoryUniverse(): Promise<{
+  ordered: string[];
+  priority: string[];
+}> {
+  const [portfolioRows, watchlistRows, ideaRows, paperTickers] = await Promise.all([
     prisma.portfolio.findMany({ select: { ticker: true } }),
     prisma.watchlist.findMany({ select: { ticker: true } }),
     prisma.idea.findMany({ select: { leadTicker: true } }),
+    openPaperPriorityTickers(),
   ]);
 
   const tickers = new Set<string>();
@@ -85,6 +110,14 @@ export async function buildPriceHistoryUniverse(): Promise<string[]> {
     const lead = resolveIdeaQuoteSymbol(row.leadTicker, null);
     if (lead) tickers.add(lead);
   }
+  for (const ticker of paperTickers) absorbUniverseTicker(tickers, ticker);
 
-  return orderPriceHistoryUniverse(tickers);
+  return {
+    ordered: orderPriceHistoryUniverse(tickers, paperTickers),
+    priority: paperTickers,
+  };
+}
+
+export async function buildPriceHistoryUniverse(): Promise<string[]> {
+  return (await collectPriceHistoryUniverse()).ordered;
 }
