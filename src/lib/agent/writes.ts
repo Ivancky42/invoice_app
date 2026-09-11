@@ -43,6 +43,11 @@ import {
 import type { Branch, DecisionBook, WatchlistAction } from "@/generated/prisma/client";
 import { openPaperTickers } from "@/lib/shadow/read";
 import {
+  livePaperPassAMissing,
+  paperPassAYmd,
+  passAIncompleteMessage,
+} from "@/lib/shadow/passA";
+import {
   namespacedDecisionIdempotencyKey,
   validatePaperDecision,
 } from "@/lib/shadow/paperValidation";
@@ -166,9 +171,7 @@ export type UpsertDailyLogResult =
     }
   | { ok: false; error: "pass_a_incomplete"; message: string };
 
-export function passAIncompleteMessage(logDate: string): string {
-  return `Pass A is missing: no LIVE PAPER decision reviews for ${logDate}. Write upsert_decision_review(branch="LIVE", book="PAPER") for the LIVE paper holdings first, then retry this log.`;
-}
+export { passAIncompleteMessage } from "@/lib/shadow/passA";
 
 export async function upsertDailyLog(input: DailyLogInput): Promise<UpsertDailyLogResult> {
   const logDate = parseYmdNoon(input.logDate);
@@ -180,28 +183,12 @@ export async function upsertDailyLog(input: DailyLogInput): Promise<UpsertDailyL
   const branch = input.branch ?? "LIVE";
 
   if (branch === "CANDIDATE" && routineType === "DAILY") {
-    const liveOpen = await openPaperTickers("LIVE");
-    if (liveOpen.size > 0) {
-      const dayStart = new Date(`${input.logDate}T00:00:00.000Z`);
-      const nextDay = new Date(dayStart);
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      const passACount = await prisma.decisionReview.count({
-        where: {
-          branch: "LIVE",
-          book: "PAPER",
-          OR: [
-            { decisionDate: logDate },
-            { createdAt: { gte: dayStart, lt: nextDay } },
-          ],
-        },
-      });
-      if (passACount === 0) {
-        return {
-          ok: false,
-          error: "pass_a_incomplete",
-          message: passAIncompleteMessage(input.logDate),
-        };
-      }
+    if (await livePaperPassAMissing(input.logDate)) {
+      return {
+        ok: false,
+        error: "pass_a_incomplete",
+        message: passAIncompleteMessage(input.logDate, "log"),
+      };
     }
   }
 
@@ -675,6 +662,22 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
   const typeChanged = Boolean(
     existing && input.decisionType !== undefined && input.decisionType !== existing.decisionType,
   );
+
+  // New CANDIDATE paper rows are Pass B. Block them until Pass A (LIVE PAPER) exists
+  // for that day so the agent cannot skip the current-rules book. Replays of an
+  // existing CANDIDATE row (outcome reviews) are not gated.
+  if (book === "PAPER" && branch === "CANDIDATE" && !existing) {
+    const ymd = input.decisionDate ?? paperPassAYmd();
+    if (await livePaperPassAMissing(ymd)) {
+      return {
+        ok: false as const,
+        status: 409 as const,
+        error: "pass_a_incomplete" as const,
+        message: passAIncompleteMessage(ymd, "decision"),
+      };
+    }
+  }
+
   if (book === "PAPER" && (!existing || tickerChanged || typeChanged)) {
     const openTickers = await openPaperTickers(branch);
     const paperErr = validatePaperDecision(

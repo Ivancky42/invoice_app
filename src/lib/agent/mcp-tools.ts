@@ -683,7 +683,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Upsert decision review",
       description:
-        "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry (bare key, no LIVE:/CANDIDATE:/LIVE:PAPER: prefix). book=PAPER means the paper book for that branch is the book under management; mcp:shadow is always PAPER and may address branch LIVE or CANDIDATE. evidence[].observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date (e.g. '2026-08-11 US close'). Defaults reviewStatus to PENDING. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt).",
+        "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry (bare key, no LIVE:/CANDIDATE:/LIVE:PAPER: prefix). book=PAPER means the paper book for that branch is the book under management; mcp:shadow is always PAPER and may address branch LIVE or CANDIDATE. New CANDIDATE paper rows are rejected with pass_a_incomplete until LIVE PAPER reviews exist for that date. evidence[].observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date (e.g. '2026-08-11 US close'). Defaults reviewStatus to PENDING. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt).",
       inputSchema: upsertDecisionReviewInputSchema.shape,
     },
     async (args, extra) => {

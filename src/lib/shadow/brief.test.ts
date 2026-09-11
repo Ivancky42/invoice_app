@@ -18,6 +18,7 @@ describe("paperPassBrief", () => {
     expect(brief).toContain("Stock HQ connector");
     expect(brief).not.toContain("mcp:shadow");
     expect(brief).toContain("rejects this log if Pass A");
+    expect(brief).toContain("CANDIDATE paper reviews are rejected");
   });
 
   it("Pass A header is rules-only and does not describe Pass B", () => {

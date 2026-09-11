@@ -35,6 +35,7 @@ import {
   shadowContextBlock,
   type PaperBookForContext,
 } from "@/lib/shadow/read";
+import { livePaperPassAMissing, paperPassAYmd } from "@/lib/shadow/passA";
 import { ensureContentPages } from "@/lib/agent/contentPages";
 import {
   earningsRiskFromDays,
@@ -1085,6 +1086,7 @@ async function buildPaperAgentContext(routine: AgentRoutine, branch: Branch) {
     livePaper,
     candidatePaper,
     candidateLog,
+    passAMissing,
   ] = await Promise.all([
     getAgentRuntimeConfig(branch),
     getPortfolio(),
@@ -1101,6 +1103,7 @@ async function buildPaperAgentContext(routine: AgentRoutine, branch: Branch) {
       where: { branch: "CANDIDATE" },
       orderBy: [{ logDate: "desc" }, { createdAt: "desc" }],
     }),
+    livePaperPassAMissing(paperPassAYmd()),
   ]);
 
   const watchlist = watchlistRaw.filter(
@@ -1226,7 +1229,10 @@ async function buildPaperAgentContext(routine: AgentRoutine, branch: Branch) {
     rulesVersion: rulesVersion(),
     branch,
     bookMode: "PAPER" as const,
-    paperBrief: `This context's positions are the PAPER book for branch ${branch}. paperBooks lists both paper books. Finish Pass A (LIVE + PAPER) before Pass B. Follow the PAPER PASS brief from get_prompt(branch="CANDIDATE").`,
+    passAIncomplete: passAMissing,
+    paperBrief: passAMissing
+      ? `PASS A IS NOT DONE. This context's positions are the PAPER book for branch ${branch}. Do not write CANDIDATE reviews yet — the server will reject them. Call get_context(branch="LIVE", book="PAPER") and write upsert_decision_review(branch="LIVE", book="PAPER") for every LIVE paper holding first.`
+      : `This context's positions are the PAPER book for branch ${branch}. paperBooks lists both paper books. Finish Pass A (LIVE + PAPER) before Pass B. Follow the PAPER PASS brief from get_prompt(branch="CANDIDATE").`,
     paperBooks: {
       LIVE: paperBookOverview(livePaper),
       CANDIDATE: paperBookOverview(candidatePaper),

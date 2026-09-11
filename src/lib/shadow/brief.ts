@@ -67,6 +67,7 @@ function dailyBrief(): string {
     "- REDUCE / EXIT / ADD on a ticker the paper book does not hold are rejected.",
     "- BUY on a ticker the paper book already holds is rejected (use ADD).",
     "- BUY / ADD / AVERAGE_DOWN require `convictionScore` (1-5).",
+    "- CANDIDATE paper reviews are rejected until LIVE PAPER reviews for today exist (Pass A first).",
     "",
     "Do not call `patch_portfolio`, `upsert_watchlist`, `log_trade`, `list_portfolio`, or `list_trades` during a paper pass.",
     "",
