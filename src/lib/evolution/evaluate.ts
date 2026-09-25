@@ -3,7 +3,8 @@
  * promote a ruleset, and the only one that can kill a candidate on evidence.
  *
  * The comparison is PAIRED and DIFFERENCED per session: for every session where both
- * branches produced an OK snapshot, delta = candidate.fitnessIncrement − live.fitnessIncrement.
+ * branches produced an OK snapshot, delta = candidate − live increment, where the increment
+ * is the fitness increment minus its benchmark term (the same CSPX move on both sides).
  * Pairing removes the market from both sides, so a bull tape cannot promote anything; the
  * sequential z-test on those per-session increments is what decides.
  *
@@ -14,7 +15,12 @@ import type { Prisma, RuleLane, RuleStatus } from "@/generated/prisma/client";
 import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { appendEvolutionEvent, countEvolutionEvents } from "@/lib/evolution/log";
 import { COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS } from "@/lib/fitness/counterfactuals";
-import { evaluateCandidate, sequentialZ, type CandidateVerdict } from "@/lib/fitness/math";
+import {
+  evaluateCandidate,
+  pairingIncrement,
+  sequentialZ,
+  type CandidateVerdict,
+} from "@/lib/fitness/math";
 import { prisma } from "@/lib/prisma";
 import { challengerLegitimacy } from "@/lib/rules/challenger";
 import { mirrorRuleVersion } from "@/lib/rules/gitMirror";
@@ -98,7 +104,21 @@ export async function countPaperDecisionsSinceCutoff(cutoff: Date): Promise<{
   return { candidate, live };
 }
 
+/** Stored snapshot columns → the benchmark-free increment every pairing caller uses. */
+export function pairingIncrementOf(row: {
+  dailyIncrement: Prisma.Decimal | null;
+  avoidedCreditDelta: Prisma.Decimal;
+  turnoverDelta: Prisma.Decimal;
+}): number | null {
+  return pairingIncrement({
+    dailyIncrement: decToNum(row.dailyIncrement),
+    avoidedCreditDelta: decToNum(row.avoidedCreditDelta) ?? 0,
+    turnoverDelta: decToNum(row.turnoverDelta) ?? 0,
+  });
+}
+
 export type PairableSnapshot = {
+  /** Benchmark-free increment (`pairingIncrementOf`) — the CSPX term cancels in the pair. */
   fitnessIncrement: number | null;
   maxDrawdown: number;
   nav: number;
@@ -231,7 +251,9 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
       branchId: true,
       session: true,
       nav: true,
-      fitnessIncrement: true,
+      dailyIncrement: true,
+      avoidedCreditDelta: true,
+      turnoverDelta: true,
       maxDrawdown: true,
     },
     orderBy: { session: "asc" },
@@ -242,7 +264,7 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
   for (const r of rows) {
     const target = r.branchId === candidateBranch.id ? candRows : liveRows;
     target.set(r.session.getTime(), {
-      fitnessIncrement: decToNum(r.fitnessIncrement),
+      fitnessIncrement: pairingIncrementOf(r),
       maxDrawdown: decToNum(r.maxDrawdown) ?? 0,
       nav: decToNum(r.nav) ?? 0,
     });

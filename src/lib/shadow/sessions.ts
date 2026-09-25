@@ -144,13 +144,20 @@ export type DecisionAsOfInput = {
 /**
  * Calendar day a DecisionReview should be dated for session lookup.
  *
- * Prefer `decisionDate` when set: Notion stores midnight-UTC calendar dates, and running
- * those through {@link easternDateOf} would shift them back a day. Only fall back to the
- * Eastern write-time rule when the DR has no decisionDate (live routines that omitted it).
+ * The EARLIER of the stated `decisionDate` and the Eastern calendar date the row was
+ * written. A decision cannot use bars from after it was written, so the Eastern write date
+ * caps it: the routines run from Malaysia after the US close and stamp the MYT calendar
+ * date, which is already the NEXT US day — trusting it alone dated every paper decision
+ * one session late (fill a day late, counterfactual baseline at a close the agent never
+ * saw). A Notion backfill keeps its older `decisionDate`. `decisionDate` is compared as a
+ * calendar string, never run through {@link easternDateOf} (Notion stores midnight-UTC
+ * dates, which that would shift back a day).
  */
 export function decisionAsOfDay(dr: DecisionAsOfInput): string {
-  if (dr.decisionDate) return ymd(dr.decisionDate);
-  return easternDateOf(dr.createdAt);
+  const written = easternDateOf(dr.createdAt);
+  if (!dr.decisionDate) return written;
+  const stated = ymd(dr.decisionDate);
+  return stated < written ? stated : written;
 }
 
 /**

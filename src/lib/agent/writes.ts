@@ -1,5 +1,6 @@
 import { Prisma, type Prisma as PrismaTypes } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { replayUpdateData } from "@/lib/agent/decisionReviewReplay";
 import {
   CONFIG_KEYS,
   getLimits,
@@ -801,17 +802,17 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
     rulesVersion: input.rulesVersion ?? undefined,
     branch,
     book,
-    // Server-derived; on the idempotent-replay path this re-stamps with the version at
-    // the latest write. A degraded write (null) preserves any prior stamp.
+    // Server-derived. A replay only re-stamps it when the decision itself changes (see
+    // replayUpdateData); a degraded write (null) preserves any prior stamp.
     ruleVersionId: (await branchRuleVersionId(branch)) ?? undefined,
     idempotencyKey: idempotencyKey ?? undefined,
   };
 
   if (idempotencyKey && existing) {
-    // `branch` and `book` are dropped alongside `idempotencyKey`: a replay updates the
-    // row the key already identifies and must never move it across streams — that would
-    // flip a PAPER decision onto REAL (or a CANDIDATE decision to LIVE).
-    const { idempotencyKey: _k, branch: _b, book: _book, ...update } = data;
+    // A replay updates the row the key already identifies: it never moves it across
+    // streams, never wipes an omitted ticker / reviewStatus, and keeps the decision's
+    // original ruleset unless the decision itself changes.
+    const update = replayUpdateData(data, input, tickerChanged || typeChanged);
     // Server-derived on the update path (same pattern as ruleVersionId above): when
     // the replay changes thesisState, priorThesisState must be the state actually
     // being replaced — a caller-omitted (or stale) value would preserve an old prior
@@ -851,24 +852,26 @@ export async function upsertDecisionReview(input: UpsertDecisionReviewInput) {
 
 /**
  * Append EvidenceItem rows to an existing DecisionReview. Looked up by id or by
- * idempotencyKey within `branch` (default LIVE) — 404 when neither resolves a row.
- * Additive, unlike upsertDecisionReview's evidence replace-on-replay.
+ * idempotencyKey within `branch` + `book` (default LIVE / REAL) — 404 when neither
+ * resolves a row. Additive, unlike upsertDecisionReview's evidence replace-on-replay.
  */
 export async function addEvidence(input: AddEvidenceInput) {
   const branch = input.branch ?? "LIVE";
-  // Same prefixing rule as upsertDecisionReview: the two branches replay the SAME routine
-  // with the same bare keys, so an unprefixed CANDIDATE lookup would resolve the LIVE row
-  // and append shadow evidence onto the real decision (and can flip its moveClass).
+  const book: DecisionBook = branch === "CANDIDATE" ? "PAPER" : (input.book ?? "REAL");
+  // Same prefixing rule as upsertDecisionReview: the streams replay the SAME routines
+  // with the same bare keys, so an unprefixed CANDIDATE or LIVE-paper lookup would resolve
+  // the real row and append shadow evidence onto the real decision (and can flip its
+  // moveClass).
   const rawKey = input.idempotencyKey?.trim() || null;
   const idempotencyKey =
-    rawKey === null ? null : branch === "LIVE" ? rawKey : `${branch}:${rawKey}`;
+    rawKey === null ? null : namespacedDecisionIdempotencyKey(rawKey, branch, book);
 
   const existing = input.decisionReviewId
     ? await prisma.decisionReview.findUnique({ where: { id: input.decisionReviewId } })
     : await prisma.decisionReview.findUnique({ where: { idempotencyKey: idempotencyKey! } });
-  // No cross-branch appends: the id path bypasses key prefixing entirely, so a row found
-  // on the other branch is reported as not-found rather than written to.
-  if (!existing || existing.branch !== branch) {
+  // No cross-stream appends: the id path bypasses key prefixing entirely, so a row found
+  // on the other branch or book is reported as not-found rather than written to.
+  if (!existing || existing.branch !== branch || existing.book !== book) {
     return {
       ok: false as const,
       status: 404 as const,
@@ -876,6 +879,7 @@ export async function addEvidence(input: AddEvidenceInput) {
       decisionReviewId: input.decisionReviewId ?? null,
       idempotencyKey,
       branch,
+      book,
     };
   }
 

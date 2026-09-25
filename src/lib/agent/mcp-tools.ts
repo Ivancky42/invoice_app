@@ -704,13 +704,13 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Add evidence",
       description:
-        "Append EvidenceItem rows to an existing Decision Review (by decisionReviewId or idempotencyKey, within branch — default LIVE). observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date. Additive — use upsert_decision_review's evidence[] to replace-on-replay instead. 404 when the DR is not found on that branch.",
+        "Append EvidenceItem rows to an existing Decision Review (by decisionReviewId or idempotencyKey — bare key, no prefix — within branch + book; default LIVE / REAL, branch=CANDIDATE is always PAPER, pass book=PAPER for LIVE paper rows). observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date. Additive — use upsert_decision_review's evidence[] to replace-on-replay instead. 404 when the DR is not found on that branch/book.",
       inputSchema: addEvidenceFieldsSchema.shape,
     },
     async (args, extra) => {
       const parsed = parseTool(addEvidenceInputSchema, args);
       if ("__error" in parsed) return textError(parsed.__error);
-      const resolved = resolveCall(parsed, extra, { bookAware: false });
+      const resolved = resolveCall(parsed, extra, { bookAware: true });
       if ("__error" in resolved) return textError(resolved.__error);
       const result = await addEvidence(resolved);
       if (!result.ok) {

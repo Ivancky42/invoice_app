@@ -211,15 +211,18 @@ export async function branchBook(
     const shares = decToNum(p.shares) ?? 0;
     const sessionClose = closeByTicker.get(p.ticker) ?? null;
     const carried = decToNum(p.lastMark);
+    const avgCost = decToNum(p.avgCost) ?? 0;
     const mark = sessionClose ?? carried;
     const stale = sessionClose === null;
     if (stale) staleMarks += 1;
-    if (mark !== null) equity += shares * mark;
+    // A fresh fill with no close yet has no mark: value it at cost (as cloneRestartNav
+    // does) rather than 0, or NAV drops by the whole notional for a session and rebounds.
+    equity += shares * (mark ?? avgCost);
     return {
       id: p.id,
       ticker: p.ticker,
       shares,
-      avgCost: decToNum(p.avgCost) ?? 0,
+      avgCost,
       mark,
       markStale: stale,
     };

@@ -11,6 +11,7 @@ import {
   evolutionEvidenceCutoff,
   isEvolutionPromotePaused,
   pairFitnessIncrements,
+  pairingIncrementOf,
   type PairableSnapshot,
 } from "@/lib/evolution/evaluate";
 import { countEvolutionEvents, listEvolutionEvents } from "@/lib/evolution/log";
@@ -243,7 +244,9 @@ export async function getShadowTestSummary(): Promise<ShadowTestSummary> {
         branchId: true,
         session: true,
         nav: true,
-        fitnessIncrement: true,
+        dailyIncrement: true,
+        avoidedCreditDelta: true,
+        turnoverDelta: true,
         maxDrawdown: true,
       },
       orderBy: { session: "asc" },
@@ -254,7 +257,7 @@ export async function getShadowTestSummary(): Promise<ShadowTestSummary> {
     for (const r of rows) {
       const nav = decToNum(r.nav) ?? 0;
       const snap: PairableSnapshot = {
-        fitnessIncrement: decToNum(r.fitnessIncrement),
+        fitnessIncrement: pairingIncrementOf(r),
         maxDrawdown: decToNum(r.maxDrawdown) ?? 0,
         nav,
       };

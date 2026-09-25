@@ -1,3 +1,5 @@
+import { isProviderTimeout, providerSignal } from "@/lib/http/providerFetch";
+
 /** Raw Finnhub `/quote` payload: c=current, o=open, h=high, l=low, pc=prev close, t=quote epoch seconds. */
 export type FinnhubQuote = {
   c?: number;
@@ -34,7 +36,7 @@ export async function finnhubQuote(symbol: string, apiKey: string): Promise<Finn
   const u = new URL("https://finnhub.io/api/v1/quote");
   u.searchParams.set("symbol", sym);
   u.searchParams.set("token", apiKey);
-  const res = await fetch(u.toString(), { cache: "no-store" });
+  const res = await fetch(u.toString(), { cache: "no-store", signal: providerSignal() });
   if (res.status === 429) throw new FinnhubRateLimitError();
   if (!res.ok) return null;
   return (await res.json()) as FinnhubQuote;
@@ -51,7 +53,7 @@ export async function finnhubLastPrice(symbol: string, apiKey: string): Promise<
     if (typeof c !== "number" || !Number.isFinite(c) || c <= 0) return null;
     return c;
   } catch (e) {
-    if (isFinnhubRateLimit(e)) return null;
+    if (isFinnhubRateLimit(e) || isProviderTimeout(e)) return null;
     throw e;
   }
 }

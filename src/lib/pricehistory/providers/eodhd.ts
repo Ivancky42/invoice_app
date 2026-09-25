@@ -1,3 +1,4 @@
+import { providerSignal } from "@/lib/http/providerFetch";
 import type { DailyBar } from "@/lib/pricehistory/types";
 
 type EodhdRow = {
@@ -49,7 +50,7 @@ export async function fetchEodhdHistory(
   u.searchParams.set("from", from);
   u.searchParams.set("to", to);
 
-  const res = await fetch(u.toString(), { cache: "no-store" });
+  const res = await fetch(u.toString(), { cache: "no-store", signal: providerSignal() });
   if (!res.ok) {
     if (res.status === 403) {
       throw new Error(

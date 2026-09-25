@@ -292,6 +292,7 @@ export const addEvidenceFieldsSchema = z.object({
   idempotencyKey: decisionIdempotencyKeySchema.optional(),
   items: evidenceItemsInputSchema.min(1),
   branch: branchInputSchema,
+  book: decisionBookInputSchema,
 });
 
 export const addEvidenceInputSchema = addEvidenceFieldsSchema.refine(

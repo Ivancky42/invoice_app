@@ -43,6 +43,7 @@ export async function runTick(options: TickOptions): Promise<TickResult> {
   if (!(await claimTickLease(runDayIso))) {
     return { ok: true, runDay: runDayIso, ran: [], skipped: "locked" };
   }
+  await failOrphanedRuns();
 
   const chain = options.chain ?? 0;
   const ran: TickJobOutcome[] = [];
@@ -212,6 +213,25 @@ async function claimTickLease(runDayIso: string): Promise<boolean> {
     RETURNING "id"
   `;
   return rows.length > 0;
+}
+
+/**
+ * A function cannot outlive maxDuration (300s), so a RUNNING row started more than 10
+ * minutes ago belongs to an invocation the platform killed: its `finally` never ran, and
+ * job rows carry no lease to expire. Mark them FAILED so the ledger (and get_context's
+ * staleJobs) shows what happened instead of a job that is forever "in progress". Runs
+ * after this tick's own claim, which just re-stamped its startedAt.
+ */
+async function failOrphanedRuns(): Promise<void> {
+  await prisma.jobRun.updateMany({
+    where: { status: "RUNNING", startedAt: { lt: new Date(Date.now() - 10 * 60_000) } },
+    data: {
+      status: "FAILED",
+      finishedAt: new Date(),
+      leaseUntil: null,
+      error: "orphaned: invocation killed before the job finished (likely maxDuration)",
+    },
+  });
 }
 
 async function releaseTickLease(runDay: Date, detail: Prisma.InputJsonValue): Promise<void> {

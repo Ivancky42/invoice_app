@@ -11,6 +11,7 @@
  */
 import type { Prisma, RuleOutcome } from "@/generated/prisma/client";
 import type { JobContext, JobResult } from "@/lib/cron/jobs";
+import { pairingIncrementOf } from "@/lib/evolution/evaluate";
 import { appendEvolutionEvent } from "@/lib/evolution/log";
 import { prisma } from "@/lib/prisma";
 import { decToNum } from "@/lib/stocks/format";
@@ -126,7 +127,13 @@ async function loadPairedSeries(
       session: { gt: from, lte: to },
       quality: "OK",
     },
-    select: { branchId: true, session: true, fitnessIncrement: true },
+    select: {
+      branchId: true,
+      session: true,
+      dailyIncrement: true,
+      avoidedCreditDelta: true,
+      turnoverDelta: true,
+    },
     orderBy: { session: "asc" },
   });
 
@@ -136,7 +143,7 @@ async function loadPairedSeries(
     const target = r.branchId === ownId ? own : other;
     target.set(r.session.getTime(), {
       session: r.session,
-      fitnessIncrement: decToNum(r.fitnessIncrement),
+      fitnessIncrement: pairingIncrementOf(r),
     });
   }
 

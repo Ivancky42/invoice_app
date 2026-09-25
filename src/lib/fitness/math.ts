@@ -244,6 +244,28 @@ export function fitness({
   );
 }
 
+/**
+ * A session's fitness increment WITHOUT the benchmark term, for pairing two branches.
+ *
+ * Both books subtract the same CSPX increment on the same session, so it cancels exactly
+ * in `candidate − live`. Pairing on the stored `fitnessIncrement` instead dropped every
+ * session where the benchmark bar was missing (null) even though it could not change the
+ * delta — a CSPX outage froze the whole test. Null only when the book's own daily return
+ * is unknown.
+ */
+export function pairingIncrement({
+  dailyIncrement,
+  avoidedCreditDelta,
+  turnoverDelta,
+}: {
+  dailyIncrement: number | null;
+  avoidedCreditDelta: number;
+  turnoverDelta: number;
+}): number | null {
+  if (dailyIncrement === null) return null;
+  return roundFraction(dailyIncrement + avoidedCreditDelta - turnoverDelta);
+}
+
 // ---------------------------------------------------------------------------
 // Sequential test
 // ---------------------------------------------------------------------------

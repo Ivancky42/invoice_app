@@ -83,15 +83,16 @@ pure (no Prisma at the algorithm layer) and exposes binary-search helpers over t
 ascending session list: `latestSessionOnOrBeforeIn`, `nextSessionAfterIn`,
 `decisionSessionFromEasternDate`.
 
-`decisionSession` is derived from a Decision Review's **`decisionDate` when set**, else
-from the US-Eastern calendar date of `createdAt`. Notion-synced and agent-written rows
-carry an explicit calendar `decisionDate` (stored as UTC midnight or noon) — using that
-date's `ymd` avoids collapsing a backfill onto the sync day. When `decisionDate` is null
-(live routines that omitted it), fall back to Eastern `createdAt`: routines run after the
-US close, so the freshest bars the agent could have seen belong to that session (a
-20:00 ET write is already the next UTC day, so a naive UTC lookup would credit a session
-that has not happened yet). Never run Notion midnight-UTC `decisionDate` values through
-Eastern conversion — that would shift them back a calendar day.
+`decisionSession` is derived from the **earlier** of a Decision Review's `decisionDate`
+(when set) and the US-Eastern calendar date of `createdAt`. Notion-synced rows carry an
+old explicit `decisionDate` (stored as UTC midnight or noon) — its `ymd` wins, so a
+backfill does not collapse onto the sync day. Routines run from Malaysia after the US
+close and stamp the MYT calendar date, which is already the next US day; the Eastern write
+date caps that, so the decision lands on the session whose bars the agent actually saw
+(before this cap every paper decision filled one session late). When `decisionDate` is
+null, Eastern `createdAt` alone decides. Never run Notion midnight-UTC `decisionDate`
+values through Eastern conversion — that would shift them back a calendar day; they are
+compared as calendar strings.
 
 Per-consumer missing-data policy: a fill that cannot find its scheduled open stays
 `PENDING` and is `REJECTED` after 3 sessions; a mark that finds no bar carries the prior
@@ -409,7 +410,10 @@ session both branches produced an `OK` snapshot), not from differencing a rollin
 differencing a 30-session rolling level would overlap 29 of 30 observations between
 consecutive points, understating the standard error by roughly √30 and manufacturing
 significance. `n < 2` or a degenerate (zero) standard error → `z = null`, which can never
-promote.
+promote. The increments are paired **without the benchmark term** (`pairingIncrement`:
+`daily + credit − turnover`): both branches subtract the same CSPX move on the same
+session, so it cancels in the delta — pairing on the stored `fitnessIncrement` dropped
+every session with a missing CSPX bar for no reason (the 2026-09-14 outage froze the test).
 
 **Verdict precedence** (`evaluateCandidate`), fixed and deliberate:
 

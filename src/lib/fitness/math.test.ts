@@ -7,6 +7,7 @@ import {
   fitness,
   driftGuard,
   maxDrawdown,
+  pairingIncrement,
   permittedSize,
   sequentialZ,
   turnoverCost,
@@ -496,5 +497,31 @@ describe("driftGuard", () => {
         looseningDirection: "DOWN",
       }),
     ).toEqual({ allowed: false, code: "CONSECUTIVE_LOOSENING" });
+  });
+});
+
+describe("pairingIncrement", () => {
+  it("equals fitnessIncrement + benchmark, so the paired delta is unchanged", () => {
+    const live = { dailyIncrement: 0.0057, avoidedCreditDelta: 0.0028, turnoverDelta: 0.0001 };
+    const cand = { dailyIncrement: 0.0057, avoidedCreditDelta: 0, turnoverDelta: 0 };
+    const benchmark = 0.004;
+    const withBenchmark = (r: typeof live) =>
+      r.dailyIncrement + r.avoidedCreditDelta - r.turnoverDelta - benchmark;
+    expect(pairingIncrement(cand)! - pairingIncrement(live)!).toBeCloseTo(
+      withBenchmark(cand) - withBenchmark(live),
+      9,
+    );
+  });
+
+  it("still pairs a session whose benchmark bar is missing (CSPX outage, 2026-09-14+)", () => {
+    expect(
+      pairingIncrement({ dailyIncrement: 0.007833, avoidedCreditDelta: 0, turnoverDelta: 0 }),
+    ).toBe(0.007833);
+  });
+
+  it("is null only when the book's own daily return is unknown", () => {
+    expect(
+      pairingIncrement({ dailyIncrement: null, avoidedCreditDelta: 0.01, turnoverDelta: 0 }),
+    ).toBeNull();
   });
 });

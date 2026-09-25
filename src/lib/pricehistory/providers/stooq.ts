@@ -1,3 +1,4 @@
+import { providerSignal } from "@/lib/http/providerFetch";
 import { stooqUsSymbol } from "@/lib/pricehistory/symbols";
 import type { DailyBar } from "@/lib/pricehistory/types";
 
@@ -62,7 +63,7 @@ export async function fetchStooqHistory(
   u.searchParams.set("d1", toStooqDate(from));
   u.searchParams.set("d2", toStooqDate(to));
 
-  const res = await fetch(u.toString(), { cache: "no-store" });
+  const res = await fetch(u.toString(), { cache: "no-store", signal: providerSignal() });
   if (!res.ok) throw new Error(`stooq ${sym}: HTTP ${res.status}`);
   const csv = await res.text();
   return parseStooqCsv(ticker.trim().toUpperCase(), csv);

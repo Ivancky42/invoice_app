@@ -141,6 +141,25 @@ describe("decisionAsOfDay / decisionSessionForReview", () => {
     expect(decisionAsOfDay({ decisionDate, createdAt: syncCreatedAt })).toBe("2026-05-16");
   });
 
+  it("caps a Malaysia-dated routine decision at the US day it was written (2026-09-25 paper pass)", () => {
+    // Written 09:15 MYT on 09-25 = 21:15 ET on 09-24; the agent saw the 09-24 close.
+    const createdAt = new Date("2026-09-25T01:15:00.000Z");
+    const decisionDate = new Date("2026-09-25T12:00:00.000Z");
+    expect(decisionAsOfDay({ decisionDate, createdAt })).toBe("2026-09-24");
+    expect(
+      decisionSessionForReview(["2026-09-23", "2026-09-24", "2026-09-25"], {
+        decisionDate,
+        createdAt,
+      }),
+    ).toBe("2026-09-24");
+  });
+
+  it("keeps a same-US-day decisionDate when the routine writes during US hours", () => {
+    const createdAt = new Date("2026-09-24T19:00:00.000Z"); // 15:00 ET
+    const decisionDate = new Date("2026-09-24T12:00:00.000Z");
+    expect(decisionAsOfDay({ decisionDate, createdAt })).toBe("2026-09-24");
+  });
+
   it("falls back to Eastern createdAt when decisionDate is null", () => {
     expect(decisionAsOfDay({ decisionDate: null, createdAt: syncCreatedAt })).toBe(
       easternDateOf(syncCreatedAt),
