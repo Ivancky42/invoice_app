@@ -19,7 +19,7 @@ the ordered steps to turn it on safely.
 | `RULES_MIRROR_REPO` | Optional, unset by default | Set to `owner/repo` only if you want promoted rulesets mirrored to a `rules-mirror` branch for external diffing. Mirroring is best-effort and never blocks a promotion if unset or failing. |
 | `RULES_MIRROR_TOKEN` | Optional, unset by default | A GitHub PAT (classic or fine-grained) with **`contents: write`** on the target repo. The mirror writes **only** to the `rules-mirror` branch, never `main` — a push to `main` would trigger a prod deploy, so this is deliberate. |
 | `EVIDENCE_ENFORCEMENT` | Optional, defaults `warn` | Leave unset (or `warn`) for the initial deploy — evidence-tier codes land in `warnings[]` on `upsert_decision_review`, nothing is rejected. Only flip to `strict` after routines have been writing evidence for a while and you've reviewed the warning volume. |
-| `EVOLUTION_PROMOTE` | **Set to `0` until re-replay verifies** | Hard-pauses `evolution_evaluate` (`skipped: "promote_paused"`). Clear or set `1` only after `scripts/replay-shadow-history.ts` has been run against prod and spot-checked. Also honours Config key `EVOLUTION_PROMOTE=false`. |
+| `EVOLUTION_PROMOTE` | **Set to `0` until re-replay verifies** | Withholds promotion and evidence-based kills in `evolution_evaluate` (`skipped: "promote_paused"`, with the would-be verdict in `pausedVerdict`); the kernel 25% hard-revert still runs on both books. Clear or set `1` only after `scripts/replay-shadow-history.ts` has been run against prod and spot-checked. Also honours Config key `EVOLUTION_PROMOTE=false`. |
 
 All other required vars (`DATABASE_URL`, `DIRECT_DATABASE_URL`, `AGENT_TOKEN`,
 `SYNC_SECRET`, etc.) are unchanged by this branch.

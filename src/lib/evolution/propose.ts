@@ -525,6 +525,14 @@ export async function proposeRuleChange(
 
   const changedPaths = [...prosePaths, ...limitsPaths.map((p) => `limits:${p}`)];
 
+  // --- 5b. Decision surface -----------------------------------------------
+  if (!touchesDecisionSurface(changedPaths)) {
+    return reject("ELIGIBILITY_REJECT", 422, "no_decision_surface", {
+      changedPaths,
+      decisionFiles: [...DECISION_PROMPT_FILES],
+    });
+  }
+
   // --- 6. Evidence bar ----------------------------------------------------
   const eligibility = await runEligibility(input, changedPaths, now, loosens);
   if (!eligibility.ok) {
@@ -721,3 +729,20 @@ async function runEligibility(
 
 /** Re-export so callers building UI can render the whitelist without a second import. */
 export { FAST_LANE_PARAMS };
+
+/**
+ * Prompt files the paper passes make NEW decisions from (Daily and Earnings, two passes
+ * each). The paper Weekly / Monthly only score outcomes, so prose edits confined to
+ * weekly.md / monthly.md cannot move either book: the paired test could never tell the
+ * candidate apart, and it would hold the only challenger slot for nothing.
+ */
+export const DECISION_PROMPT_FILES = ["_shared", "daily", "earnings"] as const;
+
+/** True when a proposal changes a limit or a section of a decision-making prompt. */
+export function touchesDecisionSurface(changedPaths: string[]): boolean {
+  return changedPaths.some((p) => {
+    if (p.startsWith("limits:")) return true;
+    const file = p.startsWith("prompts:") ? p.slice("prompts:".length).split("#")[0] : null;
+    return file !== null && (DECISION_PROMPT_FILES as readonly string[]).includes(file);
+  });
+}

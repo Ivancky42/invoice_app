@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignLane } from "@/lib/evolution/propose";
+import { assignLane, touchesDecisionSurface } from "@/lib/evolution/propose";
 import {
   findSection,
   inventorySections,
@@ -145,5 +145,20 @@ describe("normaliseRuleFile", () => {
   it("rejects anything else", () => {
     expect(normaliseRuleFile("kernelClauses")).toBeNull();
     expect(normaliseRuleFile("../../etc/passwd")).toBeNull();
+  });
+});
+
+describe("touchesDecisionSurface", () => {
+  it("accepts limits and sections of the prompts paper decisions are made from", () => {
+    expect(touchesDecisionSurface(["limits:/singlePositionPct"])).toBe(true);
+    expect(touchesDecisionSurface(["prompts:_shared#11"])).toBe(true);
+    expect(touchesDecisionSurface(["prompts:daily#6"])).toBe(true);
+    expect(touchesDecisionSurface(["prompts:earnings#2", "prompts:weekly#3"])).toBe(true);
+  });
+
+  it("refuses edits confined to prompts that only score outcomes", () => {
+    expect(touchesDecisionSurface(["prompts:weekly#3"])).toBe(false);
+    expect(touchesDecisionSurface(["prompts:monthly#7", "prompts:weekly#0"])).toBe(false);
+    expect(touchesDecisionSurface([])).toBe(false);
   });
 });

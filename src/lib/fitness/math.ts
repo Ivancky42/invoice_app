@@ -244,6 +244,26 @@ export function fitness({
   );
 }
 
+/** Kernel §18: a branch 25% or more below its own high-water mark hard-reverts. */
+export const KERNEL_DRAWDOWN_FLOOR = 0.25;
+
+/**
+ * True when two books' action multisets differ. Keys are whatever identifies an action
+ * (e.g. `ticker|side|session`). Books whose actions never differ cannot be told apart by
+ * the paired test — every delta is the same market move on both sides.
+ */
+export function actionsDiffer(candidate: string[], live: string[]): boolean {
+  if (candidate.length !== live.length) return true;
+  const counts = new Map<string, number>();
+  for (const k of candidate) counts.set(k, (counts.get(k) ?? 0) + 1);
+  for (const k of live) {
+    const left = (counts.get(k) ?? 0) - 1;
+    if (left < 0) return true;
+    counts.set(k, left);
+  }
+  return false;
+}
+
 /**
  * A session's fitness increment WITHOUT the benchmark term, for pairing two branches.
  *
@@ -371,7 +391,7 @@ export function evaluateCandidate({
   lane,
   candidateMaxDrawdown,
   liveMaxDrawdown,
-  kernelDrawdownFloor = 0.25,
+  kernelDrawdownFloor = KERNEL_DRAWDOWN_FLOOR,
   branchMaxDrawdown,
   promotionsIn90d,
   rateLimit,

@@ -298,8 +298,12 @@ export async function getShadowTestSummary(): Promise<ShadowTestSummary> {
         kind: "PROMOTE",
         since: new Date(Date.now() - thresholds.promotionRateWindowDays * 86_400_000),
       }),
-      countResolvedNonZeroCredits(),
-      countTurnoverSessions(liveBranch?.id),
+      candidateBranch && cutoff
+        ? countResolvedNonZeroCredits(candidateBranch.id, cutoff)
+        : Promise.resolve(0),
+      candidateBranch && cutoff
+        ? countTurnoverSessions(candidateBranch.id, cutoff)
+        : Promise.resolve(0),
     ]);
 
   const verdictPreview: CandidateVerdict = hasChallenger

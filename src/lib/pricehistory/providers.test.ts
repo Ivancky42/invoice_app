@@ -12,6 +12,8 @@ import {
 } from "@/lib/pricehistory/symbols";
 import {
   isCurrentSessionBar,
+  hasGap,
+  healWindowFrom,
   lookbackWindow,
   mergeBarUpdate,
   resumeIndex,
@@ -487,5 +489,31 @@ describe("fetchFallbackBars", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("gap healing", () => {
+  it("flags a ticker missing the previous session (no bars since 2026-09-03)", () => {
+    expect(hasGap("2026-09-03", "2026-09-24")).toBe(true);
+    expect(hasGap(null, "2026-09-24")).toBe(true);
+  });
+
+  it("does not flag a ticker that has the previous session", () => {
+    expect(hasGap("2026-09-24", "2026-09-24")).toBe(false);
+    expect(hasGap("2026-09-03", null)).toBe(false);
+  });
+
+  it("heals from the day after the last bar in one call", () => {
+    expect(healWindowFrom("2026-09-03", "2026-09-25")).toBe("2026-09-04");
+  });
+
+  it("never asks for less than the standard lookback", () => {
+    expect(healWindowFrom("2026-09-24", "2026-09-25")).toBe(lookbackWindow("2026-09-25").from);
+  });
+
+  it("caps the heal window, and seeds new tickers with the cap", () => {
+    const cap = lookbackWindow("2026-09-25", 45).from;
+    expect(healWindowFrom("2026-06-01", "2026-09-25")).toBe(cap);
+    expect(healWindowFrom(null, "2026-09-25")).toBe(cap);
   });
 });

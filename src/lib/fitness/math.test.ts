@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  actionsDiffer,
   classifyMove,
   counterfactualCredit,
   drawdownPenalty,
@@ -523,5 +524,18 @@ describe("pairingIncrement", () => {
     expect(
       pairingIncrement({ dailyIncrement: null, avoidedCreditDelta: 0.01, turnoverDelta: 0 }),
     ).toBeNull();
+  });
+});
+
+describe("actionsDiffer", () => {
+  it("treats identical action sets as indistinguishable, in any order", () => {
+    expect(actionsDiffer(["COIN|WAIT|2026-09-10", "MU|WAIT|2026-09-10"], ["MU|WAIT|2026-09-10", "COIN|WAIT|2026-09-10"])).toBe(false);
+    expect(actionsDiffer([], [])).toBe(false);
+  });
+
+  it("sees a different action, a missing one, or a different count", () => {
+    expect(actionsDiffer(["COIN|BUY|2026-09-10"], ["COIN|WAIT|2026-09-10"])).toBe(true);
+    expect(actionsDiffer(["COIN|BUY|2026-09-10"], [])).toBe(true);
+    expect(actionsDiffer(["A|BUY|d", "A|BUY|d"], ["A|BUY|d", "B|BUY|d"])).toBe(true);
   });
 });

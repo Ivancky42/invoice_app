@@ -239,7 +239,10 @@ grepping those modules for the real-book model names).
   HARD_REVERT / INCONCLUSIVE — the idle book never carries positions or drawdown history
   into the next experiment.
 - `cloneBranchBook(from, to, ruleVersionId)` does the same wipe of `to`, then copies
-  `from`'s open positions and cash and sets `startNav = highWaterNav` to `from`'s NAV.
+  `from`'s open positions and cash and sets `startNav = highWaterNav` to `from`'s NAV. It
+  also copies `from`'s PENDING orders and PENDING counterfactuals, so refusals made before
+  the clone pay credit into both books and cancel in the pair (before this, only LIVE kept
+  them, and the pre-clone credit stream alone could early-kill a challenger).
   Used on every **propose** and every **promotion**: the challenger starts as an exact copy
   of the LIVE paper book so the only difference between the two books is the rules.
   (Fitness increments are NAV ratios and drawdown is relative to the high-water mark, so the
@@ -262,9 +265,13 @@ stores the residual vs already-recognized shorter credits so lifetime Σ equals 
 measure. `src/lib/fitness/breadthClassify.ts` computes `MoveClass` per decision.
 Counterfactuals are seeded from `book=PAPER` refusals only, sized against the branch's
 own paper book on both branches. `evolution_evaluate` additionally refuses **promotion**
-until ≥12 RESOLVED interim (21-session) counterfactuals have non-zero signed credit
-(`counterfactual_credit_gate`, `minResolvedNonzeroCredits`); kills/reverts still run. Keep
-`EVOLUTION_PROMOTE=0` as the ops kill switch. The shadow connector must authorize with
+until the CANDIDATE book has ≥12 RESOLVED interim (21-session) counterfactuals with
+non-zero signed credit from refusals made since the cutoff (`counterfactual_credit_gate`,
+`minResolvedNonzeroCredits`), and charged turnover on ≥3 of its own sessions since the
+cutoff (`turnover_not_charging`) — both gates used to count every branch and all time, so
+legacy LIVE data satisfied them. `EVOLUTION_PROMOTE=0` is the ops switch: it withholds
+PROMOTE / EARLY_KILL / INCONCLUSIVE (the verdict is still computed and recorded as
+`pausedVerdict`), but kernel HARD_REVERT on either book always runs. The shadow connector must authorize with
 `mcp:shadow` — real-book reads of size/cash (`list_portfolio`, `list_trades`) and all
 real-book writes are refused server-side.
 
@@ -433,6 +440,17 @@ HARD_REVERT → EARLY_KILL → PROMOTE → INCONCLUSIVE → CONTINUE
    the candidate's max drawdown is within `max(live's drawdown × 1.25, 5% floor)`, and
    fewer than 8 promotions have occurred in the trailing 90 days.
 4. `INCONCLUSIVE` — ≥50 sessions with no promote/revert signal; the experiment is stale.
+   Also ended early as `reason: no_divergence` once `earlyKill.minSessions` (10) paired
+   sessions pass with both books having taken exactly the same actions (orders and seeded
+   refusals) since the cutoff: such a candidate cannot be told apart and would hold the only
+   slot for nothing. Proposals confined to weekly/monthly prose are refused up front
+   (`no_decision_surface`) — the paper passes only make decisions from _shared, daily and
+   earnings.
+
+   The kernel 25% check also runs on the **LIVE** book, first, before any challenger lookup
+   and regardless of the pause: the challenger is killed, an automatically-promoted
+   incumbent reverts to the version it deposed (a human-published one is kept and the
+   breach is logged), and both books restart under the incumbent.
 5. `CONTINUE` — the steady state; keep collecting evidence.
 
 Every number above except the kernel 25% floor lives in `Config.EVOLUTION_THRESHOLDS`

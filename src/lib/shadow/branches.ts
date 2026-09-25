@@ -337,9 +337,16 @@ export async function resetBranch(branch: Branch, ruleVersionId: number): Promis
  * Reset `to` exactly as {@link resetBranch} does, then copy `from`'s open positions
  * and cash so both paper books start identical — only the rules differ.
  *
- * Pending orders are not copied. There is no `openedAt` column; `openedSession` is
- * copied so holding-period / tenure displays stay with the original open, not the
- * clone instant. If `from` has no row, falls back to {@link resetBranch} ($100k cash).
+ * `from`'s outstanding obligations are copied too: PENDING orders (they fill on both
+ * books at the same open) and PENDING counterfactuals (refusals made before the clone
+ * keep paying credit into BOTH books). Copying positions alone left the pre-clone credit
+ * stream on `from` only, so every paired delta after a clone was the old book's refusals
+ * rather than a comparison of rules — enough on its own to push z past the early-kill
+ * line (2026-09-04 clone: +0.0082 / +0.0044 credits on LIVE only).
+ *
+ * There is no `openedAt` column; `openedSession` is copied so holding-period / tenure
+ * displays stay with the original open, not the clone instant. If `from` has no row,
+ * falls back to {@link resetBranch} ($100k cash).
  */
 export async function cloneBranchBook(
   from: Branch,
@@ -405,6 +412,29 @@ export async function cloneBranchBook(
           markStale: p.markStale,
           openedSession: p.openedSession,
         })),
+      });
+    }
+
+    const [pendingOrders, pendingCredits] = await Promise.all([
+      tx.shadowOrder.findMany({ where: { branchId: fromRow.id, status: "PENDING" } }),
+      tx.counterfactual.findMany({ where: { branchId: fromRow.id, status: "PENDING" } }),
+    ]);
+    if (pendingOrders.length > 0) {
+      await tx.shadowOrder.createMany({
+        data: pendingOrders.map(({ id: _id, createdAt: _c, updatedAt: _u, ...o }) => ({
+          ...o,
+          branchId: toRow.id,
+        })),
+        skipDuplicates: true,
+      });
+    }
+    if (pendingCredits.length > 0) {
+      await tx.counterfactual.createMany({
+        data: pendingCredits.map(({ id: _id, createdAt: _c, updatedAt: _u, ...c }) => ({
+          ...c,
+          branchId: toRow.id,
+        })),
+        skipDuplicates: true,
       });
     }
     await tx.shadowBranch.update({

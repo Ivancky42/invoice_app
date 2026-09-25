@@ -16,7 +16,9 @@ import type { JobContext, JobResult } from "@/lib/cron/jobs";
 import { appendEvolutionEvent, countEvolutionEvents } from "@/lib/evolution/log";
 import { COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS } from "@/lib/fitness/counterfactuals";
 import {
+  actionsDiffer,
   evaluateCandidate,
+  KERNEL_DRAWDOWN_FLOOR,
   pairingIncrement,
   sequentialZ,
   type CandidateVerdict,
@@ -53,24 +55,35 @@ export async function isEvolutionPromotePaused(): Promise<boolean> {
   return false;
 }
 
-/** RESOLVED interim-horizon rows with non-zero signed credit (readiness for promotion). */
-export async function countResolvedNonZeroCredits(): Promise<number> {
+/**
+ * The candidate book's RESOLVED interim-horizon rows with non-zero signed credit, for
+ * refusals made during this test (decisionSession on/after the cutoff day — createdAt
+ * would also count pre-clone refusals copied in at the clone). Counting every branch and
+ * all time let years-old LIVE refusals satisfy the gate for a challenger that had
+ * resolved none.
+ */
+export async function countResolvedNonZeroCredits(
+  branchId: string,
+  since: Date,
+): Promise<number> {
   return prisma.counterfactual.count({
     where: {
+      branchId,
       status: "RESOLVED",
       horizonSessions: COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS,
+      decisionSession: { gte: new Date(`${since.toISOString().slice(0, 10)}T00:00:00.000Z`) },
       OR: [{ credit: { gt: 0 } }, { credit: { lt: 0 } }],
     },
   });
 }
 
-/** Sessions whose fitness row recorded a positive turnover tax (fill friction charged). */
-export async function countTurnoverSessions(branchId?: string): Promise<number> {
+/**
+ * The candidate book's sessions since the cutoff whose fitness row charged turnover (fill
+ * friction). Counting the LIVE book let a challenger that never traded pass the gate.
+ */
+export async function countTurnoverSessions(branchId: string, since: Date): Promise<number> {
   return prisma.fitnessSnapshot.count({
-    where: {
-      turnoverDelta: { gt: 0 },
-      ...(branchId ? { branchId } : {}),
-    },
+    where: { branchId, session: { gt: since }, turnoverDelta: { gt: 0 } },
   });
 }
 
@@ -189,12 +202,10 @@ export type EvolutionEvaluateDetail = {
 };
 
 export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult> {
-  if (await isEvolutionPromotePaused()) {
-    return {
-      done: true,
-      detail: { candidateId: null, skipped: "promote_paused" },
-    };
-  }
+  // The ops pause only ever withholds promotion (and the kills that would end a test on
+  // evidence gathered while paused). Kernel §18 reversion is never deferred, so the
+  // drawdown checks below run regardless.
+  const paused = await isEvolutionPromotePaused();
 
   const active = await prisma.ruleVersion.findFirst({
     where: { status: "ACTIVE" },
@@ -214,6 +225,11 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     return { done: true, detail: { candidateId: null, skipped: "no_shadow_branches" } };
   }
 
+  // Kernel §18 — "any branch": the LIVE book is checked first, before (and without) a
+  // challenger, and whether or not promotion is paused.
+  const liveBreach = await hardRevertOnLiveBreach(liveBranch, candidateBranch, active);
+  if (liveBreach) return { done: true, detail: liveBreach as Prisma.InputJsonValue };
+
   // The challenger is whoever the CANDIDATE BRANCH POINTS AT — a status-CANDIDATE row, or
   // the deposed champion running the revert series. Keying on status CANDIDATE made the
   // revert series unevaluable: it skipped `no_candidate` forever and the deposed champion's
@@ -229,7 +245,10 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
         `version ${candidateBranch.ruleVersionId} (${legitimacy.reason})`,
       );
     }
-    return { done: true, detail: { candidateId: null, skipped: "no_candidate" } };
+    return {
+      done: true,
+      detail: { candidateId: null, skipped: paused ? "promote_paused" : "no_candidate" },
+    };
   }
   const candidate = target;
 
@@ -298,7 +317,7 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
 
   const { z, delta, se, n } = sequentialZ(dailyDeltas);
   const lane: RuleLane = candidate.lane ?? "SLOW";
-  const verdict = evaluateCandidate({
+  let verdict = evaluateCandidate({
     z,
     sessions: n,
     decisions,
@@ -326,6 +345,20 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     promotionsIn90d,
   };
 
+  // A challenger whose book has taken exactly the same actions as LIVE's for a full
+  // early-kill window cannot be told apart by the paired test (every delta is the same
+  // market move on both sides), and would otherwise hold the only slot until the 50-session
+  // INCONCLUSIVE — e.g. a rule that only relabels outcomes. End it now.
+  let reason: string | undefined;
+  if (
+    verdict === "CONTINUE" &&
+    n >= thresholds.earlyKill.minSessions &&
+    !(await booksDiverged(candidateBranch.id, liveBranch.id, cutoff))
+  ) {
+    verdict = "INCONCLUSIVE";
+    reason = "no_divergence";
+  }
+
   const baseDetail: EvolutionEvaluateDetail = {
     candidateId: candidate.id,
     verdict,
@@ -343,6 +376,18 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     promotionsIn90d,
   };
 
+  if (paused && verdict !== "HARD_REVERT") {
+    return {
+      done: true,
+      detail: {
+        ...baseDetail,
+        verdict: "CONTINUE",
+        pausedVerdict: verdict,
+        skipped: "promote_paused",
+      } as unknown as Prisma.InputJsonValue,
+    };
+  }
+
   // CONTINUE is the steady state — writing an event every day it holds would bury the
   // state CHANGES that matter. The job ledger detail already records the daily numbers.
   if (verdict === "CONTINUE") {
@@ -352,8 +397,8 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
   if (verdict === "PROMOTE") {
     // Credit gate only blocks crowning — kills/reverts must still run while credit is dark.
     const [resolvedNonZeroCredits, turnoverSessions] = await Promise.all([
-      countResolvedNonZeroCredits(),
-      countTurnoverSessions(liveBranch.id),
+      countResolvedNonZeroCredits(candidateBranch.id, cutoff),
+      countTurnoverSessions(candidateBranch.id, cutoff),
     ]);
     if (resolvedNonZeroCredits < thresholds.minResolvedNonzeroCredits) {
       return {
@@ -431,12 +476,125 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
     actor: "CRON",
     detail: {
       ...stats,
+      ...(reason ? { reason } : {}),
       revertedToVersionId: active.id,
       challengerKind: legitimacy.kind,
     } as unknown as Prisma.InputJsonValue,
   });
 
   return { done: true, detail: baseDetail as unknown as Prisma.InputJsonValue };
+}
+
+/**
+ * Kernel §18 on the LIVE book: 25% or more below its own high-water mark hard-reverts.
+ * The in-flight challenger is killed. If the incumbent got there by an automatic
+ * promotion, LIVE reverts to the version it deposed (the last known-good the system
+ * itself chose); a human-published incumbent is kept — the system does not pick a
+ * "known-good" ruleset over a human choice — and the breach is logged for review. Both
+ * books restart under the incumbent so a still-breached high-water mark cannot re-fire
+ * the revert every night.
+ */
+async function hardRevertOnLiveBreach(
+  liveBranch: { id: string; highWaterNav: Prisma.Decimal },
+  candidateBranch: { ruleVersionId: number },
+  active: { id: number; parentId: number | null },
+): Promise<Record<string, unknown> | null> {
+  const latest = await prisma.fitnessSnapshot.findFirst({
+    where: { branchId: liveBranch.id },
+    orderBy: { session: "desc" },
+    select: { nav: true, session: true },
+  });
+  const highWater = decToNum(liveBranch.highWaterNav) ?? 0;
+  const nav = decToNum(latest?.nav ?? null) ?? 0;
+  const drawdown = highWater > 0 && nav > 0 ? Math.max(0, (highWater - nav) / highWater) : 0;
+  if (drawdown < KERNEL_DRAWDOWN_FLOOR) return null;
+
+  const killed = await prisma.ruleVersion.updateMany({
+    where: { id: candidateBranch.ruleVersionId, status: "CANDIDATE" },
+    data: { status: "KILLED", retiredAt: new Date() },
+  });
+
+  let revertedToVersionId: number | null = null;
+  const promotedAutomatically = await prisma.evolutionEvent.findFirst({
+    where: { kind: "PROMOTE", ruleVersionId: active.id },
+    select: { id: true },
+  });
+  if (promotedAutomatically && active.parentId !== null) {
+    const parent = await prisma.ruleVersion.findUnique({ where: { id: active.parentId } });
+    if (parent?.status === "RETIRED") {
+      const reverted = await promote(parent, active, {
+        liveHardRevert: true,
+        drawdown,
+      });
+      if (reverted.ok) revertedToVersionId = parent.id;
+    }
+  }
+
+  const incumbentId = revertedToVersionId ?? active.id;
+  await resetBranch("LIVE", incumbentId);
+  await resetBranch("CANDIDATE", incumbentId);
+  const detail = {
+    branch: "LIVE",
+    drawdown,
+    nav,
+    highWaterNav: highWater,
+    session: latest?.session.toISOString().slice(0, 10) ?? null,
+    killedCandidateId: killed.count === 1 ? candidateBranch.ruleVersionId : null,
+    revertedToVersionId,
+    automaticRevert: revertedToVersionId !== null,
+  };
+  await appendEvolutionEvent({
+    kind: "HARD_REVERT",
+    ruleVersionId: active.id,
+    actor: "CRON",
+    detail: detail as unknown as Prisma.InputJsonValue,
+  });
+  return { candidateId: null, verdict: "HARD_REVERT", ...detail };
+}
+
+/**
+ * Whether the two books have acted differently since the cutoff: orders (ticker, side,
+ * decision session — resets excluded) and refusals seeded as counterfactuals (ticker,
+ * decision type, decision session). Pre-cutoff rows copied in at a clone are excluded by
+ * the session floor.
+ */
+async function booksDiverged(
+  candidateBranchId: string,
+  liveBranchId: string,
+  cutoff: Date,
+): Promise<boolean> {
+  const since = new Date(`${cutoff.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const branchIds = [candidateBranchId, liveBranchId];
+  const [orders, refusals] = await Promise.all([
+    prisma.shadowOrder.findMany({
+      where: {
+        branchId: { in: branchIds },
+        decisionSession: { gte: since },
+        OR: [{ rejectReason: null }, { rejectReason: { not: "branch_reset" } }],
+      },
+      select: { branchId: true, ticker: true, side: true, decisionSession: true },
+    }),
+    prisma.counterfactual.findMany({
+      where: {
+        branchId: { in: branchIds },
+        horizonSessions: COUNTERFACTUAL_INTERIM_HORIZON_SESSIONS,
+        decisionSession: { gte: since },
+      },
+      select: { branchId: true, ticker: true, decisionType: true, decisionSession: true },
+    }),
+  ]);
+  const keys = (branchId: string) => [
+    ...orders
+      .filter((o) => o.branchId === branchId)
+      .map((o) => `order|${o.ticker}|${o.side}|${o.decisionSession.toISOString().slice(0, 10)}`),
+    ...refusals
+      .filter((r) => r.branchId === branchId)
+      .map(
+        (r) =>
+          `refusal|${r.ticker}|${r.decisionType}|${r.decisionSession.toISOString().slice(0, 10)}`,
+      ),
+  ];
+  return actionsDiffer(keys(candidateBranchId), keys(liveBranchId));
 }
 
 type PromoteResult = { ok: true } | { ok: false; reason: string };

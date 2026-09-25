@@ -28,8 +28,29 @@ const CSPX_LOOKBACK_DAYS = 7;
  */
 export const FALLBACK_LOOKBACK_DAYS = 7;
 
-/** Same Finnhub rate-limit pacing as `priceSync.ts`'s `MS_BETWEEN_FINNHUB`. */
-const MS_BETWEEN_FINNHUB = 220;
+/**
+ * Finnhub's free tier allows 60 calls/minute. 1.1s keeps this job under it — the old
+ * 220ms (~270/min) tripped a 429 within seconds, after which Finnhub was switched off
+ * for the whole run and every ticker fell through to EODHD's 20-calls/day free quota.
+ */
+const MS_BETWEEN_FINNHUB = 1_100;
+
+/**
+ * price_sync runs just before this job on the same key and usually leaves the current
+ * minute's quota spent. On the first 429, wait out the window once instead of giving up.
+ */
+const FINNHUB_COOLDOWN_MS = 61_000;
+
+const MS_BETWEEN_EODHD = 220;
+
+/**
+ * EODHD's free tier is 20 calls/day, and price_sync's CSPX quote spends one. CSPX history
+ * goes first; the rest heals gaps. Leaves a few calls spare for manual backfills.
+ */
+export const EODHD_CALLS_PER_RUN = 15;
+
+/** Longest gap one EODHD history call is asked to heal (calendar days). */
+export const GAP_HEAL_MAX_DAYS = 45;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -39,6 +60,8 @@ export type PriceHistorySyncDetail = {
   updated: number;
   failed: number;
   failedTickers: string[];
+  /** EODHD calls spent this run (free tier: 20/day, see EODHD_CALLS_PER_RUN). */
+  eodhdCalls?: number;
 };
 
 /**
@@ -58,6 +81,8 @@ const cursorSchema = z.object({
   finnhubDisabled: z.boolean().optional(),
   /** Carried across chained ticks so a 402 keeps EODHD off for the rest of the day. */
   eodhdDisabled: z.boolean().optional(),
+  /** EODHD calls spent so far today (see {@link EODHD_CALLS_PER_RUN}). */
+  eodhdCalls: z.number().int().min(0).optional(),
 });
 
 type PriceHistorySyncCursor = z.infer<typeof cursorSchema>;
@@ -133,6 +158,32 @@ export function lookbackWindow(
   return { from: from.toISOString().slice(0, 10), to: toYmd };
 }
 
+function addDaysYmd(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Start of the EODHD window that heals a ticker's gap in one call: the day after its last
+ * stored bar, but never less than the standard lookback and never more than
+ * {@link GAP_HEAL_MAX_DAYS}. A ticker with no history gets the maximum.
+ */
+export function healWindowFrom(lastBarYmd: string | null, todaySession: string): string {
+  const floor = lookbackWindow(todaySession, GAP_HEAL_MAX_DAYS).from;
+  if (lastBarYmd === null) return floor;
+  const standard = lookbackWindow(todaySession).from;
+  const dayAfter = addDaysYmd(lastBarYmd, 1);
+  const from = dayAfter < standard ? dayAfter : standard;
+  return from < floor ? floor : from;
+}
+
+/** True when a ticker is missing at least the previous session's bar. */
+export function hasGap(lastBarYmd: string | null, previousSession: string | null): boolean {
+  if (previousSession === null) return false;
+  return lastBarYmd === null || lastBarYmd < previousSession;
+}
+
 /** Finnhub `/quote` is only "today's bar" when its own session date matches. */
 export function isCurrentSessionBar(bar: DailyBar, todaySession: string): boolean {
   return bar.date === todaySession;
@@ -158,21 +209,29 @@ export async function fetchFallbackBars(
   ticker: string,
   todaySession: string,
   eodhdKey: string | undefined,
-  opts: { eodhdDisabled?: boolean } = {},
-): Promise<{ bars: DailyBar[]; error: string | null; eodhdQuota: boolean }> {
-  const { from, to } = lookbackWindow(todaySession);
+  opts: { eodhdDisabled?: boolean; eodhdSkipReason?: string; from?: string } = {},
+): Promise<{
+  bars: DailyBar[];
+  error: string | null;
+  eodhdQuota: boolean;
+  eodhdCalled: boolean;
+}> {
+  const { to } = lookbackWindow(todaySession);
+  const from = opts.from ?? lookbackWindow(todaySession).from;
   const errors: string[] = [];
   let eodhdQuota = false;
+  let eodhdCalled = false;
 
   if (opts.eodhdDisabled) {
-    errors.push("EODHD skipped (quota earlier this run)");
+    errors.push(opts.eodhdSkipReason ?? "EODHD skipped (quota earlier this run)");
   } else if (eodhdKey) {
     try {
-      await sleep(MS_BETWEEN_FINNHUB);
+      await sleep(MS_BETWEEN_EODHD);
+      eodhdCalled = true;
       const bars = sortBarsByDate(
         await fetchEodhdHistory(ticker, eodhdUsSymbol(ticker), from, to, eodhdKey),
       );
-      if (bars.length > 0) return { bars, error: null, eodhdQuota: false };
+      if (bars.length > 0) return { bars, error: null, eodhdQuota: false, eodhdCalled };
       errors.push("eodhd: no rows");
     } catch (e) {
       if (isEodhdQuotaError(e)) eodhdQuota = true;
@@ -184,13 +243,13 @@ export async function fetchFallbackBars(
 
   try {
     const bars = sortBarsByDate(await fetchStooqHistory(ticker, from, to));
-    if (bars.length > 0) return { bars, error: null, eodhdQuota };
+    if (bars.length > 0) return { bars, error: null, eodhdQuota, eodhdCalled };
     errors.push("stooq: no rows");
   } catch (e) {
     errors.push(e instanceof Error ? e.message : String(e));
   }
 
-  return { bars: [], error: errors.join("; "), eodhdQuota };
+  return { bars: [], error: errors.join("; "), eodhdQuota, eodhdCalled };
 }
 
 function toBigIntOrNull(volume: number | undefined): bigint | null {
@@ -279,25 +338,57 @@ async function recordStatusFailure(ticker: string, error: string): Promise<void>
   });
 }
 
-async function fetchCspxBar(eodhdKey: string | undefined): Promise<DailyBar | null> {
+/** CSPX.LSE bars from `fromYmd` (or the standard LSE-safe lookback) through today. */
+async function fetchCspxBars(eodhdKey: string | undefined, fromYmd?: string): Promise<DailyBar[]> {
   if (!eodhdKey) throw new Error("EODHD_API_KEY is not set");
   const to = new Date();
-  const from = new Date(to.getTime() - CSPX_LOOKBACK_DAYS * 86_400_000);
+  const lookbackFrom = new Date(to.getTime() - CSPX_LOOKBACK_DAYS * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const from = fromYmd && fromYmd < lookbackFrom ? fromYmd : lookbackFrom;
   const bars = await fetchEodhdHistory(
     CSPX_TICKER,
     CSPX_EODHD_SYMBOL,
-    from.toISOString().slice(0, 10),
+    from,
     to.toISOString().slice(0, 10),
     eodhdKey,
   );
-  return bars.at(-1) ?? null;
+  return sortBarsByDate(bars);
+}
+
+/** Latest stored bar per ticker, and the last anchor session before today. */
+async function loadGapState(
+  universe: string[],
+  todaySession: string,
+): Promise<{ lastBar: Map<string, string>; previousSession: string | null }> {
+  const [rows, prev] = await Promise.all([
+    prisma.priceHistory.groupBy({
+      by: ["ticker"],
+      where: { ticker: { in: universe } },
+      _max: { date: true },
+    }),
+    prisma.priceHistory.findFirst({
+      where: { ticker: { in: [...CALENDAR_ANCHOR_TICKERS] }, date: { lt: toDateOnly(todaySession) } },
+      orderBy: { date: "desc" },
+      select: { date: true },
+    }),
+  ]);
+  const lastBar = new Map<string, string>();
+  for (const r of rows) {
+    if (r._max.date) lastBar.set(r.ticker, r._max.date.toISOString().slice(0, 10));
+  }
+  return { lastBar, previousSession: prev ? prev.date.toISOString().slice(0, 10) : null };
 }
 
 /**
  * Nightly price-history sync: one bar per universe ticker for today's session.
- * Finnhub first; on miss, EODHD lookback (writes the whole window so a
- * multi-day gap heals) then stooq. CSPX only via EODHD. Idempotent upserts,
- * resumable via `cursor` when the tick budget runs low.
+ *
+ * Built for the free tiers: Finnhub (60/min) serves today's bar for US names, paced to
+ * stay under the limit, with one cooldown if price_sync left the minute spent. EODHD
+ * (20/day) is rationed per run: CSPX first (it has no other source), then gap healing —
+ * one history call per ticker, from its last stored bar, for Finnhub misses and for
+ * tickers Finnhub served but that are missing earlier sessions. stooq is the last resort.
+ * Idempotent upserts, resumable via `cursor` when the tick budget runs low.
  */
 export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
   const { ordered: universe, priority } = await collectPriceHistoryUniverse();
@@ -312,11 +403,41 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
   const failedTickers: string[] = [...resume.failedTickers];
   let lastProcessed = resume.after;
   const todaySession = easternSessionDate(Math.floor(Date.now() / 1000));
-  // price_sync already burned most of the Finnhub minute-quota; once we see a
-  // 429, stop calling Finnhub for the rest of this run and heal via EODHD.
   let finnhubDisabled = resume.finnhubDisabled === true || !finnhubKey;
-  // Same for EODHD: a 402 is the daily/plan cap, not a per-ticker miss.
+  let finnhubCooledDown = false;
+  // A 402 is the daily/plan cap, not a per-ticker miss.
   let eodhdDisabled = resume.eodhdDisabled === true;
+  let eodhdCalls = resume.eodhdCalls ?? 0;
+  const eodhdAvailable = () => !eodhdDisabled && eodhdCalls < EODHD_CALLS_PER_RUN;
+  const eodhdSkipReason = () =>
+    eodhdDisabled
+      ? "EODHD skipped (quota earlier this run)"
+      : `EODHD skipped (per-run budget of ${EODHD_CALLS_PER_RUN} calls spent)`;
+
+  const { lastBar, previousSession } = await loadGapState(universe, todaySession);
+
+  // CSPX first on a fresh run: EODHD is its only source, so it must not queue behind
+  // gap healing for the daily quota. Resumed (chained) runs already did it.
+  if (resume.after === "" && universe.includes(CSPX_TICKER)) {
+    try {
+      if (!eodhdAvailable()) throw new Error(eodhdSkipReason());
+      eodhdCalls += 1;
+      const bars = await fetchCspxBars(
+        eodhdKey,
+        healWindowFrom(lastBar.get(CSPX_TICKER) ?? null, todaySession),
+      );
+      if (bars.length === 0) throw new Error("No EODHD bar for CSPX.LSE");
+      for (const b of bars) await upsertBar(b);
+      await recordStatusSuccess(CSPX_TICKER, bars.at(-1)!.source);
+      updated += 1;
+    } catch (e) {
+      if (isEodhdQuotaError(e)) eodhdDisabled = true;
+      const message = e instanceof Error ? e.message : String(e);
+      await recordStatusFailure(CSPX_TICKER, message);
+      failed += 1;
+      failedTickers.push(CSPX_TICKER);
+    }
+  }
 
   for (let i = startIndex; i < universe.length; i++) {
     if (ctx.budget.remainingMs() <= BUDGET_HEADROOM_MS) {
@@ -329,6 +450,7 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
           failedTickers,
           finnhubDisabled,
           eodhdDisabled,
+          eodhdCalls,
         } satisfies PriceHistorySyncCursor,
         detail: { updated, failed, failedTickers } satisfies PriceHistorySyncDetail,
       };
@@ -336,40 +458,35 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
 
     const ticker = universe[i]!;
     lastProcessed = ticker;
-
-    if (ticker === CSPX_TICKER) {
-      try {
-        if (eodhdDisabled) throw new Error("EODHD skipped (quota earlier this run)");
-        const bar = await fetchCspxBar(eodhdKey);
-        if (!bar) throw new Error("No EODHD bar for CSPX.LSE");
-        await upsertBar(bar);
-        await recordStatusSuccess(ticker, bar.source);
-        updated += 1;
-      } catch (e) {
-        if (isEodhdQuotaError(e)) eodhdDisabled = true;
-        const message = e instanceof Error ? e.message : String(e);
-        await recordStatusFailure(ticker, message);
-        failed += 1;
-        failedTickers.push(ticker);
-      }
-      continue;
-    }
+    if (ticker === CSPX_TICKER) continue;
 
     let bar: DailyBar | null = null;
     let lastError: string | null = null;
 
     if (!finnhubDisabled && finnhubKey) {
-      try {
-        await sleep(MS_BETWEEN_FINNHUB);
-        bar = await fetchFinnhubDailyBar(ticker, finnhubKey);
-        if (!bar) lastError = "No Finnhub quote";
-      } catch (e) {
-        if (isFinnhubRateLimit(e)) {
-          finnhubDisabled = true;
-          lastError = e instanceof Error ? e.message : "Finnhub rate limit (429)";
-        } else {
-          lastError = e instanceof Error ? e.message : String(e);
+      for (;;) {
+        try {
+          await sleep(MS_BETWEEN_FINNHUB);
+          bar = await fetchFinnhubDailyBar(ticker, finnhubKey);
+          if (!bar) lastError = "No Finnhub quote";
+        } catch (e) {
+          if (
+            isFinnhubRateLimit(e) &&
+            !finnhubCooledDown &&
+            ctx.budget.remainingMs() > FINNHUB_COOLDOWN_MS + BUDGET_HEADROOM_MS
+          ) {
+            finnhubCooledDown = true;
+            await sleep(FINNHUB_COOLDOWN_MS);
+            continue;
+          }
+          if (isFinnhubRateLimit(e)) {
+            finnhubDisabled = true;
+            lastError = e instanceof Error ? e.message : "Finnhub rate limit (429)";
+          } else {
+            lastError = e instanceof Error ? e.message : String(e);
+          }
         }
+        break;
       }
     } else if (!finnhubKey) {
       lastError = "FINNHUB_API_KEY is not set";
@@ -382,6 +499,9 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
       bar = null;
     }
 
+    const tickerLastBar = lastBar.get(ticker) ?? null;
+    const gapped = hasGap(tickerLastBar, previousSession);
+
     if (bar) {
       try {
         await upsertBar(bar);
@@ -392,13 +512,38 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
         failed += 1;
         failedTickers.push(ticker);
         await recordStatusFailure(ticker, message);
+        continue;
+      }
+      // Today is in; heal earlier missing sessions while the EODHD ration lasts. A heal
+      // failure never fails the ticker — today's bar already landed.
+      if (gapped && eodhdKey && eodhdAvailable()) {
+        try {
+          await sleep(MS_BETWEEN_EODHD);
+          eodhdCalls += 1;
+          const healed = await fetchEodhdHistory(
+            ticker,
+            eodhdUsSymbol(ticker),
+            healWindowFrom(tickerLastBar, todaySession),
+            todaySession,
+            eodhdKey,
+          );
+          for (const h of healed) {
+            if (h.date !== todaySession) await upsertBar(h);
+          }
+        } catch (e) {
+          if (isEodhdQuotaError(e)) eodhdDisabled = true;
+        }
       }
       continue;
     }
 
+    const eodhdOk = eodhdAvailable();
     const fallback = await fetchFallbackBars(ticker, todaySession, eodhdKey, {
-      eodhdDisabled,
+      eodhdDisabled: !eodhdOk,
+      eodhdSkipReason: eodhdOk ? undefined : eodhdSkipReason(),
+      from: healWindowFrom(tickerLastBar, todaySession),
     });
+    if (fallback.eodhdCalled) eodhdCalls += 1;
     if (fallback.eodhdQuota) eodhdDisabled = true;
     if (fallback.bars.length === 0) {
       failed += 1;
@@ -424,6 +569,6 @@ export async function runPriceHistorySync(ctx: JobContext): Promise<JobResult> {
 
   return {
     done: true,
-    detail: { updated, failed, failedTickers } satisfies PriceHistorySyncDetail,
+    detail: { updated, failed, failedTickers, eodhdCalls } satisfies PriceHistorySyncDetail,
   };
 }

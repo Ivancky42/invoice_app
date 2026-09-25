@@ -825,7 +825,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Propose rule change",
       description:
-        "Propose a CANDIDATE ruleset (prose hunks and/or limits changes). Every prose hunk REQUIRES sectionId + expectedSectionSha from list_rule_sections; newText is the full section (heading included) — whole-file swaps are refused with 400. The SERVER assigns the lane — any `lane` you pass is ignored and recorded. Requires cited scored decision reviews (≥3, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome), a falsifiable counterCase (≥40 chars) and a measurable successMetric. Kernel edits, drift-rail breaches and eligibility failures are rejected AND appended to the evolution log.",
+        "Propose a CANDIDATE ruleset (prose hunks and/or limits changes). Every prose hunk REQUIRES sectionId + expectedSectionSha from list_rule_sections; newText is the full section (heading included) — whole-file swaps are refused with 400. The SERVER assigns the lane — any `lane` you pass is ignored and recorded. Requires cited scored decision reviews (≥3, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome), a falsifiable counterCase (≥40 chars) and a measurable successMetric. The change must be able to alter paper DECISIONS: it must change a limit or a section of _shared, daily or earnings (edits confined to weekly/monthly are refused as no_decision_surface), and a candidate whose book takes exactly the same actions as LIVE's for 10 paired sessions is ended INCONCLUSIVE (no_divergence) — labelling-only rules cannot be tested this way. Kernel edits, drift-rail breaches and eligibility failures are rejected AND appended to the evolution log.",
       inputSchema: proposeRuleChangeFieldsSchema.shape,
     },
     async (args, extra) => {
