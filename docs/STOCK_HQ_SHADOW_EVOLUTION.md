@@ -84,13 +84,19 @@ ascending session list: `latestSessionOnOrBeforeIn`, `nextSessionAfterIn`,
 `decisionSessionFromEasternDate`.
 
 `decisionSession` is derived from the **earlier** of a Decision Review's `decisionDate`
-(when set) and the US-Eastern calendar date of `createdAt`. Notion-synced rows carry an
+(when set) and the Eastern date of the last 16:00 ET close before `createdAt`
+(`easternCloseDateOf`). Notion-synced rows carry an
 old explicit `decisionDate` (stored as UTC midnight or noon) — its `ymd` wins, so a
 backfill does not collapse onto the sync day. Routines run from Malaysia after the US
-close and stamp the MYT calendar date, which is already the next US day; the Eastern write
-date caps that, so the decision lands on the session whose bars the agent actually saw
-(before this cap every paper decision filled one session late). When `decisionDate` is
-null, Eastern `createdAt` alone decides. Never run Notion midnight-UTC `decisionDate`
+close and stamp the MYT calendar date, which is already the next US day; the write time
+caps that, so the decision lands on the session whose bars the agent actually saw
+(before this cap every paper decision filled one session late). A write before the US
+close — a manual 19:45 MYT run is 07:45 ET — caps at the previous close; capping at the
+bare Eastern calendar date baselined such runs at a close hours in their future. When
+`decisionDate` is null, the write time alone decides. Tenure floors
+(`filterDecisionsAfterReset`) compare the uncapped calendar day
+(`decisionCalendarDay`), so a decision written after a mid-session reset stays in the new
+tenure. Never run Notion midnight-UTC `decisionDate`
 values through Eastern conversion — that would shift them back a calendar day; they are
 compared as calendar strings.
 
@@ -262,7 +268,11 @@ interim + 63 full quarter) for every AVOID / WAIT / DO_NOT_AVERAGE_DOWN decision
 on an already-held position is treated as HOLD, not a counterfactual — there is nothing
 declined). Interim credit enters fitness ~3 weeks after the decision; the 63-session row
 stores the residual vs already-recognized shorter credits so lifetime Σ equals the quarter
-measure. `src/lib/fitness/breadthClassify.ts` computes `MoveClass` per decision.
+measure. Repeat refusals are seeded once per **episode** (`insideRefusalEpisode`): a
+refusal within 63 sessions of an already-seeded refusal of the same ticker on the same
+branch adds nothing (`overlapping` in the job detail), and the first refusal at or past
+that horizon opens the next episode. Seeding every daily re-refusal stacked dozens of
+overlapping windows on one price move and inflated z. `src/lib/fitness/breadthClassify.ts` computes `MoveClass` per decision.
 Counterfactuals are seeded from `book=PAPER` refusals only, sized against the branch's
 own paper book on both branches. `evolution_evaluate` additionally refuses **promotion**
 until the CANDIDATE book has ≥12 RESOLVED interim (21-session) counterfactuals with

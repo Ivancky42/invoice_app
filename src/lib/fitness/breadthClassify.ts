@@ -21,7 +21,7 @@ import {
 import { classifyMove } from "@/lib/fitness/math";
 import { prisma } from "@/lib/prisma";
 import { getRuleSet } from "@/lib/rules/resolve";
-import { decisionSessionFromEasternDate, easternDateOf, loadSessions } from "@/lib/shadow/sessions";
+import { decisionSessionFromEasternDate, easternCloseDateOf, loadSessions } from "@/lib/shadow/sessions";
 
 /** Bounded backward scan; older decisions are never classified retroactively. */
 const LOOKBACK_DAYS = 7;
@@ -119,7 +119,7 @@ export async function runBreadthClassify(ctx: JobContext): Promise<JobResult> {
     }
 
     const ticker = dr.ticker!.trim().toUpperCase();
-    const decisionSessionDay = decisionSessionFromEasternDate(sessions, easternDateOf(dr.createdAt));
+    const decisionSessionDay = decisionSessionFromEasternDate(sessions, easternCloseDateOf(dr.createdAt));
     if (!decisionSessionDay) {
       // No session calendar coverage yet for this decision's date — retry next run
       // while it is still inside the lookback window.

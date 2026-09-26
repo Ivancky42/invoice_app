@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   decisionAsOfDay,
+  decisionCalendarDay,
   decisionSessionForReview,
   decisionSessionFromEasternDate,
+  easternCloseDateOf,
   easternDateOf,
   isSessionIn,
   latestSessionOnOrBeforeIn,
@@ -154,15 +156,42 @@ describe("decisionAsOfDay / decisionSessionForReview", () => {
     ).toBe("2026-09-24");
   });
 
-  it("keeps a same-US-day decisionDate when the routine writes during US hours", () => {
+  it("caps a pre-close write at the previous close (2026-09-25 manual paper pass)", () => {
+    // 19:45 MYT on 09-25 = 07:45 ET on 09-25: the 09-25 close was eight hours away.
+    const createdAt = new Date("2026-09-25T11:45:00.000Z");
+    const decisionDate = new Date("2026-09-25T12:00:00.000Z");
+    expect(decisionAsOfDay({ decisionDate, createdAt })).toBe("2026-09-24");
+    expect(
+      decisionSessionForReview(["2026-09-23", "2026-09-24", "2026-09-25"], {
+        decisionDate,
+        createdAt,
+      }),
+    ).toBe("2026-09-24");
+  });
+
+  it("caps a write during US hours at the previous close", () => {
     const createdAt = new Date("2026-09-24T19:00:00.000Z"); // 15:00 ET
+    const decisionDate = new Date("2026-09-24T12:00:00.000Z");
+    expect(decisionAsOfDay({ decisionDate, createdAt })).toBe("2026-09-23");
+  });
+
+  it("keeps the same US day from the 16:00 ET close onward", () => {
+    const createdAt = new Date("2026-09-24T20:00:00.000Z"); // 16:00 ET
     const decisionDate = new Date("2026-09-24T12:00:00.000Z");
     expect(decisionAsOfDay({ decisionDate, createdAt })).toBe("2026-09-24");
   });
 
-  it("falls back to Eastern createdAt when decisionDate is null", () => {
+  it("falls back to the last close before createdAt when decisionDate is null", () => {
+    // 07:38 ET on 08-06 — the 08-05 close is the latest one it could have seen.
     expect(decisionAsOfDay({ decisionDate: null, createdAt: syncCreatedAt })).toBe(
-      easternDateOf(syncCreatedAt),
+      "2026-08-05",
+    );
+    expect(easternCloseDateOf(syncCreatedAt)).toBe("2026-08-05");
+  });
+
+  it("decisionCalendarDay ignores the close cap (tenure floors)", () => {
+    expect(decisionCalendarDay({ decisionDate: null, createdAt: syncCreatedAt })).toBe(
+      "2026-08-06",
     );
   });
 
@@ -180,11 +209,11 @@ describe("decisionAsOfDay / decisionSessionForReview", () => {
         createdAt: syncCreatedAt,
       }),
     ).toBe("2026-05-16");
-    // Without decisionDate the sync-day collapse would win:
+    // Without decisionDate the sync-day collapse would win (an after-close sync):
     expect(
       decisionSessionForReview(maySessions, {
         decisionDate: null,
-        createdAt: syncCreatedAt,
+        createdAt: new Date("2026-08-06T21:00:00.000Z"), // 17:00 ET
       }),
     ).toBe("2026-08-06");
   });

@@ -29,6 +29,7 @@ import { dedupeDecisionsForShadow } from "@/lib/shadow/dedupe";
 import { loadSharedSleeves } from "@/lib/shadow/sleeves";
 import {
   decisionSessionForReview,
+  indexOnOrBefore,
   latestSessionOnOrBeforeIn,
   loadSessions,
   sessionDate,
@@ -59,6 +60,30 @@ export function residualCredit(rawFullCredit: number, alreadyRecognized: number)
   return roundFraction(rawFullCredit - alreadyRecognized);
 }
 
+/**
+ * Pure: whether a refusal on `decisionDay` falls inside the full-horizon window of an
+ * earlier (or later) seeded refusal of the same ticker.
+ *
+ * A routine re-refuses the same name every day it stays out of its band. Seeding each
+ * one stacked up to 63 overlapping windows over the same price move, so a single stance
+ * was credited dozens of times and the paired z-test read one lucky or unlucky name as
+ * many independent observations. One refusal EPISODE per ticker per full horizon: the
+ * first refusal owns the window, repeats inside it add nothing, and the first refusal at
+ * or past its horizon session starts the next episode. Windows are measured in sessions
+ * by calendar index, so an episode near the end of the known calendar stays open.
+ */
+export function insideRefusalEpisode(
+  sessions: string[],
+  episodeStarts: string[],
+  decisionDay: string,
+): boolean {
+  const at = indexOnOrBefore(sessions, decisionDay);
+  return episodeStarts.some((start) => {
+    const from = indexOnOrBefore(sessions, start);
+    return Math.abs(at - from) < COUNTERFACTUAL_HORIZON_SESSIONS;
+  });
+}
+
 /** Decision types that represent capital NOT deployed. HOLD is deliberately absent. */
 const SEEDABLE_DECISION_TYPES = ["AVOID", "WAIT", "DO_NOT_AVERAGE_DOWN"] as const;
 
@@ -75,12 +100,22 @@ const MAX_PENDING_PER_RUN = 1_000;
 /** Stop working with this much of the tick budget left. */
 const BUDGET_HEADROOM_MS = 5_000;
 
+export type SeedResult = {
+  seeded: number;
+  /** Every decision not seeded, including `overlapping`. */
+  skipped: number;
+  /** Repeat refusals inside an open episode ({@link insideRefusalEpisode}). */
+  overlapping: number;
+  truncated: boolean;
+};
+
 export type CounterfactualDetail = {
   seeded: number;
   skipped: number;
+  overlapping: number;
   resolved: number;
   unresolved: number;
-  byBranch: Record<string, { seeded: number; skipped: number }>;
+  byBranch: Record<string, { seeded: number; skipped: number; overlapping: number }>;
   truncated: boolean;
 };
 
@@ -113,22 +148,39 @@ export async function seedCounterfactualsForBranch(
   decisions: SeedableDecisionRow[],
   runDay: Date,
   budget: JobContext["budget"],
-): Promise<{ seeded: number; skipped: number; truncated: boolean }> {
+): Promise<SeedResult> {
   let seeded = 0;
   let skipped = 0;
+  let overlapping = 0;
 
-  if (decisions.length === 0) return { seeded, skipped, truncated: false };
+  if (decisions.length === 0) return { seeded, skipped, overlapping, truncated: false };
 
   // Already-seeded (decision, horizon) pairs are excluded here rather than per decision
   // (no N+1; unique index is the concurrent backstop). notionIds already represented on
   // ANY horizon block twin DR ids from double-crediting the fitness stream.
   const existing = await prisma.counterfactual.findMany({
     where: { branchId: branchRow.id },
-    select: { decisionReviewId: true, horizonSessions: true },
+    select: {
+      decisionReviewId: true,
+      horizonSessions: true,
+      ticker: true,
+      decisionSession: true,
+    },
   });
   const seededKeys = new Set(
     existing.map((row) => `${row.decisionReviewId}:${row.horizonSessions}`),
   );
+  // Every seeded row of any status opens an episode — a RESOLVED or UNRESOLVED window
+  // still covered that stretch of the price series.
+  const episodeStartsByTicker = new Map<string, Set<string>>();
+  const addEpisodeStart = (ticker: string, day: string) => {
+    const days = episodeStartsByTicker.get(ticker) ?? new Set<string>();
+    days.add(day);
+    episodeStartsByTicker.set(ticker, days);
+  };
+  for (const row of existing) {
+    addEpisodeStart(row.ticker.trim().toUpperCase(), ymd(row.decisionSession));
+  }
   const seededDecisionIds = new Set(existing.map((row) => row.decisionReviewId));
   const seededNotionIds = new Set<string>();
   if (seededDecisionIds.size > 0) {
@@ -142,7 +194,7 @@ export async function seedCounterfactualsForBranch(
   }
 
   const latestSession = latestSessionOnOrBeforeIn(sessions, ymd(runDay));
-  if (!latestSession) return { seeded, skipped: decisions.length, truncated: false };
+  if (!latestSession) return { seeded, skipped: decisions.length, overlapping, truncated: false };
 
   const [book, ruleSet, sleeves] = await Promise.all([
     branchBook(branchRow.id, latestSession),
@@ -180,6 +232,13 @@ export async function seedCounterfactualsForBranch(
     const day = decisionSessionForReview(sessions, dr);
     if (day) decisionSessionById.set(dr.id, day);
   }
+  // Episodes are claimed first-come by decision session, so walk in session order.
+  pending.sort((a, b) => {
+    const dayA = decisionSessionById.get(a.id) ?? "";
+    const dayB = decisionSessionById.get(b.id) ?? "";
+    if (dayA !== dayB) return dayA < dayB ? -1 : 1;
+    return a.createdAt.getTime() - b.createdAt.getTime();
+  });
 
   // One bar query for the whole branch's batch.
   const wantedDays = [...new Set([...decisionSessionById.values()])];
@@ -200,7 +259,7 @@ export async function seedCounterfactualsForBranch(
 
   for (const dr of pending) {
     if (budget.remainingMs() <= BUDGET_HEADROOM_MS) {
-      return { seeded, skipped, truncated: true };
+      return { seeded, skipped, overlapping, truncated: true };
     }
 
     const ticker = dr.ticker!.trim().toUpperCase();
@@ -245,6 +304,20 @@ export async function seedCounterfactualsForBranch(
       continue;
     }
 
+    // A decision already seeded on one horizon owns its episode; only fill the other.
+    if (
+      !seededDecisionIds.has(dr.id) &&
+      insideRefusalEpisode(
+        sessions,
+        [...(episodeStartsByTicker.get(ticker) ?? [])],
+        decisionSessionDay,
+      )
+    ) {
+      skipped += 1;
+      overlapping += 1;
+      continue;
+    }
+
     for (const horizonSessions of COUNTERFACTUAL_HORIZONS) {
       if (seededKeys.has(`${dr.id}:${horizonSessions}`)) continue;
       try {
@@ -263,6 +336,7 @@ export async function seedCounterfactualsForBranch(
         });
         seededKeys.add(`${dr.id}:${horizonSessions}`);
         seededDecisionIds.add(dr.id);
+        addEpisodeStart(ticker, decisionSessionDay);
         if (dr.notionId) seededNotionIds.add(dr.notionId);
         seeded += 1;
       } catch (err) {
@@ -271,7 +345,7 @@ export async function seedCounterfactualsForBranch(
     }
   }
 
-  return { seeded, skipped, truncated: false };
+  return { seeded, skipped, overlapping, truncated: false };
 }
 
 async function seedForBranch(
@@ -279,7 +353,7 @@ async function seedForBranch(
   sessions: string[],
   runDay: Date,
   budget: JobContext["budget"],
-): Promise<{ seeded: number; skipped: number; truncated: boolean }> {
+): Promise<SeedResult> {
   const lookbackSince = new Date(runDay.getTime() - LOOKBACK_DAYS * 86_400_000);
   // Same tenure floor as enqueue: after reset, do not re-seed the previous book's refusals
   // (their horizons may already have elapsed and would dump credit into day one).
@@ -513,6 +587,7 @@ export async function runCounterfactuals(ctx: JobContext): Promise<JobResult> {
   const detail: CounterfactualDetail = {
     seeded: 0,
     skipped: 0,
+    overlapping: 0,
     resolved: 0,
     unresolved: 0,
     byBranch: {},
@@ -523,10 +598,12 @@ export async function runCounterfactuals(ctx: JobContext): Promise<JobResult> {
     const result = await seedForBranch(branchRow, sessions, ctx.runDay, ctx.budget);
     detail.seeded += result.seeded;
     detail.skipped += result.skipped;
+    detail.overlapping += result.overlapping;
     detail.truncated ||= result.truncated;
     detail.byBranch[branchRow.branch] = {
       seeded: result.seeded,
       skipped: result.skipped,
+      overlapping: result.overlapping,
     };
   }
 

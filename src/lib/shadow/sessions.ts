@@ -134,6 +134,20 @@ export function easternDateOf(at: Date): string {
   return easternSessionDate(Math.floor(at.getTime() / 1000));
 }
 
+/** US regular-session close, in hours after Eastern midnight (16:00 ET). */
+const US_CLOSE_HOUR_ET = 16;
+
+/**
+ * Eastern calendar date of the latest 16:00 ET close at or before `at`: the day itself
+ * from the close onward, the day before until then. A write at 07:45 ET on the 25th has
+ * only seen the 24th's close; {@link easternDateOf} would date it the 25th and baseline
+ * it at a close eight hours in its future. Shifting by the close hour keeps the ET
+ * calendar lookup (an hour off only on the two DST-switch nights, which are Sundays).
+ */
+export function easternCloseDateOf(at: Date): string {
+  return easternDateOf(new Date(at.getTime() - US_CLOSE_HOUR_ET * 3_600_000));
+}
+
 export type DecisionAsOfInput = {
   /** Explicit decision calendar day when the DR carries one (Notion / agent). */
   decisionDate: Date | null;
@@ -141,28 +155,43 @@ export type DecisionAsOfInput = {
   createdAt: Date;
 };
 
-/**
- * Calendar day a DecisionReview should be dated for session lookup.
- *
- * The EARLIER of the stated `decisionDate` and the Eastern calendar date the row was
- * written. A decision cannot use bars from after it was written, so the Eastern write date
- * caps it: the routines run from Malaysia after the US close and stamp the MYT calendar
- * date, which is already the NEXT US day — trusting it alone dated every paper decision
- * one session late (fill a day late, counterfactual baseline at a close the agent never
- * saw). A Notion backfill keeps its older `decisionDate`. `decisionDate` is compared as a
- * calendar string, never run through {@link easternDateOf} (Notion stores midnight-UTC
- * dates, which that would shift back a day).
- */
-export function decisionAsOfDay(dr: DecisionAsOfInput): string {
-  const written = easternDateOf(dr.createdAt);
+function earlierOfStated(dr: DecisionAsOfInput, written: string): string {
   if (!dr.decisionDate) return written;
   const stated = ymd(dr.decisionDate);
   return stated < written ? stated : written;
 }
 
 /**
- * Pure: session a DecisionReview belongs to — `decisionDate` when present, else the
- * Eastern calendar date of `createdAt`.
+ * Calendar day a DecisionReview should be dated for session lookup.
+ *
+ * The EARLIER of the stated `decisionDate` and the last close the row could have seen
+ * ({@link easternCloseDateOf} of `createdAt`). A decision cannot use bars from after it
+ * was written, so the write time caps it: the routines run from Malaysia after the US
+ * close and stamp the MYT calendar date, which is already the NEXT US day — trusting it
+ * alone dated every paper decision one session late (fill a day late, counterfactual
+ * baseline at a close the agent never saw). A run before the US close (a manual 19:45 MYT
+ * run is 07:45 ET) caps at the PREVIOUS close for the same reason. A Notion backfill
+ * keeps its older `decisionDate`. `decisionDate` is compared as a calendar string, never
+ * run through {@link easternDateOf} (Notion stores midnight-UTC dates, which that would
+ * shift back a day).
+ */
+export function decisionAsOfDay(dr: DecisionAsOfInput): string {
+  return earlierOfStated(dr, easternCloseDateOf(dr.createdAt));
+}
+
+/**
+ * Calendar day a DecisionReview was made on — {@link decisionAsOfDay} without the
+ * close-time cap. Tenure floors compare this against the reset's calendar day: a decision
+ * written after a mid-session reset belongs to the new tenure even though the last close
+ * it saw predates the reset.
+ */
+export function decisionCalendarDay(dr: DecisionAsOfInput): string {
+  return earlierOfStated(dr, easternDateOf(dr.createdAt));
+}
+
+/**
+ * Pure: session a DecisionReview belongs to — the latest session on or before
+ * {@link decisionAsOfDay}.
  */
 export function decisionSessionForReview(
   sessions: string[],

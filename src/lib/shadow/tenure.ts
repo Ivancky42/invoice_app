@@ -8,7 +8,7 @@
  * must not slide the floor back to Friday and re-admit pre-reset decisionDates.
  */
 import {
-  decisionAsOfDay,
+  decisionCalendarDay,
   easternDateOf,
   type DecisionAsOfInput,
 } from "@/lib/shadow/sessions";
@@ -21,5 +21,5 @@ export function filterDecisionsAfterReset<T extends DecisionAsOfInput>(
 ): T[] {
   if (!resetAt) return decisions;
   const floorDay = easternDateOf(resetAt);
-  return decisions.filter((d) => decisionAsOfDay(d) >= floorDay);
+  return decisions.filter((d) => decisionCalendarDay(d) >= floorDay);
 }

@@ -42,16 +42,20 @@ export async function finnhubQuote(symbol: string, apiKey: string): Promise<Finn
   return (await res.json()) as FinnhubQuote;
 }
 
+/** `c` from a quote when it is a usable price, else null. */
+export function quoteLastPrice(j: FinnhubQuote | null): number | null {
+  const c = j?.c;
+  if (typeof c !== "number" || !Number.isFinite(c) || c <= 0) return null;
+  return c;
+}
+
 /**
  * Finnhub US-equities quote: `c` = current / last price.
  * @see https://finnhub.io/docs/api/stock-candles
  */
 export async function finnhubLastPrice(symbol: string, apiKey: string): Promise<number | null> {
   try {
-    const j = await finnhubQuote(symbol, apiKey);
-    const c = j?.c;
-    if (typeof c !== "number" || !Number.isFinite(c) || c <= 0) return null;
-    return c;
+    return quoteLastPrice(await finnhubQuote(symbol, apiKey));
   } catch (e) {
     if (isFinnhubRateLimit(e) || isProviderTimeout(e)) return null;
     throw e;

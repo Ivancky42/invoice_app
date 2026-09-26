@@ -36,8 +36,9 @@ export const FALLBACK_LOOKBACK_DAYS = 7;
 const MS_BETWEEN_FINNHUB = 1_100;
 
 /**
- * price_sync runs just before this job on the same key and usually leaves the current
- * minute's quota spent. On the first 429, wait out the window once instead of giving up.
+ * price_sync runs just before this job on the same key (paced the same way, but its last
+ * minute can still be near the quota). On the first 429, wait out the window once
+ * instead of giving up.
  */
 const FINNHUB_COOLDOWN_MS = 61_000;
 

@@ -1,5 +1,6 @@
 import { CSPX_EODHD_SYMBOL, eodhdRealTimeClose } from "@/lib/eodhd/quote";
-import { finnhubLastPrice } from "@/lib/finnhub/quote";
+import { finnhubQuote, isFinnhubRateLimit, quoteLastPrice } from "@/lib/finnhub/quote";
+import { isProviderTimeout } from "@/lib/http/providerFetch";
 import { prisma } from "@/lib/prisma";
 import {
   isCashTicker,
@@ -10,7 +11,18 @@ import {
 } from "@/lib/stocks/format";
 import { snapshotDateGMT8 } from "@/lib/stocks/portfolioTotals";
 
-const MS_BETWEEN_FINNHUB = 220;
+/**
+ * Finnhub's free tier allows 60 calls/minute; 1.1s keeps under it (same pacing as
+ * price_history). The old 220ms burned the quota ~60 calls in, so every run lost the
+ * tail of the list — the ideas, synced last — to "No Finnhub quote".
+ */
+const MS_BETWEEN_FINNHUB = 1_100;
+
+/** On the first 429, wait out Finnhub's one-minute window once instead of giving up. */
+const FINNHUB_COOLDOWN_MS = 61_000;
+
+/** One per run: the cooldown is spent at most once. */
+type FinnhubPacer = { cooledDown: boolean };
 
 export type PriceSyncDetail = {
   table: "portfolio" | "watchlist" | "ideas";
@@ -117,10 +129,33 @@ export function resolveIdeaQuoteSymbol(
   return null;
 }
 
+/** Paced Finnhub last price; null on a miss, a timeout, or a 429 after the cooldown. */
+async function pacedFinnhubLastPrice(
+  sym: string,
+  apiKey: string,
+  pacer: FinnhubPacer,
+): Promise<number | null> {
+  for (;;) {
+    await sleep(MS_BETWEEN_FINNHUB);
+    try {
+      return quoteLastPrice(await finnhubQuote(sym, apiKey));
+    } catch (e) {
+      if (isFinnhubRateLimit(e) && !pacer.cooledDown) {
+        pacer.cooledDown = true;
+        await sleep(FINNHUB_COOLDOWN_MS);
+        continue;
+      }
+      if (isFinnhubRateLimit(e) || isProviderTimeout(e)) return null;
+      throw e;
+    }
+  }
+}
+
 async function resolveFinnhubPrice(
   candidates: string[],
   apiKey: string,
   cache: Map<string, number | null>,
+  pacer: FinnhubPacer,
 ): Promise<{ price: number | null; symbolUsed: string | null }> {
   for (const sym of candidates) {
     if (cache.has(sym)) {
@@ -128,8 +163,7 @@ async function resolveFinnhubPrice(
       if (ck !== null) return { price: ck, symbolUsed: sym };
       continue;
     }
-    await sleep(MS_BETWEEN_FINNHUB);
-    const p = await finnhubLastPrice(sym, apiKey);
+    const p = await pacedFinnhubLastPrice(sym, apiKey, pacer);
     cache.set(sym, p);
     if (p !== null) return { price: p, symbolUsed: sym };
   }
@@ -158,6 +192,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
   }
 
   const quoteCache = new Map<string, number | null>();
+  const pacer: FinnhubPacer = { cooledDown: false };
   const details: PriceSyncDetail[] = [];
   let updated = 0;
   let skipped = 0;
@@ -280,7 +315,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
         });
         continue;
       }
-      const resolved = await resolveFinnhubPrice([sym], apiKey, quoteCache);
+      const resolved = await resolveFinnhubPrice([sym], apiKey, quoteCache, pacer);
       if (resolved.price === null) {
         failed += 1;
         errors.push(`portfolio ${sym}: No Finnhub quote`);
@@ -392,7 +427,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
         });
         continue;
       }
-      const resolved = await resolveFinnhubPrice([sym], apiKey, quoteCache);
+      const resolved = await resolveFinnhubPrice([sym], apiKey, quoteCache, pacer);
       if (resolved.price === null) {
         failed += 1;
         errors.push(`watchlist ${sym}: No Finnhub quote`);
@@ -468,7 +503,7 @@ export async function runPriceSyncToNeon(): Promise<PriceSyncResult> {
       continue;
     }
 
-    const resolved = await resolveFinnhubPrice([symbol], apiKey, quoteCache);
+    const resolved = await resolveFinnhubPrice([symbol], apiKey, quoteCache, pacer);
     if (resolved.price === null) {
       failed += 1;
       errors.push(`ideas ${symbol}: No Finnhub quote`);
