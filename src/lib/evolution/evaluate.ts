@@ -117,17 +117,117 @@ export async function countPaperDecisionsSinceCutoff(cutoff: Date): Promise<{
   return { candidate, live };
 }
 
-/** Stored snapshot columns → the benchmark-free increment every pairing caller uses. */
-export function pairingIncrementOf(row: {
-  dailyIncrement: Prisma.Decimal | null;
-  avoidedCreditDelta: Prisma.Decimal;
-  turnoverDelta: Prisma.Decimal;
-}): number | null {
+/**
+ * Stored snapshot columns → the benchmark-free increment every pairing caller uses.
+ * `credit` replaces the stored avoidedCreditDelta (the paired test passes in-trial credit).
+ */
+export function pairingIncrementOf(
+  row: {
+    dailyIncrement: Prisma.Decimal | null;
+    avoidedCreditDelta: Prisma.Decimal;
+    turnoverDelta: Prisma.Decimal;
+  },
+  credit?: number,
+): number | null {
   return pairingIncrement({
     dailyIncrement: decToNum(row.dailyIncrement),
-    avoidedCreditDelta: decToNum(row.avoidedCreditDelta) ?? 0,
+    avoidedCreditDelta: credit ?? decToNum(row.avoidedCreditDelta) ?? 0,
     turnoverDelta: decToNum(row.turnoverDelta) ?? 0,
   });
+}
+
+/**
+ * Sum each credit into the snapshot whose (previous snapshot, session] span holds its
+ * horizon — the attribution fitness_snapshot uses for avoidedCreditDelta. Sessions must be
+ * ascending; a horizon past the last snapshot has not been charged yet and is dropped.
+ */
+export function bucketCreditsBySnapshot(
+  snapshotSessionsMs: number[],
+  credits: { horizonMs: number; credit: number }[],
+): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const { horizonMs, credit } of credits) {
+    const session = snapshotSessionsMs.find((s) => s >= horizonMs);
+    if (session === undefined) continue;
+    out.set(session, (out.get(session) ?? 0) + credit);
+  }
+  return out;
+}
+
+/**
+ * Both books' OK snapshots since the cutoff, keyed by session ms, as pairable increments.
+ *
+ * The credit term counts only refusals decided DURING the trial (decisionSession on/after
+ * the cutoff day, as the credit gate counts them), rebuilt from Counterfactual rather than
+ * read from the stored avoidedCreditDelta. Pre-trial refusals are the incumbent's old calls,
+ * not evidence about the challenger; left in, a book that never received them wins or loses
+ * on them alone — v8 was cloned before clones copied counterfactuals, so LIVE's pre-clone
+ * refusals resolving into a rally handed it z≈2 on books whose NAV matched to the cent
+ * every session.
+ */
+export async function loadPairableSnapshots(
+  candidateBranchId: string,
+  liveBranchId: string,
+  cutoff: Date,
+): Promise<{ candRows: Map<number, PairableSnapshot>; liveRows: Map<number, PairableSnapshot> }> {
+  const branchIds = [candidateBranchId, liveBranchId];
+  const trialStart = new Date(`${cutoff.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const [rows, spans, inTrial] = await Promise.all([
+    prisma.fitnessSnapshot.findMany({
+      where: { branchId: { in: branchIds }, session: { gt: cutoff }, quality: "OK" },
+      select: {
+        branchId: true,
+        session: true,
+        nav: true,
+        dailyIncrement: true,
+        avoidedCreditDelta: true,
+        turnoverDelta: true,
+        maxDrawdown: true,
+      },
+      orderBy: { session: "asc" },
+    }),
+    // Every quality: a DEGRADED row still closes the span its successor's credits start from.
+    prisma.fitnessSnapshot.findMany({
+      where: { branchId: { in: branchIds }, session: { gte: trialStart } },
+      select: { branchId: true, session: true },
+      orderBy: { session: "asc" },
+    }),
+    prisma.counterfactual.findMany({
+      where: {
+        branchId: { in: branchIds },
+        status: "RESOLVED",
+        credit: { not: null },
+        decisionSession: { gte: trialStart },
+      },
+      select: { branchId: true, horizonSession: true, credit: true },
+    }),
+  ]);
+
+  const creditBy = new Map<string, Map<number, number>>();
+  for (const id of branchIds) {
+    creditBy.set(
+      id,
+      bucketCreditsBySnapshot(
+        spans.filter((s) => s.branchId === id).map((s) => s.session.getTime()),
+        inTrial
+          .filter((c) => c.branchId === id && c.horizonSession !== null)
+          .map((c) => ({ horizonMs: c.horizonSession!.getTime(), credit: decToNum(c.credit) ?? 0 })),
+      ),
+    );
+  }
+
+  const candRows = new Map<number, PairableSnapshot>();
+  const liveRows = new Map<number, PairableSnapshot>();
+  for (const r of rows) {
+    const ms = r.session.getTime();
+    const target = r.branchId === candidateBranchId ? candRows : liveRows;
+    target.set(ms, {
+      fitnessIncrement: pairingIncrementOf(r, creditBy.get(r.branchId)?.get(ms) ?? 0),
+      maxDrawdown: decToNum(r.maxDrawdown) ?? 0,
+      nav: decToNum(r.nav) ?? 0,
+    });
+  }
+  return { candRows, liveRows };
 }
 
 export type PairableSnapshot = {
@@ -260,34 +360,11 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
   // always before this challenger's reset and can never be inherited.
   const cutoff = evolutionEvidenceCutoff(candidate, candidateBranch.resetAt);
 
-  const rows = await prisma.fitnessSnapshot.findMany({
-    where: {
-      branchId: { in: [candidateBranch.id, liveBranch.id] },
-      session: { gt: cutoff },
-      quality: "OK",
-    },
-    select: {
-      branchId: true,
-      session: true,
-      nav: true,
-      dailyIncrement: true,
-      avoidedCreditDelta: true,
-      turnoverDelta: true,
-      maxDrawdown: true,
-    },
-    orderBy: { session: "asc" },
-  });
-
-  const candRows = new Map<number, PairableSnapshot>();
-  const liveRows = new Map<number, PairableSnapshot>();
-  for (const r of rows) {
-    const target = r.branchId === candidateBranch.id ? candRows : liveRows;
-    target.set(r.session.getTime(), {
-      fitnessIncrement: pairingIncrementOf(r),
-      maxDrawdown: decToNum(r.maxDrawdown) ?? 0,
-      nav: decToNum(r.nav) ?? 0,
-    });
-  }
+  const { candRows, liveRows } = await loadPairableSnapshots(
+    candidateBranch.id,
+    liveBranch.id,
+    cutoff,
+  );
 
   const {
     dailyDeltas,
@@ -400,52 +477,53 @@ export async function runEvolutionEvaluate(_ctx: JobContext): Promise<JobResult>
       countResolvedNonZeroCredits(candidateBranch.id, cutoff),
       countTurnoverSessions(candidateBranch.id, cutoff),
     ]);
-    if (resolvedNonZeroCredits < thresholds.minResolvedNonzeroCredits) {
+    const gateBlock =
+      resolvedNonZeroCredits < thresholds.minResolvedNonzeroCredits
+        ? "counterfactual_credit_gate"
+        : turnoverSessions < thresholds.minTurnoverSessions
+          ? "turnover_not_charging"
+          : null;
+    // evaluateCandidate returns PROMOTE before it ever looks at the inconclusive horizon,
+    // so a z that stays over the bar behind a closed gate would hold the only slot forever.
+    if (gateBlock && n < thresholds.inconclusiveSessions) {
       return {
         done: true,
         detail: {
           ...baseDetail,
           verdict: "CONTINUE",
-          skipped: "counterfactual_credit_gate",
+          skipped: gateBlock,
           resolvedNonZeroCredits,
           turnoverSessions,
         } as unknown as Prisma.InputJsonValue,
       };
     }
-    if (turnoverSessions < thresholds.minTurnoverSessions) {
+    if (gateBlock) {
+      verdict = "INCONCLUSIVE";
+      reason = gateBlock;
+      baseDetail.verdict = verdict;
+    } else {
+      const promoted = await promote(candidate, active, stats);
+      if (!promoted.ok) {
+        return {
+          done: true,
+          detail: {
+            ...baseDetail,
+            verdict: "CONTINUE",
+            skipped: promoted.reason,
+          } as unknown as Prisma.InputJsonValue,
+        };
+      }
       return {
         done: true,
         detail: {
           ...baseDetail,
-          verdict: "CONTINUE",
-          skipped: "turnover_not_charging",
+          promotedVersionId: candidate.id,
+          retiredVersionId: active.id,
           resolvedNonZeroCredits,
           turnoverSessions,
         } as unknown as Prisma.InputJsonValue,
       };
     }
-
-    const promoted = await promote(candidate, active, stats);
-    if (!promoted.ok) {
-      return {
-        done: true,
-        detail: {
-          ...baseDetail,
-          verdict: "CONTINUE",
-          skipped: promoted.reason,
-        } as unknown as Prisma.InputJsonValue,
-      };
-    }
-    return {
-      done: true,
-      detail: {
-        ...baseDetail,
-        promotedVersionId: candidate.id,
-        retiredVersionId: active.id,
-        resolvedNonZeroCredits,
-        turnoverSessions,
-      } as unknown as Prisma.InputJsonValue,
-    };
   }
 
   // EARLY_KILL / HARD_REVERT / INCONCLUSIVE all end the experiment the same way: the

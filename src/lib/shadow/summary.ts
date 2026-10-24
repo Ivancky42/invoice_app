@@ -10,9 +10,8 @@ import {
   countTurnoverSessions,
   evolutionEvidenceCutoff,
   isEvolutionPromotePaused,
+  loadPairableSnapshots,
   pairFitnessIncrements,
-  pairingIncrementOf,
-  type PairableSnapshot,
 } from "@/lib/evolution/evaluate";
 import { countEvolutionEvents, listEvolutionEvents } from "@/lib/evolution/log";
 import { evaluateCandidate, sequentialZ, type CandidateVerdict } from "@/lib/fitness/math";
@@ -234,43 +233,13 @@ export async function getShadowTestSummary(): Promise<ShadowTestSummary> {
   const liveNavBySession = new Map<string, number>();
 
   if (cutoff && candidateBranch && liveBranch) {
-    const rows = await prisma.fitnessSnapshot.findMany({
-      where: {
-        branchId: { in: [candidateBranch.id, liveBranch.id] },
-        session: { gt: cutoff },
-        quality: "OK",
-      },
-      select: {
-        branchId: true,
-        session: true,
-        nav: true,
-        dailyIncrement: true,
-        avoidedCreditDelta: true,
-        turnoverDelta: true,
-        maxDrawdown: true,
-      },
-      orderBy: { session: "asc" },
-    });
-
-    const candRows = new Map<number, PairableSnapshot>();
-    const liveRows = new Map<number, PairableSnapshot>();
-    for (const r of rows) {
-      const nav = decToNum(r.nav) ?? 0;
-      const snap: PairableSnapshot = {
-        fitnessIncrement: pairingIncrementOf(r),
-        maxDrawdown: decToNum(r.maxDrawdown) ?? 0,
-        nav,
-      };
-      const ms = r.session.getTime();
-      const day = isoDay(r.session);
-      if (r.branchId === candidateBranch.id) {
-        candRows.set(ms, snap);
-        candNavBySession.set(day, nav);
-      } else {
-        liveRows.set(ms, snap);
-        liveNavBySession.set(day, nav);
-      }
-    }
+    const { candRows, liveRows } = await loadPairableSnapshots(
+      candidateBranch.id,
+      liveBranch.id,
+      cutoff,
+    );
+    for (const [ms, snap] of candRows) candNavBySession.set(isoDay(new Date(ms)), snap.nav);
+    for (const [ms, snap] of liveRows) liveNavBySession.set(isoDay(new Date(ms)), snap.nav);
     const paired = pairFitnessIncrements(candRows, liveRows);
     dailyDeltas = paired.dailyDeltas;
     candidateMaxDrawdown = paired.candidateMaxDrawdown;
