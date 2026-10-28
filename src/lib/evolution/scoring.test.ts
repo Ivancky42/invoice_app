@@ -6,6 +6,7 @@ import {
   checkMetric,
   classifyOutcome,
   parseSuccessMetric,
+  trialStatsFromEventDetail,
 } from "@/lib/evolution/scoring";
 
 describe("classifyOutcome", () => {
@@ -104,5 +105,43 @@ describe("checkMetric", () => {
     expect(checkMetric({ term: "drawdown", target: 0.08 }, 0.001, 30)).toBe("UNKNOWN");
     // A target ≥ 1 is stated in units we cannot safely reinterpret as a NAV fraction.
     expect(checkMetric({ term: "return", target: 5 }, 0.001, 30)).toBe("UNKNOWN");
+  });
+});
+
+describe("trialStatsFromEventDetail", () => {
+  it("reads the n/delta evolution_evaluate spreads into a trial-ending event", () => {
+    expect(
+      trialStatsFromEventDetail({ z: -1.6, n: 24, delta: -0.0007, se: 0.00044, reason: undefined }),
+    ).toEqual({ deltaPerSession: -0.0007, sessions: 24 });
+  });
+
+  it("reads a human stop that wrote sessions instead of n", () => {
+    expect(
+      trialStatsFromEventDetail({ human: true, reason: "no_divergence", sessions: 31, delta: 0.000144 }),
+    ).toEqual({ deltaPerSession: 0.000144, sessions: 31 });
+  });
+
+  it("a frozen v8-style series scores NEUTRAL, not HURT or HELPED", () => {
+    const stats = trialStatsFromEventDetail({ n: 31, delta: 0.000144 })!;
+    expect(classifyOutcome({ ...stats, metricCheck: "UNKNOWN" })).toBe("NEUTRAL");
+  });
+
+  it("a frozen losing series can be HURT, which pattern retirement needs", () => {
+    const stats = trialStatsFromEventDetail({ n: 20, delta: -0.0009 })!;
+    expect(classifyOutcome({ ...stats, metricCheck: "UNKNOWN" })).toBe("HURT");
+  });
+
+  it("a rebase kill is bookkeeping, not a verdict", () => {
+    expect(trialStatsFromEventDetail({ reason: "rebased", newCandidateId: 8, human: true })).toBeNull();
+    expect(trialStatsFromEventDetail({ reason: "rebase_conflict", n: 12, delta: -0.001 })).toBeNull();
+  });
+
+  it("returns null when the stats are missing or malformed", () => {
+    expect(trialStatsFromEventDetail(null)).toBeNull();
+    expect(trialStatsFromEventDetail([1, 2])).toBeNull();
+    expect(trialStatsFromEventDetail({ n: 12 })).toBeNull();
+    expect(trialStatsFromEventDetail({ delta: 0.001 })).toBeNull();
+    expect(trialStatsFromEventDetail({ n: 12.5, delta: 0.001 })).toBeNull();
+    expect(trialStatsFromEventDetail({ n: 12, delta: Number.NaN })).toBeNull();
   });
 });
