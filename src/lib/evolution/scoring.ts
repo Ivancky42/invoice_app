@@ -109,6 +109,50 @@ export async function retiredReasoningPatterns(): Promise<string[]> {
     .map((g) => g.reasoningPattern as string);
 }
 
+/** Event kinds that end a challenger's trial with the paired stats evaluate computed. */
+export const TRIAL_END_EVENT_KINDS = ["EARLY_KILL", "INCONCLUSIVE"] as const;
+
+/**
+ * The paired series a trial-ending event froze, or null when the event is not a verdict.
+ *
+ * resetBranch wipes the challenger book's snapshots and counterfactuals the moment a trial
+ * ends (they would leak into the next tenure), so a KILLED candidate's series can never be
+ * re-read from FitnessSnapshot — every one scored `sessions: 0` forever and pattern
+ * retirement never saw a HURT row. evolution_evaluate computes the in-trial paired stats
+ * right before that reset and appends them to the event (`n`, `delta` = mean candidate −
+ * live per session). A human stop wrote `sessions` instead of `n`; the ledger is
+ * append-only, so both shapes are read. A rebase kill is bookkeeping (the same experiment
+ * continues under a new id), not a verdict.
+ */
+export function trialStatsFromEventDetail(
+  detail: unknown,
+): { deltaPerSession: number; sessions: number } | null {
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const d = detail as Record<string, unknown>;
+  if (d.reason === "rebased" || d.reason === "rebase_conflict") return null;
+  const sessions = typeof d.n === "number" ? d.n : d.sessions;
+  const delta = d.delta;
+  if (typeof sessions !== "number" || !Number.isInteger(sessions) || sessions < 0) return null;
+  if (typeof delta !== "number" || !Number.isFinite(delta)) return null;
+  return { deltaPerSession: delta, sessions };
+}
+
+/** Latest trial-ending event for a challenger that carries paired stats, if any. */
+async function loadTrialEndStats(
+  versionId: number,
+): Promise<{ deltaPerSession: number; sessions: number } | null> {
+  const events = await prisma.evolutionEvent.findMany({
+    where: { ruleVersionId: versionId, kind: { in: [...TRIAL_END_EVENT_KINDS] } },
+    orderBy: { createdAt: "desc" },
+    select: { detail: true },
+  });
+  for (const e of events) {
+    const stats = trialStatsFromEventDetail(e.detail);
+    if (stats) return stats;
+  }
+  return null;
+}
+
 type SnapshotRow = { session: Date; fitnessIncrement: number | null };
 
 async function loadPairedSeries(
@@ -231,7 +275,13 @@ export async function scoreRuleVersion(
   const from = version.activatedAt ?? version.evidenceCutoff ?? version.createdAt;
   const to = version.retiredAt ?? new Date();
 
-  const { deltaPerSession, sessions } = await loadPairedSeries(ownBranch, from, to);
+  // A challenger's book is wiped when its trial ends, so its own series lives on only in
+  // the stats the trial-ending event froze. Snapshots are the fallback for a version whose
+  // trial never wrote one (HARD_REVERT logs on the incumbent's id, without candidate stats).
+  const trialStats = ownBranch === "CANDIDATE" ? await loadTrialEndStats(version.id) : null;
+  const source = trialStats ? "trial_event" : "snapshots";
+  const { deltaPerSession, sessions } =
+    trialStats ?? (await loadPairedSeries(ownBranch, from, to));
 
   // PREVIEW ONLY below the minimum series length. Persisting NEUTRAL here would be a
   // one-way door: the monthly job only picks up versions with `outcome: null`, so an early
@@ -249,6 +299,7 @@ export async function scoreRuleVersion(
         outcome: null,
         reason: "insufficient_sessions",
         branch: ownBranch,
+        source,
         from: from.toISOString(),
         to: to.toISOString(),
         deltaPerSession,
@@ -276,6 +327,7 @@ export async function scoreRuleVersion(
 
   const outcomeDetail = {
     branch: ownBranch,
+    source,
     from: from.toISOString(),
     to: to.toISOString(),
     deltaPerSession,
