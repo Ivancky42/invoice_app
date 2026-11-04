@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { ZodSchema } from "zod";
+import type { ZodType } from "zod";
 import { branchKeyRejection, validationFailure } from "@/lib/agent/schemas";
 
 export async function readJsonBody(req: Request): Promise<unknown> {
@@ -17,7 +17,7 @@ export function rejectBranchOr400(input: unknown): NextResponse | null {
 }
 
 export function parseOr400<T>(
-  schema: ZodSchema<T>,
+  schema: ZodType<T>,
   body: unknown,
 ): { ok: true; data: T } | { ok: false; response: NextResponse } {
   const parsed = schema.safeParse(body);

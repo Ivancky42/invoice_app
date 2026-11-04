@@ -98,7 +98,7 @@ export function PromptsReader({ prompts }: { prompts: PromptDoc[] }) {
               Read-only
             </span>
           </header>
-          <pre className="px-5 sm:px-6 py-5 text-[13px] leading-relaxed text-gray-800 whitespace-pre-wrap break-words font-mono overflow-x-auto max-h-[min(75vh,900px)] overflow-y-auto">
+          <pre className="px-5 sm:px-6 py-5 text-[13px] leading-relaxed text-gray-800 whitespace-pre-wrap wrap-break-word font-mono overflow-x-auto max-h-[min(75vh,900px)] overflow-y-auto">
             {active.markdown}
           </pre>
         </section>

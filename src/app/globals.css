@@ -1,6 +1,59 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+/* v4 replacement for the tailwindcss-animate plugin (animate-in, fade-in-0, zoom-in-95, …). */
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+}
+
+/*
+  Tailwind v3 Preflight defaults that v4 changed, kept so the UI looks and behaves
+  as before: borders default to gray-200 (v4: currentcolor), placeholders are
+  gray-400 (v4: 50% of the text color) and buttons show a pointer (v4: default).
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
 
 :root {
   --bg: #f7f7f8;
@@ -13,10 +66,11 @@
 
 html, body { background: var(--bg); color: var(--fg); }
 
+/* Unlayered on purpose: like v3 (where they followed the utilities), they win over utilities. */
 .btn { @apply inline-flex items-center justify-center px-3 py-2 rounded-md text-sm font-medium border border-gray-300 bg-white hover:bg-gray-50 transition; }
 .btn-primary { @apply bg-gray-900 text-white border-gray-900 hover:bg-gray-800; }
 .btn-danger { @apply bg-red-600 text-white border-red-600 hover:bg-red-700; }
-.input { @apply w-full px-3 py-2 rounded-md border border-gray-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/10; }
+.input { @apply w-full px-3 py-2 rounded-md border border-gray-300 bg-white text-sm focus:outline-hidden focus:ring-2 focus:ring-gray-900/10; }
 .label { @apply block text-xs font-medium text-gray-600 mb-1; }
 .card { @apply bg-white border border-gray-200 rounded-lg; }
 .badge { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium; }

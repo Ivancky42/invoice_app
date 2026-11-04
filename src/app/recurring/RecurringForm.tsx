@@ -251,7 +251,7 @@ export default function RecurringForm({
                 <input
                   type="number"
                   min={1}
-                  className="input !w-20"
+                  className="input w-20!"
                   value={f.maxOccurrences ?? ""}
                   onFocus={() => setEndMode("count")}
                   onChange={(e) => set("maxOccurrences", e.target.value ? parseInt(e.target.value) : null)}
@@ -260,7 +260,7 @@ export default function RecurringForm({
               </label>
               <label className="flex items-center gap-1.5">
                 <input type="radio" checked={endMode === "date"} onChange={() => setEndMode("date")} /> On
-                <input type="date" className="input !w-auto" value={f.endDate ?? ""} onFocus={() => setEndMode("date")} onChange={(e) => set("endDate", e.target.value || null)} />
+                <input type="date" className="input w-auto!" value={f.endDate ?? ""} onFocus={() => setEndMode("date")} onChange={(e) => set("endDate", e.target.value || null)} />
               </label>
             </div>
           </div>

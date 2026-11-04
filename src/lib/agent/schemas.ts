@@ -94,7 +94,9 @@ export const getContextInputSchema = z.object({
  * writing to its own branch must never mutate the real book by accident.
  */
 export const realBookBranchGuard = z
-  .undefined({ invalid_type_error: "branch_not_allowed_on_real_book" })
+  // never (not undefined): same accept/reject set once optional, and unlike
+  // z.undefined it has a JSON Schema form ({ not: {} }) for the MCP tools/list.
+  .never({ error: "branch_not_allowed_on_real_book" })
   .optional();
 
 export const logTradeInputSchema = z.object({
@@ -713,20 +715,35 @@ export function branchKeyRejection(input: unknown): AgentValidationFailure | nul
 
 export type AgentValidationFailure = {
   error: string;
-  issues: z.ZodIssue[];
+  issues: z.core.$ZodIssue[];
   legalValues?: string[];
   field?: string;
 };
 
+/**
+ * First issue that is a bad enum value. Zod 4 reports it as `invalid_value` with the
+ * allowed `values` (zod 3: `invalid_enum_value` + `options`). A literal mismatch shares
+ * that code, so only an all-string value list counts as an enum.
+ */
+function findEnumIssue(err: z.ZodError): { path: PropertyKey[]; values: string[] } | undefined {
+  for (const issue of err.issues) {
+    if (
+      issue.code === "invalid_value" &&
+      issue.values.length > 0 &&
+      issue.values.every((v) => typeof v === "string")
+    ) {
+      return { path: issue.path, values: issue.values as string[] };
+    }
+  }
+  return undefined;
+}
+
 /** Build a structured 400 payload; attach legalValues for invalid enums. */
 export function validationFailure(err: z.ZodError): AgentValidationFailure {
-  const enumIssue = err.issues.find((i) => String(i.code) === "invalid_enum_value");
+  const enumIssue = findEnumIssue(err);
   if (enumIssue) {
     const field = String(enumIssue.path[enumIssue.path.length - 1] ?? "");
-    const fromIssue =
-      "options" in enumIssue && Array.isArray((enumIssue as { options?: unknown }).options)
-        ? ((enumIssue as { options: string[] }).options as string[])
-        : undefined;
+    const fromIssue: string[] | undefined = enumIssue.values;
     const enumName = resolveEnumName(field, fromIssue);
     return {
       error: `invalid enum value for ${field || "field"}`,
