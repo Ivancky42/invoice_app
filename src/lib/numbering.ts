@@ -1,11 +1,22 @@
+import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "./prisma";
 import { DOC_PREFIX } from "./types";
 
-export async function nextDocumentNumber(type: string): Promise<string> {
+type NumberingDb = Pick<Prisma.TransactionClient, "document">;
+
+/**
+ * Next free number for `type`, e.g. INV-2026-0007. Pass `db` to allocate inside a
+ * transaction and `date` to number by the document's own year (defaults to now).
+ */
+export async function nextDocumentNumber(
+  type: string,
+  opts: { db?: NumberingDb; date?: Date } = {},
+): Promise<string> {
+  const db = opts.db ?? prisma;
   const prefix = DOC_PREFIX[type] ?? "DOC";
-  const year = new Date().getFullYear();
+  const year = (opts.date ?? new Date()).getUTCFullYear();
   const stem = `${prefix}-${year}-`;
-  const last = await prisma.document.findFirst({
+  const last = await db.document.findFirst({
     where: { number: { startsWith: stem } },
     orderBy: { number: "desc" },
   });

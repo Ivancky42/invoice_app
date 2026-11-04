@@ -16,7 +16,7 @@ const mcpHandler = createMcpHandler(
   {
     serverInfo: {
       name: "stock-hq",
-      version: "0.5.0",
+      version: "0.6.0",
     },
   },
   {

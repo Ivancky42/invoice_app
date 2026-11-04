@@ -96,6 +96,13 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
 
   const totals = calcTotals(items, taxRate, discountType, discountValue);
 
+  // "Bill this automatically" — new invoices only; this invoice becomes #1 of the series.
+  const [repeatOn, setRepeatOn] = useState(false);
+  const [repeatFreq, setRepeatFreq] = useState<"WEEKLY" | "MONTHLY" | "QUARTERLY" | "YEARLY">("MONTHLY");
+  const [repeatInterval, setRepeatInterval] = useState(1);
+  const [repeatTotal, setRepeatTotal] = useState<string>("");
+  const canRepeat = mode === "create" && type === "INVOICE";
+
   function updateItem(idx: number, patch: Partial<LineItem>) {
     setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   }
@@ -134,6 +141,14 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
         taxRate: Number(taxRate) || 0,
         discountType,
         discountValue: Number(discountValue) || 0,
+        repeat:
+          canRepeat && repeatOn
+            ? {
+                frequency: repeatFreq,
+                interval: Math.max(1, repeatInterval || 1),
+                totalInvoices: repeatTotal ? Math.max(2, parseInt(repeatTotal, 10) || 2) : null,
+              }
+            : null,
       });
       router.push(`/documents/${res.id}`);
       router.refresh();
@@ -237,6 +252,52 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
             </div>
         </div>
       </div>
+
+      {canRepeat && (
+        <div className="card p-5 space-y-3">
+          <label className="flex items-center gap-2 font-medium">
+            <input type="checkbox" checked={repeatOn} onChange={(e) => setRepeatOn(e.target.checked)} />
+            Bill this automatically (recurring)
+          </label>
+          {repeatOn && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span>Every</span>
+              <input
+                type="number"
+                min={1}
+                className="input w-20"
+                value={repeatInterval}
+                onChange={(e) => setRepeatInterval(parseInt(e.target.value) || 1)}
+              />
+              <AppSelect
+                value={repeatFreq}
+                onValueChange={(v) => setRepeatFreq(v as typeof repeatFreq)}
+                options={[
+                  { value: "WEEKLY", label: "week(s)" },
+                  { value: "MONTHLY", label: "month(s)" },
+                  { value: "QUARTERLY", label: "quarter(s)" },
+                  { value: "YEARLY", label: "year(s)" },
+                ]}
+                triggerClassName="w-32"
+              />
+              <span>on the same day as this invoice, for</span>
+              <input
+                type="number"
+                min={2}
+                className="input w-20"
+                placeholder="∞"
+                value={repeatTotal}
+                onChange={(e) => setRepeatTotal(e.target.value)}
+              />
+              <span>invoices in total (blank = until stopped).</span>
+              <p className="w-full text-xs text-gray-500">
+                This invoice is #1. The rest are issued automatically around 06:00 Malaysia time on each date. Fine-tune
+                the schedule (end date, day of month, {"{{period}}"} placeholders) under Recurring after saving.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="card p-5 space-y-4">
         <h2 className="font-medium">Bill to</h2>

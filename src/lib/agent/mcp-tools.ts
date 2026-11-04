@@ -18,6 +18,7 @@ import {
   AGENT_ROUTINES,
 } from "@/lib/agent/context";
 import { logTrade } from "@/lib/agent/logTrade";
+import { registerInvoiceMcpTools } from "@/lib/agent/mcp-invoice-tools";
 import {
   canWriteRealBook,
   isShadowOnlyScope,
@@ -886,8 +887,9 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
   // would remove the only selection pressure in the system.
 }
 
-/** Register all Stock HQ MCP tools (reads + writes). */
+/** Register all MCP tools: Stock HQ (reads + writes) and invoicing. */
 export function registerAgentMcpTools(server: McpServer): void {
   registerAgentMcpReadTools(server);
   registerAgentMcpWriteTools(server);
+  registerInvoiceMcpTools(server);
 }
