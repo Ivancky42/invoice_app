@@ -12,6 +12,7 @@ A shadow-only (`mcp:shadow`) connector is refused by every billing tool.
 | `get_invoice` | One document by id **or number** (`INV-2026-0007`): lines, totals, parent/children, schedule. |
 | `get_invoice_pdf` | The PDF as an embedded `application/pdf` resource **and** a signed download link (no PIN, 7 days by default, max 90). |
 | `get_billing_summary` | Per company: invoiced, collected, outstanding, overdue, drafts, open quotes; next recurring run. |
+| `get_billing_report` | Flat compact rows for dashboards: `view=documents` (with effective due date and days overdue) or `view=recurring` (with next run and amount per invoice); optional company-name filter. Feeds the billing dashboard artifact. |
 | `create_invoice` | New invoice (default) / quotation / DO. Client autofill from saved clients; tax and notes from the company profile; Net-N → due date. |
 | `update_invoice` | Patch any field; `items` replaces the lines; totals recomputed. |
 | `set_invoice_status` | DRAFT / ISSUED / PAID / CANCELLED. Issuing derives a due date from Net-N terms if none. |

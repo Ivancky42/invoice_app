@@ -56,6 +56,7 @@ const EXPECTED_TOOL_NAMES = [
   "delete_invoice",
   "delete_recurring_invoice",
   "duplicate_invoice",
+  "get_billing_report",
   "get_billing_summary",
   "get_invoice",
   "get_invoice_pdf",

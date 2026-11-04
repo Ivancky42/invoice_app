@@ -9,3 +9,6 @@ node_modules
 .next-docs/
 .vercel
 .env*
+
+# agent worktrees
+.claude/worktrees/

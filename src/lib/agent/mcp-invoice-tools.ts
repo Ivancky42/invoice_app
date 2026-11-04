@@ -25,7 +25,9 @@ import {
   upsertClient,
   upsertCompany,
 } from "@/lib/invoicing/documents";
+import { billingReport } from "@/lib/invoicing/report";
 import {
+  billingReportSchema,
   billingSummarySchema,
   createDocumentSchema,
   createRecurringSchema,
@@ -212,6 +214,15 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     run: (input) => billingSummary(input),
   });
 
+  register(server, "get_billing_report", {
+    title: "Get billing report rows",
+    kind: "read",
+    description:
+      "Flat, compact rows for dashboards and analysis — no paging. view=documents: one row per invoice/quotation/DO with company, type, status, issue_date, due_date (effective: due date, else Net-N terms, else 30 days; invoices only), days_overdue (ISSUED invoices), client, project, total, currency. view=recurring: one row per schedule with status, cadence, next_run, generated / max_invoices and per_invoice amount. Optionally limit to company profile names. Returns {view, as_of, cut, rows}.",
+    schema: billingReportSchema,
+    run: (input) => billingReport(input),
+  });
+
   // ---------------------------------------------------------------- documents: write
   register(server, "create_invoice", {
     title: "Create invoice",
@@ -375,6 +386,7 @@ export const INVOICE_TOOL_NAMES = [
   "delete_invoice",
   "delete_recurring_invoice",
   "duplicate_invoice",
+  "get_billing_report",
   "get_billing_summary",
   "get_invoice",
   "get_invoice_pdf",
