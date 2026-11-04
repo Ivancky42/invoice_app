@@ -1,0 +1,5 @@
+# pnpm settings (pnpm 11+ reads them only from here, not from package.json or .npmrc).
+# Dependency lifecycle scripts are blocked unless allowed; Prisma needs its engines.
+allowBuilds:
+  "@prisma/engines": true
+  prisma: true
