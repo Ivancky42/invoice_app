@@ -346,7 +346,7 @@ export default async function WatchlistPage() {
         <div className={`grid gap-4 ${priorityGridClass(groups.length)}`}>
           {groups.map((g) => (
             <div key={g.label} className="min-w-0 space-y-2">
-              <div className="flex items-center gap-2 sticky top-0 z-10 bg-[#f7f7f8]/95 backdrop-blur-sm py-1">
+              <div className="flex items-center gap-2 sticky top-0 z-10 bg-[#f7f7f8]/95 backdrop-blur-xs py-1">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-700">
                   {g.label}
                 </h2>

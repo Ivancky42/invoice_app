@@ -79,7 +79,7 @@ export function DailyLogPastTable({ rows }: { rows: DailyLogDTO[] }) {
 									</td>
 									<td className="px-5 py-3 text-right tabular-nums">{flagged.length || "—"}</td>
 									<td
-										className="px-5 py-3 text-gray-600 max-w-[14rem] truncate hidden lg:table-cell"
+										className="px-5 py-3 text-gray-600 max-w-56 truncate hidden lg:table-cell"
 										title={flaggedLabel ?? undefined}
 										onClick={() => setOpen(r)}
 									>

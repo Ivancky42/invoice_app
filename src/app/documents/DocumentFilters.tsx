@@ -45,7 +45,7 @@ export default function DocumentFilters({
           ...companies.map((c) => ({ value: c.id, label: c.name })),
         ]}
         placeholder="All billers"
-        triggerClassName="w-auto min-w-[10rem]"
+        triggerClassName="w-auto min-w-40"
         aria-label="Filter by biller"
       />
       <AppSelect
@@ -56,7 +56,7 @@ export default function DocumentFilters({
           ...clients.map((c) => ({ value: c.id, label: c.name })),
         ]}
         placeholder="All clients"
-        triggerClassName="w-auto min-w-[10rem]"
+        triggerClassName="w-auto min-w-40"
         aria-label="Filter by client"
       />
       <AppSelect
@@ -64,7 +64,7 @@ export default function DocumentFilters({
         onValueChange={(value) => update("status", value)}
         options={[...STATUS_OPTIONS]}
         placeholder="All statuses"
-        triggerClassName="w-auto min-w-[10rem]"
+        triggerClassName="w-auto min-w-40"
         aria-label="Filter by status"
       />
       {(company || client || status) && (

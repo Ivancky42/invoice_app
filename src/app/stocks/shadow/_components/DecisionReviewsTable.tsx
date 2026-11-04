@@ -65,7 +65,7 @@ export function DecisionReviewsTable({ decisions }: Props) {
                     <span className="text-gray-400">—</span>
                   )}
                 </td>
-                <td className="px-5 py-3 text-xs text-gray-500 font-mono truncate max-w-[7rem]">
+                <td className="px-5 py-3 text-xs text-gray-500 font-mono truncate max-w-28">
                   {d.rulesVersion ?? "—"}
                 </td>
               </tr>

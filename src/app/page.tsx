@@ -23,7 +23,7 @@ export default async function Home() {
       </section>
 
       <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Link href="/invoices" className="card p-6 hover:shadow-sm transition group">
+        <Link href="/invoices" className="card p-6 hover:shadow-xs transition group">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">Invoices</h2>
             <span className="text-xs text-gray-400 group-hover:text-gray-600">→</span>
@@ -33,7 +33,7 @@ export default async function Home() {
           <div className="text-xs text-gray-500">documents</div>
         </Link>
 
-        <Link href="/stocks" className="card p-6 hover:shadow-sm transition group">
+        <Link href="/stocks" className="card p-6 hover:shadow-xs transition group">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">Stocks</h2>
             <span className="text-xs text-gray-400 group-hover:text-gray-600">→</span>

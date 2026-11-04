@@ -33,7 +33,7 @@ export default async function InvoicesDashboard() {
         {(["QUOTATION", "INVOICE", "DELIVERY_ORDER"] as const).map((t) => {
           const c = counts.find((x) => x.type === t)?._count._all ?? 0;
           return (
-            <Link key={t} href={`/documents?type=${t}`} className="card p-5 hover:shadow-sm transition">
+            <Link key={t} href={`/documents?type=${t}`} className="card p-5 hover:shadow-xs transition">
               <div className="text-sm text-gray-500">{DOC_LABELS[t]}s</div>
               <div className="text-3xl font-semibold mt-2">{c}</div>
             </Link>
