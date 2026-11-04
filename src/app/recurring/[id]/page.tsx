@@ -61,6 +61,8 @@ export default async function RecurringDetail({
           clientAddress: s.clientAddress ?? "",
           clientEmail: s.clientEmail ?? "",
           clientPhone: s.clientPhone ?? "",
+          shipToAttn: s.shipToAttn ?? "",
+          shipToAddress: s.shipToAddress ?? "",
           poNumber: s.poNumber ?? "",
           projectTitle: s.projectTitle ?? "",
           projectDescription: s.projectDescription ?? "",

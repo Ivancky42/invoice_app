@@ -123,6 +123,54 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
     await expect(rec.createRecurringFromDocument({ documentId: src.id })).rejects.toThrow(/already belongs/);
   });
 
+  it("two concurrent 'make recurring' requests on one invoice leave exactly one schedule", async () => {
+    const src = await docs.createDocument({
+      type: "INVOICE",
+      issueDate: iso(sched.addDays(today, -3)),
+      clientName: "Walk-in",
+      items: [{ description: "Fee", quantity: 1, unitPrice: 10 }],
+    });
+    const results = await Promise.allSettled([
+      rec.createRecurringFromDocument({ documentId: src.id }),
+      rec.createRecurringFromDocument({ documentId: src.id }),
+      rec.createRecurringInvoice(
+        { name: "Dup", startDate: iso(sched.addDays(today, 5)), clientName: "Walk-in", items: [{ description: "Fee", quantity: 1, unitPrice: 10 }] },
+        { linkDocumentId: src.id },
+      ),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(await prisma.recurringInvoice.count()).toBe(1);
+    const linked = await prisma.document.findUniqueOrThrow({ where: { id: src.id } });
+    const only = await prisma.recurringInvoice.findFirstOrThrow();
+    expect(linked.recurringInvoiceId).toBe(only.id);
+  });
+
+  it("editing an active schedule keeps a due-but-unbilled date instead of skipping it", async () => {
+    const { schedule } = await rec.createRecurringInvoice({
+      name: "Missed by cron",
+      startDate: iso(sched.addDays(today, 1)),
+      clientName: "Walk-in",
+      items: [{ description: "Fee", quantity: 1, unitPrice: 10 }],
+    });
+    // Simulate the cron having missed this schedule's date three days ago.
+    const missed = sched.addDays(today, -3);
+    await prisma.recurringInvoice.update({ where: { id: schedule.id }, data: { startDate: missed, nextRunDate: missed } });
+
+    // The app's form re-sends every timing field unchanged alongside a notes edit.
+    const r = await rec.updateRecurringInvoice({
+      id: schedule.id,
+      notes: "new notes",
+      frequency: "MONTHLY",
+      interval: 1,
+      dayOfMonth: null,
+      startDate: iso(missed),
+      endDate: null,
+      maxOccurrences: null,
+    });
+    expect(r.generatedNow.map((g) => g.runDate)).toEqual([iso(missed)]);
+    expect(r.schedule.notes).toBe("new notes");
+  });
+
   it("pause stops generation; resume skips the paused dates", async () => {
     const { schedule } = await rec.createRecurringInvoice({
       name: "Pausable",

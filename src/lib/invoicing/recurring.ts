@@ -62,6 +62,28 @@ function nextState(shape: ScheduleShape, from: Date, generated: number) {
     : { nextRunDate: next, status: "ACTIVE" as const };
 }
 
+/**
+ * Link an existing invoice to a new schedule as #1 — only if no other schedule has
+ * claimed it in the meantime. The conditional update is the claim: two concurrent
+ * "make recurring" requests can both pass the earlier read, but only one matches here;
+ * the other throws, rolling back its schedule, so the invoice is never billed twice.
+ */
+async function claimSourceInvoice(
+  tx: Prisma.TransactionClient,
+  documentId: string,
+  number: string,
+  scheduleId: string,
+  runDate: Date,
+) {
+  const claimed = await tx.document.updateMany({
+    where: { id: documentId, recurringInvoiceId: null },
+    data: { recurringInvoiceId: scheduleId, recurringRunDate: runDate },
+  });
+  if (claimed.count !== 1) {
+    throw new InvoicingError("conflict", `${number} already belongs to a recurring schedule`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Create
 // ---------------------------------------------------------------------------
@@ -150,12 +172,7 @@ export async function createRecurringInvoice(
         terms: nullIfBlank(input.terms),
       },
     });
-    if (linked) {
-      await tx.document.update({
-        where: { id: linked.id },
-        data: { recurringInvoiceId: row.id, recurringRunDate: toDateOnly(linked.issueDate) },
-      });
-    }
+    if (linked) await claimSourceInvoice(tx, linked.id, linked.number, row.id, toDateOnly(linked.issueDate));
     return row;
   });
 
@@ -243,12 +260,7 @@ export async function createRecurringFromDocument(input: RecurringFromDocumentIn
         sourceDocumentId: doc.id,
       },
     });
-    if (countTemplate) {
-      await tx.document.update({
-        where: { id: doc.id },
-        data: { recurringInvoiceId: s.id, recurringRunDate: issue },
-      });
-    }
+    if (countTemplate) await claimSourceInvoice(tx, doc.id, doc.number, s.id, issue);
     return s;
   });
 
@@ -306,14 +318,8 @@ export async function updateRecurringInvoice(input: UpdateRecurringInput) {
   if (input.discountType !== undefined) data.discountType = input.discountType;
   if (input.discountValue !== undefined) data.discountValue = input.discountValue;
 
-  // Schedule timing: recompute the next date from the new shape.
-  const timingChanged =
-    input.frequency !== undefined ||
-    input.interval !== undefined ||
-    input.dayOfMonth !== undefined ||
-    input.startDate !== undefined ||
-    input.endDate !== undefined ||
-    input.maxOccurrences !== undefined;
+  // Schedule timing: recompute the next date only when a timing value actually changed
+  // (the app's form re-sends every field on any edit).
   const shape: ScheduleShape = {
     frequency: input.frequency ?? s.frequency,
     interval: input.interval ?? s.interval,
@@ -322,6 +328,15 @@ export async function updateRecurringInvoice(input: UpdateRecurringInput) {
     endDate: input.endDate !== undefined ? (input.endDate ? parseDateOnly(input.endDate) : null) : s.endDate,
     maxOccurrences: input.maxOccurrences !== undefined ? input.maxOccurrences : s.maxOccurrences,
   };
+  const sameDay = (a: Date | null | undefined, b: Date | null | undefined) =>
+    (a ? formatDateOnly(a) : null) === (b ? formatDateOnly(b) : null);
+  const timingChanged =
+    shape.frequency !== s.frequency ||
+    shape.interval !== s.interval ||
+    shape.dayOfMonth !== s.dayOfMonth ||
+    !sameDay(shape.startDate, s.startDate) ||
+    !sameDay(shape.endDate, s.endDate) ||
+    shape.maxOccurrences !== s.maxOccurrences;
   if (timingChanged) {
     data.frequency = shape.frequency;
     data.interval = shape.interval;
@@ -332,9 +347,14 @@ export async function updateRecurringInvoice(input: UpdateRecurringInput) {
   }
 
   const today = todayInTimeZone();
-  // Never re-bill a slot already billed; never backfill dates missed while paused.
+  // Never re-bill a slot already billed.
   const afterLast = s.lastRunDate ? addDays(s.lastRunDate, 1) : shape.startDate;
+  // Resuming a paused schedule skips the dates missed while paused.
   const resumeFrom = afterLast > today ? afterLast : today;
+  // An active schedule keeps a slot that is due but not yet billed (e.g. the cron missed
+  // a day): recompute from that pending date, never past it.
+  const pending = s.nextRunDate && toDateOnly(s.nextRunDate) < today ? toDateOnly(s.nextRunDate) : today;
+  const activeFrom = afterLast > pending ? afterLast : pending;
   const targetStatus = input.status ?? s.status;
 
   if (targetStatus === "ENDED") {
@@ -345,10 +365,12 @@ export async function updateRecurringInvoice(input: UpdateRecurringInput) {
     if (timingChanged) data.nextRunDate = nextState(shape, resumeFrom, s.occurrencesGenerated).nextRunDate;
   } else if (input.status === "ACTIVE" && s.status !== "ACTIVE") {
     const st = nextState(shape, resumeFrom, s.occurrencesGenerated);
-    if (!st.nextRunDate) throw new InvoicingError("invalid", "Nothing left to bill — extend endDate or maxOccurrences first");
+    if (!st.nextRunDate) {
+      throw new InvoicingError("invalid", "Nothing left to bill — extend endDate or maxOccurrences first");
+    }
     Object.assign(data, st);
   } else if (timingChanged) {
-    Object.assign(data, nextState(shape, resumeFrom, s.occurrencesGenerated));
+    Object.assign(data, nextState(shape, activeFrom, s.occurrencesGenerated));
   }
   data.lastError = null;
 

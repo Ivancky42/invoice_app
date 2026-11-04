@@ -34,6 +34,8 @@ export type RecurringFormInitial = {
   clientAddress: string;
   clientEmail: string;
   clientPhone: string;
+  shipToAttn: string;
+  shipToAddress: string;
   poNumber: string;
   projectTitle: string;
   projectDescription: string;
@@ -163,6 +165,8 @@ export default function RecurringForm({
         clientAddress: f.clientAddress,
         clientEmail: f.clientEmail,
         clientPhone: f.clientPhone,
+        shipToAttn: f.shipToAttn,
+        shipToAddress: f.shipToAddress,
         poNumber: f.poNumber,
         projectTitle: f.projectTitle,
         projectDescription: f.projectDescription,
@@ -333,6 +337,14 @@ export default function RecurringForm({
           <div className="md:col-span-2">
             <label className="label">Client address</label>
             <textarea className="input" rows={2} value={f.clientAddress} onChange={(e) => set("clientAddress", e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Ship to attn <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input className="input" value={f.shipToAttn} onChange={(e) => set("shipToAttn", e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Ship to address <span className="text-gray-400 font-normal">(optional)</span></label>
+            <textarea className="input" rows={2} value={f.shipToAddress} onChange={(e) => set("shipToAddress", e.target.value)} />
           </div>
           <div>
             <label className="label">Project title</label>
