@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { registerAgentMcpTools } from "@/lib/agent/mcp-tools";
 import { INVOICE_TOOL_NAMES, registerInvoiceMcpTools } from "@/lib/agent/mcp-invoice-tools";
 
@@ -134,7 +134,7 @@ describe("invoice MCP tools", () => {
 
   it("refuses every invoice tool on a shadow-only connector before touching the database", async () => {
     for (const [name, { handler }] of collect()) {
-      const res = await handler({}, { authInfo: { scopes: ["mcp:shadow"] } });
+      const res = await handler({}, { http: { authInfo: { scopes: ["mcp:shadow"] } } });
       expect(res.isError, name).toBe(true);
       expect(res.content[0].text, name).toContain("invoice_scope_forbidden");
     }
@@ -150,7 +150,7 @@ describe("invoice MCP tools", () => {
   });
 
   it("requires confirm=true to delete", async () => {
-    const res = await collect().get("delete_invoice")!.handler({ id: "INV-1" }, { authInfo: { scopes: ["mcp:tools"] } });
+    const res = await collect().get("delete_invoice")!.handler({ id: "INV-1" }, { http: { authInfo: { scopes: ["mcp:tools"] } } });
     expect(res.isError).toBe(true);
   });
 });

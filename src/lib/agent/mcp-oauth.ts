@@ -3,7 +3,7 @@
  * Stateless JWTs (HMAC-SHA256) for auth codes + access/refresh tokens.
  */
 
-import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import type { AuthInfo } from "@modelcontextprotocol/server";
 import {
   hasAnyMcpScope,
   MCP_SCOPE,

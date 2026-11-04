@@ -13,6 +13,7 @@ import {
   upsertWatchlistInputSchema,
   validationFailure,
 } from "@/lib/agent/schemas";
+import { deleteDocumentSchema } from "@/lib/invoicing/inputs";
 
 const trade = {
   idempotencyKey: "k1",
@@ -238,5 +239,27 @@ describe("decision review thesis state", () => {
     if (!parsed.success) return;
     expect(parsed.data).not.toHaveProperty("moveClass");
     expect(parsed.data).not.toHaveProperty("breadth");
+  });
+});
+
+describe("validationFailure on a bad enum value", () => {
+  it("names the field and its legal values", () => {
+    const parsed = logTradeInputSchema.safeParse({ ...trade, type: "HOLD" });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    const failure = validationFailure(parsed.error);
+    expect(failure.error).toBe("invalid enum value for type");
+    expect(failure.field).toBe("type");
+    expect(failure.legalValues).toEqual(["BUY", "ADD", "TRIM", "SELL", "STOP_LOSS"]);
+    expect(failure.issues.length).toBeGreaterThan(0);
+  });
+
+  it("does not treat a non-string literal mismatch as an enum", () => {
+    const parsed = deleteDocumentSchema.safeParse({ id: "INV-1", confirm: false });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    const failure = validationFailure(parsed.error);
+    expect(failure.legalValues).toBeUndefined();
+    expect(failure.field).toBeUndefined();
   });
 });

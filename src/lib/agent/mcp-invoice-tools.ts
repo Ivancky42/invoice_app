@@ -4,7 +4,8 @@
  * shadow-only (paper-trading) connector can neither read nor change billing.
  */
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { mcpInput } from "@/lib/agent/mcp-input";
 import { canWriteRealBook } from "@/lib/agent/mcp-scope";
 import { validationFailure } from "@/lib/agent/schemas";
 import {
@@ -57,7 +58,8 @@ import {
   updateRecurringInvoice,
 } from "@/lib/invoicing/recurring";
 
-type ToolExtra = { authInfo?: { scopes?: string[] } };
+/** The slice of the SDK v2 handler context we read: auth lives under `http` (undefined on stdio). */
+type ToolExtra = { http?: { authInfo?: { scopes?: string[] } } };
 type ToolResult = {
   content: (
     | { type: "text"; text: string }
@@ -80,7 +82,7 @@ function fail(error: string, message: string, extra: Record<string, unknown> = {
   return { content: [{ type: "text", text: JSON.stringify({ error, message, ...extra }) }], isError: true };
 }
 
-type InvoiceToolSpec<S extends z.AnyZodObject> = {
+type InvoiceToolSpec<S extends z.ZodObject> = {
   title: string;
   description: string;
   schema: S;
@@ -92,13 +94,13 @@ function isToolResult(v: unknown): v is ToolResult {
   return typeof v === "object" && v !== null && Array.isArray((v as ToolResult).content);
 }
 
-function register<S extends z.AnyZodObject>(server: McpServer, name: string, spec: InvoiceToolSpec<S>) {
+function register<S extends z.ZodObject>(server: McpServer, name: string, spec: InvoiceToolSpec<S>) {
   server.registerTool(
     name,
     {
       title: spec.title,
       description: spec.description,
-      inputSchema: spec.schema.shape,
+      inputSchema: mcpInput(spec.schema),
       annotations: {
         title: spec.title,
         readOnlyHint: spec.kind === "read",
@@ -108,7 +110,7 @@ function register<S extends z.AnyZodObject>(server: McpServer, name: string, spe
       },
     },
     async (args: unknown, extra: ToolExtra) => {
-      if (!canWriteRealBook(extra?.authInfo?.scopes)) {
+      if (!canWriteRealBook(extra?.http?.authInfo?.scopes)) {
         return fail(
           "invoice_scope_forbidden",
           "Billing tools need the full mcp:tools connector; this connector is mcp:shadow only.",
