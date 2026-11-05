@@ -130,7 +130,7 @@ export function composeInvoiceEmail(d: ComposeInput) {
   ].join("\n");
 
   const p = (s: string) => `<p style="margin:0 0 12px">${s}</p>`;
-  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#f7f7f8;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111827">
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(subject)}</title></head><body style="margin:0;padding:24px;background:#f7f7f8;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111827">
 <div style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:24px;font-size:14px;line-height:1.5">
 ${p(`Hi ${escapeHtml(d.clientName)},`)}
 ${d.message?.trim() ? p(escapeHtml(d.message.trim()).replace(/\n/g, "<br>")) : ""}

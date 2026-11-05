@@ -28,6 +28,12 @@ describe("composeInvoiceEmail", () => {
     expect(e.html).toContain("Bank: AmBank<br>Account: 123");
   });
 
+  it("declares UTF-8 so the non-breaking space and en dash don't render as mojibake", () => {
+    const e = composeInvoiceEmail(base);
+    expect(e.html).toMatch(/^<!doctype html><html><head><meta charset="utf-8">/);
+    expect(e.html).toContain("<title>Invoice INV-2026-0018 from Grumpy Pixels");
+  });
+
   it("escapes client-controlled text in the HTML", () => {
     const e = composeInvoiceEmail({ ...base, clientName: '<img src=x onerror="x">', message: "Hi & <b>thanks</b>" });
     expect(e.html).not.toContain("<img");
