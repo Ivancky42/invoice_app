@@ -464,28 +464,58 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
       await expect(sendInvoiceEmail(draft.id, { trigger: "app" })).rejects.toThrow(/Email from/);
     });
 
-    it("CCs the company's default list unless the sender overrides it, without duplicating recipients", async () => {
+    it("always CCs the company list on top of the client's or sender's CC, without duplicates", async () => {
       const { sendInvoiceEmail } = await import("@/lib/invoicing/email");
       const d = await docs.createDocument({ status: "ISSUED", clientName: "Acme Sdn. Bhd.", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
 
       await sendInvoiceEmail(d.id, { trigger: "agent" });
+      expect(sends.at(-1)!.body.to).toEqual(["ap@acme.test"]);
       expect(sends.at(-1)!.body.cc).toEqual(["ivan.chewky@gmail.com", "trishateh@gmail.com"]);
       expect(sends.at(-1)!.body.bcc).toEqual(["copy@grumpypixels.my"]);
 
+      // A per-email CC adds to the company list rather than replacing it.
       await sendInvoiceEmail(d.id, { trigger: "app", cc: "boss@acme.test" });
-      expect(sends.at(-1)!.body.cc).toEqual(["boss@acme.test"]);
+      expect(sends.at(-1)!.body.cc).toEqual(["boss@acme.test", "ivan.chewky@gmail.com", "trishateh@gmail.com"]);
 
+      // Clearing the per-email CC still keeps the company's.
       await sendInvoiceEmail(d.id, { trigger: "app", cc: "" });
-      expect(sends.at(-1)!.body.cc).toBeUndefined();
-
-      // Sending to someone already on the CC list doesn't copy them again.
-      await sendInvoiceEmail(d.id, { trigger: "app", to: "Ivan.Chewky@gmail.com" });
-      expect(sends.at(-1)!.body.to).toEqual(["Ivan.Chewky@gmail.com"]);
-      expect(sends.at(-1)!.body.cc).toEqual(["trishateh@gmail.com"]);
-
-      // Auto-emails CC the default list too.
-      await schedule();
       expect(sends.at(-1)!.body.cc).toEqual(["ivan.chewky@gmail.com", "trishateh@gmail.com"]);
+
+      // Someone already on To isn't copied again.
+      await sendInvoiceEmail(d.id, { trigger: "app", to: "Ivan.Chewky@gmail.com" });
+      expect(sends.at(-1)!.body.cc).toEqual(["trishateh@gmail.com"]);
+    });
+
+    it("uses the client's invoice recipients for manual and automatic sends (the Person Edge setup)", async () => {
+      const { sendInvoiceEmail } = await import("@/lib/invoicing/email");
+      const client = await prisma.clientProfile.findFirstOrThrow({ where: { name: "Acme Sdn. Bhd." } });
+      await docs.upsertClient({
+        id: client.id,
+        name: client.name,
+        invoiceEmailTo: "xinjie@acme.test",
+        invoiceEmailCc: "ben@acme.test, meisze@acme.test, siang@acme.test, cailin@acme.test",
+      });
+      const expectedCc = [
+        "ben@acme.test",
+        "meisze@acme.test",
+        "siang@acme.test",
+        "cailin@acme.test",
+        "ivan.chewky@gmail.com",
+        "trishateh@gmail.com",
+      ];
+
+      const d = await docs.createDocument({ status: "ISSUED", clientName: "Acme Sdn. Bhd.", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+      expect(d.clientEmail).toBe("ap@acme.test"); // the printed bill-to email is unchanged
+      await sendInvoiceEmail(d.id, { trigger: "app" });
+      expect(sends.at(-1)!.body.to).toEqual(["xinjie@acme.test"]);
+      expect(sends.at(-1)!.body.cc).toEqual(expectedCc);
+
+      // Auto-email from a schedule without its own "send to" uses the same recipients.
+      await schedule();
+      expect(sends.at(-1)!.body.to).toEqual(["xinjie@acme.test"]);
+      expect(sends.at(-1)!.body.cc).toEqual(expectedCc);
+
+      await expect(docs.upsertClient({ id: client.id, name: client.name, invoiceEmailCc: "ben@acme,test" })).rejects.toThrow(/Not an email/);
     });
   });
 

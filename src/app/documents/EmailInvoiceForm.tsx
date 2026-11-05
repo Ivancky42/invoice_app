@@ -9,6 +9,7 @@ export default function EmailInvoiceForm({
   number,
   defaultTo,
   defaultCc = "",
+  alwaysCc = "",
   isDraft = false,
   canSend,
   disabledReason,
@@ -17,8 +18,10 @@ export default function EmailInvoiceForm({
   documentId: string;
   number: string;
   defaultTo: string;
-  /** The company profile's default CC list, prefilled and editable. */
+  /** The client's invoice CC list, prefilled and editable. */
   defaultCc?: string;
+  /** The company's CC list, added to every send. */
+  alwaysCc?: string;
   /** Sending a draft issues it; the form says so. */
   isDraft?: boolean;
   canSend: boolean;
@@ -68,6 +71,7 @@ export default function EmailInvoiceForm({
       <div>
         <label className="label">CC <span className="text-gray-400 font-normal">(optional, comma-separated)</span></label>
         <input className="input" value={cc} onChange={(e) => setCc(e.target.value)} />
+        {alwaysCc && <p className="text-xs text-gray-500 mt-1">Always copied too: {alwaysCc}</p>}
       </div>
       <div>
         <label className="label">Note <span className="text-gray-400 font-normal">(optional, shown above the summary)</span></label>

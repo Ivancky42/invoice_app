@@ -678,7 +678,11 @@ export async function upsertClient(input: {
   phone?: string | null;
   shipToAttn?: string | null;
   shipToAddress?: string | null;
+  invoiceEmailTo?: string | null;
+  invoiceEmailCc?: string | null;
 }) {
+  if (input.invoiceEmailTo) checkedAddresses(input.invoiceEmailTo);
+  if (input.invoiceEmailCc) checkedAddresses(input.invoiceEmailCc);
   const data = {
     name: input.name.trim(),
     ...(input.address !== undefined ? { address: nullIfBlank(input.address) } : {}),
@@ -686,6 +690,8 @@ export async function upsertClient(input: {
     ...(input.phone !== undefined ? { phone: nullIfBlank(input.phone) } : {}),
     ...(input.shipToAttn !== undefined ? { shipToAttn: nullIfBlank(input.shipToAttn) } : {}),
     ...(input.shipToAddress !== undefined ? { shipToAddress: nullIfBlank(input.shipToAddress) } : {}),
+    ...(input.invoiceEmailTo !== undefined ? { invoiceEmailTo: nullIfBlank(input.invoiceEmailTo) } : {}),
+    ...(input.invoiceEmailCc !== undefined ? { invoiceEmailCc: nullIfBlank(input.invoiceEmailCc) } : {}),
   };
   if (input.id) {
     const exists = await prisma.clientProfile.findUnique({ where: { id: input.id } });

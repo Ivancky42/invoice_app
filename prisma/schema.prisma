@@ -56,6 +56,11 @@ model ClientProfile {
   phone         String?
   shipToAttn    String?
   shipToAddress String?
+  /// Who invoices are emailed to (comma-separated). Null → the invoice's client email.
+  /// Separate from `email`, which prints on the invoice as the bill-to contact.
+  invoiceEmailTo String?
+  /// Comma-separated CC for every invoice emailed to this client (company CC is added too).
+  invoiceEmailCc String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   documents     Document[]

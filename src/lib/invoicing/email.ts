@@ -2,8 +2,9 @@
  * Emailing invoices through Resend (https://resend.com), PDF attached.
  *
  * Config: RESEND_API_KEY (env) + a company profile's `emailFrom` on a Resend-verified
- * domain. Replies go to the profile's `email`; `emailCc` is CC'd (default, overridable per
- * send) and `emailBcc` gets a hidden copy. Emailing a DRAFT issues it once the send succeeds.
+ * domain. Replies go to the profile's `email`. Recipients: the client's `invoiceEmailTo` /
+ * `invoiceEmailCc` (or what the sender passes), plus the company's `emailCc` on every send
+ * and `emailBcc` as a hidden copy. Emailing a DRAFT issues it once the send succeeds.
  * Every attempt — including ones refused before reaching Resend — is an InvoiceEmail row.
  *
  * Auto-email: a schedule with `autoEmail` marks each ISSUED invoice it generates
@@ -211,7 +212,7 @@ export async function sendInvoiceEmail(
   const row = await findDocumentRow(idOrNumber);
   const doc = await prisma.document.findUniqueOrThrow({ where: { id: row.id }, include: { company: true } });
   const attempt = {
-    to: typeof opts.to === "string" ? opts.to : (opts.to ?? []).join(", ") || (doc.clientEmail ?? ""),
+    to: typeof opts.to === "string" ? opts.to : (opts.to ?? []).join(", ") || (doc.clientEmail ?? ""), // refined below
     cc: null as string | null,
     bcc: null as string | null,
     subject: `${DOC_LABELS[doc.type] ?? "Document"} ${doc.number}`,
@@ -241,17 +242,36 @@ export async function sendInvoiceEmail(
       );
     }
     if (doc.status === "CANCELLED") throw new InvoicingError("invalid", `${doc.number} is CANCELLED — it can't be emailed`);
-    const to = checkedAddresses(opts.to ?? doc.clientEmail);
+    // Recipients. To: explicit → the client's "send invoices to" → the invoice's client email.
+    // CC: explicit (even "" = none) → the client's invoice CC; the company's CC list is ALWAYS
+    // added on top. Nobody gets two copies: CC drops To addresses, BCC drops both.
+    const client = doc.clientId
+      ? await prisma.clientProfile.findUnique({
+          where: { id: doc.clientId },
+          select: { invoiceEmailTo: true, invoiceEmailCc: true },
+        })
+      : null;
+    const to = checkedAddresses(opts.to ?? (client?.invoiceEmailTo || doc.clientEmail));
     if (to.length === 0) throw new InvoicingError("invalid", `${doc.number} has no client email — pass "to"`);
-    // CC: what the caller passed (even "" = none), else the profile's default list. A copy
-    // address that's already a recipient is dropped so nobody gets it twice.
-    const lower = (xs: string[]) => new Set(xs.map((x) => (/<([^>]+)>/.exec(x)?.[1] ?? x).toLowerCase()));
-    const toSet = lower(to);
-    const cc = checkedAddresses(opts.cc !== undefined && opts.cc !== null ? opts.cc : company.emailCc).filter(
-      (a) => !toSet.has((/<([^>]+)>/.exec(a)?.[1] ?? a).toLowerCase()),
+    const addr = (x: string) => (/<([^>]+)>/.exec(x)?.[1] ?? x).trim().toLowerCase();
+    const uniqueExcluding = (list: string[], exclude: Set<string>) => {
+      const out: string[] = [];
+      for (const a of list) {
+        if (exclude.has(addr(a))) continue;
+        exclude.add(addr(a));
+        out.push(a);
+      }
+      return out;
+    };
+    const taken = new Set(to.map(addr));
+    const cc = uniqueExcluding(
+      [
+        ...checkedAddresses(opts.cc !== undefined && opts.cc !== null ? opts.cc : client?.invoiceEmailCc),
+        ...checkedAddresses(company.emailCc),
+      ],
+      taken,
     );
-    const seen = lower([...to, ...cc]);
-    const bcc = checkedAddresses(company.emailBcc).filter((a) => !seen.has((/<([^>]+)>/.exec(a)?.[1] ?? a).toLowerCase()));
+    const bcc = uniqueExcluding(checkedAddresses(company.emailBcc), taken);
     attempt.to = to.join(", ");
     attempt.cc = cc.length ? cc.join(", ") : null;
     attempt.bcc = bcc.length ? bcc.join(", ") : null;

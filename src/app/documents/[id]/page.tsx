@@ -42,6 +42,12 @@ export default async function DocDetail({
   const company = doc.company;
   // The profile the PDF and the email actually use (falls back to the default profile).
   const sender = await companyForDocument(doc);
+  const clientRecipients = doc.clientId
+    ? await prisma.clientProfile.findUnique({
+        where: { id: doc.clientId },
+        select: { invoiceEmailTo: true, invoiceEmailCc: true },
+      })
+    : null;
   const currency = company?.currency || "USD";
 
   async function doConvert() {
@@ -101,8 +107,9 @@ export default async function DocDetail({
           <EmailInvoiceForm
             documentId={doc.id}
             number={doc.number}
-            defaultTo={doc.clientEmail ?? ""}
-            defaultCc={sender?.emailCc ?? ""}
+            defaultTo={clientRecipients?.invoiceEmailTo || doc.clientEmail || ""}
+            defaultCc={clientRecipients?.invoiceEmailCc ?? ""}
+            alwaysCc={sender?.emailCc ?? ""}
             isDraft={doc.status === "DRAFT"}
             canSend={canEmailFrom(sender) && doc.status !== "CANCELLED"}
             disabledReason={

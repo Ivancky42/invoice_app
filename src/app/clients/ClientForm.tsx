@@ -10,6 +10,8 @@ type Client = {
   phone?: string | null;
   shipToAttn?: string | null;
   shipToAddress?: string | null;
+  invoiceEmailTo?: string | null;
+  invoiceEmailCc?: string | null;
 };
 
 export default function ClientForm({ client, action }: { client: Client; action: (fd: FormData) => Promise<void> }) {
@@ -35,6 +37,26 @@ export default function ClientForm({ client, action }: { client: Client; action:
           <div className="md:col-span-2">
             <label className="label">Address</label>
             <textarea name="address" rows={3} className="input" defaultValue={client.address ?? ""} />
+          </div>
+        </div>
+      </div>
+
+      <div className="card p-6 space-y-4">
+        <div>
+          <h2 className="font-medium">Invoice emails <span className="text-gray-400 font-normal text-sm">(optional)</span></h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Who receives invoices emailed to this client, by hand or automatically. Blank “Send to” uses the Email above.
+            The company profile’s own CC list is always added too.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Send invoices to <span className="text-gray-400 font-normal">(comma-separated)</span></label>
+            <input name="invoiceEmailTo" className="input" placeholder="accounts@client.com" defaultValue={client.invoiceEmailTo ?? ""} />
+          </div>
+          <div>
+            <label className="label">CC on invoices <span className="text-gray-400 font-normal">(comma-separated)</span></label>
+            <input name="invoiceEmailCc" className="input" placeholder="manager@client.com, finance@client.com" defaultValue={client.invoiceEmailCc ?? ""} />
           </div>
         </div>
       </div>

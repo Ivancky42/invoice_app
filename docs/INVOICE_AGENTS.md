@@ -88,9 +88,13 @@ expired; anything else gets 403. Rotating the secret revokes every outstanding l
 
 Setup: `RESEND_API_KEY` in the app's environment, and **Email from** on the company profile
 (Settings) on a Resend-verified domain, e.g. `Grumpy Pixels <billing@grumpypixels.my>`.
-Replies go to the profile's Email; **CC** (e.g. `ivan.chewky@gmail.com, trishateh@gmail.com`)
-is copied on every send — prefilled and editable on manual sends, always on auto-emails — and
-**BCC** (optional) gets a hidden copy. Emailing a **draft** issues it once the send succeeds
+Replies go to the profile's Email; the profile's **CC** (e.g. `ivan.chewky@gmail.com,
+trishateh@gmail.com`) is added to **every** send, and **BCC** (optional) gets a hidden copy.
+
+Who receives a client's invoices is set on the client (Clients ▸ client ▸ Invoice emails):
+**Send invoices to** (To; blank = the client's Email) and **CC on invoices**. Manual sends
+prefill both (editable per email); auto-emails use them unless the schedule has its own
+"send to". The company CC is always added on top; nobody is copied twice. Emailing a **draft** issues it once the send succeeds
 (due date from its payment terms); issued and paid documents keep their status.
 
 - **Manual**: "Email to client" on any issued invoice/quotation/DO, or the
