@@ -74,6 +74,8 @@ model Document {
   status        DocumentStatus @default(DRAFT)
   issueDate     DateTime       @default(now())
   dueDate       DateTime?
+  /// The day an invoice was paid (set when it becomes PAID, cleared when it leaves PAID).
+  paidAt        DateTime?
   companyId     String?
   company       CompanyProfile? @relation(fields: [companyId], references: [id])
   clientId      String?

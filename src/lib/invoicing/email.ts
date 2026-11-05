@@ -25,7 +25,7 @@ import {
   InvoicingError,
   setDocumentStatus,
 } from "@/lib/invoicing/documents";
-import { parseAddressList } from "@/lib/invoicing/emailAddress";
+import { parseAddressList, UNCONFIRMED_EMAIL } from "@/lib/invoicing/emailAddress";
 import { renderDocumentPdf } from "@/lib/invoicing/pdfRender";
 import { addDays, effectiveDueDate, formatDateOnly, quoteValidUntil, todayInTimeZone } from "@/lib/invoicing/schedule";
 
@@ -39,7 +39,7 @@ const IDEMPOTENCY_WINDOW_MS = 23 * 60 * 60 * 1000;
 export const AUTO_EMAIL_MAX_AGE_DAYS = 7;
 /** Give up on an auto-email after this many failed attempts. */
 export const AUTO_EMAIL_MAX_ATTEMPTS = 5;
-const UNCONFIRMED = "[unconfirmed] ";
+const UNCONFIRMED = UNCONFIRMED_EMAIL;
 
 export type EmailTrigger = "app" | "agent" | "recurring";
 

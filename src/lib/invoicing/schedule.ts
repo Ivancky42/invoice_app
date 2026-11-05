@@ -60,6 +60,22 @@ export function daysBetween(from: Date, to: Date): number {
   return Math.round((toDateOnly(to).getTime() - toDateOnly(from).getTime()) / DAY_MS);
 }
 
+/**
+ * When a document was paid, as its status changes: a given date wins; it keeps its date
+ * while it stays PAID; it becomes PAID today; any other status clears it.
+ */
+export function nextPaidAt(
+  prev: { status: string; paidAt: Date | null } | null,
+  status: string,
+  today: Date,
+  paidDate?: Date | null,
+): Date | null {
+  if (status !== "PAID") return null;
+  if (paidDate) return toDateOnly(paidDate);
+  if (prev?.status === "PAID" && prev.paidAt) return toDateOnly(prev.paidAt);
+  return today;
+}
+
 /** The calendar date it currently is in `timeZone`, as a date-only value. */
 export function todayInTimeZone(now: Date = new Date(), timeZone = billingTimeZone()): Date {
   const parts = new Intl.DateTimeFormat("en-CA", {

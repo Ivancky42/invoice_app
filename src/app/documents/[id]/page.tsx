@@ -7,6 +7,7 @@ import { convertDocument, deleteDocument, emailDocument, previewDocumentEmail, s
 import EmailInvoiceForm from "../EmailInvoiceForm";
 import { canEmailFrom, resendConfigured } from "@/lib/invoicing/email";
 import { companyForDocument } from "@/lib/invoicing/documents";
+import { todayInTimeZone } from "@/lib/invoicing/schedule";
 
 export const dynamic = "force-dynamic";
 
@@ -60,10 +61,13 @@ export default async function DocDetail({
     await deleteDocument(doc!.id);
     redirect("/documents");
   }
-  async function markStatus(formData: FormData) {
+  async function markStatus(status: string, paidDate: string | null) {
     "use server";
-    await setStatus(doc!.id, String(formData.get("status") || "DRAFT"));
+    return setStatus(doc!.id, status, paidDate);
   }
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const longDay = (d: Date) =>
+    new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(d);
 
   return (
     <div className="space-y-4">
@@ -73,8 +77,13 @@ export default async function DocDetail({
           <h1 className="text-2xl font-semibold">{doc.number}</h1>
           <div className="mt-1 flex gap-2 items-center flex-wrap">
             <span className={`badge ${STATUS_COLORS[doc.status]}`}>{doc.status}</span>
-            <span className="text-sm text-gray-500">Issued {new Date(doc.issueDate).toLocaleDateString()}</span>
+            <span className="text-sm text-gray-500">Issued {longDay(doc.issueDate)}</span>
             {doc.paymentTerms && <span className="text-sm text-gray-500">· {doc.paymentTerms}</span>}
+            {doc.status === "PAID" && (
+              <span className="text-sm text-green-700">
+                · {doc.paidAt ? `Paid ${longDay(doc.paidAt)}` : "Paid (date not recorded)"}
+              </span>
+            )}
             {doc.parent && (
               <Link href={`/documents/${doc.parent.id}`} className="text-sm text-blue-600 hover:underline">
                 ← from {doc.parent.number}
@@ -103,7 +112,12 @@ export default async function DocDetail({
               <button className="btn">Convert → {DOC_LABELS[next]}</button>
             </form>
           )}
-          <DocStatusForm action={markStatus} defaultStatus={doc.status} />
+          <DocStatusForm
+            action={markStatus}
+            defaultStatus={doc.status}
+            defaultPaidDate={doc.paidAt ? ymd(doc.paidAt) : null}
+            today={ymd(todayInTimeZone())}
+          />
           <EmailInvoiceForm
             documentId={doc.id}
             number={doc.number}

@@ -5,6 +5,7 @@ import {
   isBeyondEnd,
   netDaysFromTerms,
   nextOccurrenceAfter,
+  nextPaidAt,
   nextOccurrenceOnOrAfter,
   parseDateOnly,
   periodLabel,
@@ -161,5 +162,19 @@ describe("due dates", () => {
     expect(formatDateOnly(effectiveDueDate({ issueDate, dueDate: d("2026-10-10"), paymentTerms: "Net 30" }))).toBe("2026-10-10");
     expect(formatDateOnly(effectiveDueDate({ issueDate, dueDate: null, paymentTerms: "Net 14" }))).toBe("2026-10-15");
     expect(formatDateOnly(effectiveDueDate({ issueDate, dueDate: null, paymentTerms: null }))).toBe("2026-10-31");
+  });
+});
+
+describe("nextPaidAt", () => {
+  const today = d("2026-11-05");
+  it("sets today when a document becomes PAID, and keeps the date while it stays PAID", () => {
+    expect(nextPaidAt({ status: "ISSUED", paidAt: null }, "PAID", today)).toEqual(today);
+    expect(nextPaidAt({ status: "PAID", paidAt: d("2026-10-01") }, "PAID", today)).toEqual(d("2026-10-01"));
+    expect(nextPaidAt(null, "PAID", today)).toEqual(today);
+  });
+  it("takes a given date, and clears it for any other status", () => {
+    expect(nextPaidAt({ status: "PAID", paidAt: d("2026-10-01") }, "PAID", today, d("2026-10-20"))).toEqual(d("2026-10-20"));
+    expect(nextPaidAt({ status: "PAID", paidAt: d("2026-10-01") }, "ISSUED", today)).toBeNull();
+    expect(nextPaidAt(null, "DRAFT", today)).toBeNull();
   });
 });

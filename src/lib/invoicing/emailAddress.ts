@@ -15,3 +15,9 @@ export function parseAddressList(raw: string | string[] | null | undefined): str
   }
   return parts;
 }
+
+/**
+ * Prefix on a FAILED email record whose outcome Resend didn't confirm (a timeout, a 409):
+ * it may have been delivered. Shared by the sender and the billing report.
+ */
+export const UNCONFIRMED_EMAIL = "[unconfirmed] ";

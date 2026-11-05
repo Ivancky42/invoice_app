@@ -9,7 +9,8 @@ import { prisma } from "@/lib/prisma";
 import { dueInfo, money } from "@/lib/invoicing/documents";
 import type { BillingReportInput } from "@/lib/invoicing/inputs";
 import { findSchedules, scheduleAmount } from "@/lib/invoicing/recurring";
-import { addDays, formatDateOnly, parseDateOnly, todayInTimeZone } from "@/lib/invoicing/schedule";
+import { UNCONFIRMED_EMAIL as UNCONFIRMED } from "@/lib/invoicing/emailAddress";
+import { addDays, daysBetween, formatDateOnly, parseDateOnly, todayInTimeZone } from "@/lib/invoicing/schedule";
 
 /** Hard cap per call; `cut: true` says the rows stop short (narrow with issuedFrom/issuedTo). */
 export const MAX_REPORT_ROWS = 5000;
@@ -72,6 +73,9 @@ export async function billingReport(input: BillingReportInput, now: Date = new D
       projectTitle: true,
       total: true,
       recurringInvoiceId: true,
+      paidAt: true,
+      emailPending: true,
+      emails: { select: { status: true, error: true, createdAt: true }, orderBy: { createdAt: "desc" } },
       company: { select: { name: true, currency: true } },
     },
     orderBy: [{ issueDate: "desc" }, { number: "desc" }],
@@ -97,7 +101,37 @@ export async function billingReport(input: BillingReportInput, now: Date = new D
         project: d.projectTitle,
         total: money(d.total),
         recurring: d.recurringInvoiceId != null,
+        paid_date: d.status === "PAID" && d.paidAt ? formatDateOnly(d.paidAt) : null,
+        days_to_pay: d.status === "PAID" && d.paidAt ? daysBetween(d.issueDate, d.paidAt) : null,
+        ...emailState(d),
       };
     }),
+  };
+}
+
+/**
+ * Where a document's email stands, from its latest attempt: SENT, FAILED, UNCONFIRMED (a send
+ * whose outcome Resend didn't confirm), PENDING (an auto-email waiting for the next run) or null
+ * (never emailed). `emailed_at` is the last successful send, in the billing time zone.
+ */
+export function emailState(d: {
+  emailPending: boolean;
+  emails: { status: "SENT" | "FAILED"; error: string | null; createdAt: Date }[];
+}): { email_status: string | null; emailed_at: string | null; email_error: string | null } {
+  const latest = d.emails[0];
+  const lastSent = d.emails.find((e) => e.status === "SENT");
+  const status = !latest
+    ? d.emailPending
+      ? "PENDING"
+      : null
+    : latest.status === "SENT"
+      ? "SENT"
+      : latest.error?.startsWith(UNCONFIRMED)
+        ? "UNCONFIRMED"
+        : "FAILED";
+  return {
+    email_status: status,
+    emailed_at: lastSent ? formatDateOnly(todayInTimeZone(lastSent.createdAt)) : null,
+    email_error: latest && latest.status === "FAILED" ? (latest.error ?? "").slice(0, 200) || null : null,
   };
 }

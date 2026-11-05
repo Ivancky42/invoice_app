@@ -27,9 +27,20 @@ import {
   effectiveDueDate,
   formatDateOnly,
   netDaysFromTerms,
+  nextPaidAt,
   parseDateOnly,
   todayInTimeZone,
 } from "@/lib/invoicing/schedule";
+
+/** A paid date given by a caller: a calendar day, not in the future. */
+export function parsePaidDate(raw: string | null | undefined, today = todayInTimeZone()): Date | null {
+  if (!raw) return null;
+  const d = parseDateOnly(raw);
+  if (d.getTime() > today.getTime()) {
+    throw new InvoicingError("invalid", `Paid date ${raw} is in the future`);
+  }
+  return d;
+}
 
 /** parseAddressList, but a bad address is an InvoicingError ("invalid") for callers. */
 export function checkedAddresses(raw: string | string[] | null | undefined): string[] {
@@ -165,6 +176,7 @@ export function summarizeDocument(d: DocWithRefs, today = todayInTimeZone()) {
     status: d.status,
     issueDate: formatDateOnly(d.issueDate),
     dueDate: d.dueDate ? formatDateOnly(d.dueDate) : null,
+    paidDate: d.paidAt ? formatDateOnly(d.paidAt) : null,
     effectiveDueDate: due ? formatDateOnly(due) : null,
     daysOverdue,
     company: d.company ? { id: d.company.id, name: d.company.name } : null,
@@ -373,6 +385,7 @@ export async function createDocument(input: CreateDocumentInput) {
       status: input.status ?? "DRAFT",
       issueDate,
       dueDate,
+      paidAt: nextPaidAt(null, input.status ?? "DRAFT", todayInTimeZone(), parsePaidDate(input.paidDate)),
       companyId: company?.id ?? null,
       clientId: client?.id ?? null,
       clientName,
@@ -404,6 +417,13 @@ export async function updateDocument(input: UpdateDocumentInput) {
 
   if (input.type) data.type = input.type;
   if (input.status) data.status = input.status;
+  if (input.status || input.paidDate) {
+    const status = input.status ?? existing.status;
+    if (input.paidDate && status !== "PAID") {
+      throw new InvoicingError("invalid", "paidDate needs the document to be PAID");
+    }
+    data.paidAt = nextPaidAt(existing, status, todayInTimeZone(), parsePaidDate(input.paidDate));
+  }
   if (input.issueDate) data.issueDate = parseDateOnly(input.issueDate);
   if (input.dueDate !== undefined) data.dueDate = input.dueDate ? parseDateOnly(input.dueDate) : null;
   if (input.companyId) {
@@ -463,9 +483,19 @@ export async function updateDocument(input: UpdateDocumentInput) {
   return getDocument(existing.id);
 }
 
-export async function setDocumentStatus(idOrNumber: string, status: DocumentStatus) {
+export async function setDocumentStatus(
+  idOrNumber: string,
+  status: DocumentStatus,
+  opts: { paidDate?: string | null } = {},
+) {
   const doc = await findDocumentRow(idOrNumber);
-  const data: Prisma.DocumentUpdateInput = { status };
+  if (opts.paidDate && status !== "PAID") {
+    throw new InvoicingError("invalid", "paidDate goes with status PAID");
+  }
+  const data: Prisma.DocumentUpdateInput = {
+    status,
+    paidAt: nextPaidAt(doc, status, todayInTimeZone(), parsePaidDate(opts.paidDate)),
+  };
   // Issuing an invoice with no due date fixes one from its terms, so it can go overdue.
   if (status === "ISSUED" && doc.type === "INVOICE" && !doc.dueDate) {
     const net = netDaysFromTerms(doc.paymentTerms);
@@ -513,6 +543,7 @@ export async function duplicateDocument(
       status: opts.status ?? "DRAFT",
       issueDate,
       dueDate: net != null ? addDays(issueDate, net) : null,
+      paidAt: nextPaidAt(null, opts.status ?? "DRAFT", todayInTimeZone()),
       parentId: src.parentId,
     },
     })),

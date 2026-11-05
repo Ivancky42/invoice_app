@@ -254,9 +254,9 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Set invoice status",
     kind: "write",
     description:
-      "Set status DRAFT / ISSUED / PAID / CANCELLED (e.g. mark an invoice paid). Issuing an invoice that has no due date sets one from its Net-N terms.",
+      "Set status DRAFT / ISSUED / PAID / CANCELLED (e.g. mark an invoice paid). Marking it PAID records the paid date: paidDate if given (not in the future), else the date it already has, else today; any other status clears it. Issuing an invoice that has no due date sets one from its Net-N terms.",
     schema: setStatusSchema,
-    run: ({ id, status }) => setDocumentStatus(id, status),
+    run: ({ id, status, paidDate }) => setDocumentStatus(id, status, { paidDate }),
   });
 
   register(server, "convert_invoice", {
