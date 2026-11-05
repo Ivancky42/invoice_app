@@ -7,12 +7,11 @@ import { listRecurringInvoices } from "@/lib/invoicing/recurring";
 export const dynamic = "force-dynamic";
 
 export default async function InvoicesDashboard() {
-  const [docs, defaultProfile] = await Promise.all([
+  const [docs, defaultProfile, counts, overdue, recurring] = await Promise.all([
     prisma.document.findMany({ orderBy: { createdAt: "desc" }, take: 5, include: { company: true } }),
     prisma.companyProfile.findFirst({ where: { isDefault: true } }),
-  ]);
-  const [counts, overdue, recurring] = await Promise.all([
     prisma.document.groupBy({ by: ["type"], _count: { _all: true } }),
+    // Unpaid invoices only (a handful); overdue needs the derived due date, so it filters in memory.
     listDocuments({ overdueOnly: true, limit: 5 }),
     listRecurringInvoices({ status: ["ACTIVE"] }),
   ]);

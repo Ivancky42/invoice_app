@@ -112,14 +112,25 @@ export function appUrl(path: string): string {
   return `${getAppOrigin()}${path}`;
 }
 
-function money(n: number): number {
+export function money(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-export function summarizeDocument(d: DocWithRefs, today = todayInTimeZone()) {
+/**
+ * When an invoice is due and how late it is — the one definition every view uses
+ * (lists, summary, the dashboard report). Quotations and DOs have neither.
+ */
+export function dueInfo(
+  d: { type: string; status: string; issueDate: Date; dueDate: Date | null; paymentTerms: string | null },
+  today: Date,
+): { due: Date | null; daysOverdue: number | null } {
   const due = d.type === "INVOICE" ? effectiveDueDate(d) : null;
-  const daysOverdue =
-    due && d.type === "INVOICE" && d.status === "ISSUED" ? Math.max(0, daysBetween(due, today)) : null;
+  const daysOverdue = due && d.status === "ISSUED" ? Math.max(0, daysBetween(due, today)) : null;
+  return { due, daysOverdue };
+}
+
+export function summarizeDocument(d: DocWithRefs, today = todayInTimeZone()) {
+  const { due, daysOverdue } = dueInfo(d, today);
   return {
     id: d.id,
     number: d.number,
@@ -250,6 +261,32 @@ export async function getDocument(idOrNumber: string) {
 // Writes
 // ---------------------------------------------------------------------------
 
+/** True when an insert lost a race for a document number (unique violation on `number`). */
+export function isNumberConflict(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const err = e as { code?: string; meta?: unknown; message?: string };
+  if (err.code !== "P2002") return false;
+  // pg adapter: meta.driverAdapterError.cause.constraint.index === "Document_number_key";
+  // other engines report meta.target = ["number"].
+  const meta = JSON.stringify(err.meta ?? {});
+  return /Document_number_key/.test(meta) || /"target":\[?"number"\]?/.test(meta);
+}
+
+/**
+ * Numbers are allocated read-max-then-insert, so two concurrent creates (an agent and the
+ * 06:00 recurring run, say) can pick the same one. The loser re-runs `create`, which reads
+ * the max again. `create` must allocate its number inside the closure.
+ */
+export async function withFreshNumber<T>(create: () => Promise<T>, attempts = 5): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await create();
+    } catch (e) {
+      if (i >= attempts || !isNumberConflict(e)) throw e;
+    }
+  }
+}
+
 function cleanItems(items: LineItem[]): LineItem[] {
   return items.map((i) => ({
     description: String(i.description ?? ""),
@@ -289,7 +326,8 @@ export async function createDocument(input: CreateDocumentInput) {
   const discountType = input.discountType ?? "PERCENT";
   const discountValue = input.discountValue ?? 0;
 
-  const created = await prisma.document.create({
+  const created = await withFreshNumber(async () =>
+    prisma.document.create({
     data: {
       type,
       number: await nextDocumentNumber(type, { date: issueDate }),
@@ -316,7 +354,8 @@ export async function createDocument(input: CreateDocumentInput) {
       notes: input.notes === undefined ? (company?.notes ?? null) : nullIfBlank(input.notes),
       terms: nullIfBlank(input.terms),
     },
-  });
+    }),
+  );
   return getDocument(created.id);
 }
 
@@ -402,17 +441,19 @@ export async function convertDocument(idOrNumber: string) {
   const src = await findDocumentRow(idOrNumber);
   const next = NEXT_STAGE[src.type] as DocumentType | null;
   if (!next) throw new InvoicingError("invalid", `${src.type} has no next stage`);
-  const created = await prisma.document.create({
+  const created = await withFreshNumber(async () =>
+    prisma.document.create({
     data: {
       ...copyableFields(src),
       type: next,
-      number: await nextDocumentNumber(next),
+      number: await nextDocumentNumber(next, { date: todayInTimeZone() }),
       status: "DRAFT",
       issueDate: todayInTimeZone(),
       dueDate: null,
       parentId: src.id,
     },
-  });
+    }),
+  );
   return getDocument(created.id);
 }
 
@@ -424,7 +465,8 @@ export async function duplicateDocument(
   const src = await findDocumentRow(idOrNumber);
   const issueDate = opts.issueDate ? parseDateOnly(opts.issueDate) : todayInTimeZone();
   const net = src.type === "INVOICE" ? netDaysFromTerms(src.paymentTerms) : null;
-  const created = await prisma.document.create({
+  const created = await withFreshNumber(async () =>
+    prisma.document.create({
     data: {
       ...copyableFields(src),
       type: src.type,
@@ -434,7 +476,8 @@ export async function duplicateDocument(
       dueDate: net != null ? addDays(issueDate, net) : null,
       parentId: src.parentId,
     },
-  });
+    }),
+  );
   return getDocument(created.id);
 }
 

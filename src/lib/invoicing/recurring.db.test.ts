@@ -171,6 +171,33 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
     expect(r.schedule.notes).toBe("new notes");
   });
 
+  it("a backdated template continues its series: a period already passed is billed now, dated its slot", async () => {
+    const issue = sched.addDays(today, -40);
+    const src = await docs.createDocument({
+      type: "INVOICE",
+      status: "ISSUED",
+      issueDate: iso(issue),
+      clientName: "Walk-in",
+      items: [{ description: "Retainer", quantity: 1, unitPrice: 100 }],
+    });
+    const { schedule, generatedNow } = await rec.createRecurringFromDocument({ documentId: src.id, maxOccurrences: 6 });
+    const shape = { frequency: "MONTHLY" as const, interval: 1, dayOfMonth: issue.getUTCDate(), startDate: issue };
+    const second = sched.nextOccurrenceAfter(shape, issue);
+    expect(second <= today).toBe(true);
+    expect(generatedNow.map((g) => g.runDate)).toEqual([iso(second)]);
+    expect(schedule.occurrencesGenerated).toBe(2);
+    expect(sched.parseDateOnly(schedule.nextRunDate!) > today).toBe(true);
+  });
+
+  it("concurrent creates never collide on a document number", async () => {
+    const made = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        docs.createDocument({ clientName: "Walk-in", items: [{ description: `Job ${i}`, quantity: 1, unitPrice: 1 }] }),
+      ),
+    );
+    expect(new Set(made.map((d) => d.number)).size).toBe(6);
+  });
+
   it("pause stops generation; resume skips the paused dates", async () => {
     const { schedule } = await rec.createRecurringInvoice({
       name: "Pausable",

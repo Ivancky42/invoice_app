@@ -217,7 +217,7 @@ export default function RecurringForm({
           <div>
             <label className="label">Bill every</label>
             <div className="flex gap-2">
-              <input type="number" min={1} className="input w-20" value={f.interval} onChange={(e) => set("interval", parseInt(e.target.value) || 1)} />
+              <input type="number" min={1} className="input w-20!" value={f.interval} onChange={(e) => set("interval", parseInt(e.target.value) || 1)} />
               <AppSelect value={f.frequency} onValueChange={(v) => set("frequency", v as Frequency)} options={FREQ_OPTIONS} />
             </div>
           </div>

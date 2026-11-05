@@ -13,6 +13,7 @@ import { calcTotals, type DiscountType, type LineItem } from "@/lib/types";
 import {
   appUrl,
   findDocumentRow,
+  withFreshNumber,
   InvoicingError,
   resolveClient,
   resolveCompany,
@@ -208,13 +209,20 @@ export async function createRecurringFromDocument(input: RecurringFromDocumentIn
     maxOccurrences: input.maxOccurrences ?? null,
   };
   const already = countTemplate ? 1 : 0;
+  const today = todayInTimeZone();
+  // With the template as #1 the series continues from it: a period that already passed
+  // (template dated 3 Oct, made recurring on 4 Nov → 3 Nov) is billed now, dated its own
+  // slot, rather than silently skipped. An explicit startDate is taken as given. Without
+  // the template in the series there is nothing to continue, so start no earlier than today.
   const firstFrom = input.startDate
     ? parseDateOnly(input.startDate)
     : countTemplate
       ? addDays(issue, 1)
-      : nextOccurrenceAfter(shape, issue);
-  const today = todayInTimeZone();
-  const state = nextState(shape, firstFrom < today ? today : firstFrom, already);
+      : (() => {
+          const next = nextOccurrenceAfter(shape, issue);
+          return next < today ? today : next;
+        })();
+  const state = nextState(shape, firstFrom, already);
   if (!state.nextRunDate) {
     throw new InvoicingError("invalid", "This schedule has no billing dates left — check maxOccurrences / endDate");
   }
@@ -338,6 +346,16 @@ export async function updateRecurringInvoice(input: UpdateRecurringInput) {
     !sameDay(shape.endDate, s.endDate) ||
     shape.maxOccurrences !== s.maxOccurrences;
   if (timingChanged) {
+    // Reject edits that would silently end an active schedule, as create does.
+    if (shape.endDate && toDateOnly(shape.endDate) < toDateOnly(shape.startDate)) {
+      throw new InvoicingError("invalid", "endDate is before startDate");
+    }
+    if (shape.maxOccurrences != null && shape.maxOccurrences < s.occurrencesGenerated) {
+      throw new InvoicingError(
+        "invalid",
+        `maxOccurrences (${shape.maxOccurrences}) is below the ${s.occurrencesGenerated} invoices already generated — set status ENDED to stop instead`,
+      );
+    }
     data.frequency = shape.frequency;
     data.interval = shape.interval;
     data.dayOfMonth = shape.dayOfMonth;
@@ -391,9 +409,26 @@ export async function deleteRecurringInvoice(id: string) {
 // Reads
 // ---------------------------------------------------------------------------
 
-function summarizeSchedule(s: RecurringInvoice & { company?: { name: string; currency: string } | null }) {
+/** Total of one invoice generated from this schedule's template (before {{…}} filling). */
+export function scheduleAmount(
+  s: Pick<RecurringInvoice, "items" | "taxRate" | "discountType" | "discountValue">,
+): number {
   const items = (s.items as unknown as LineItem[]) ?? [];
-  const totals = calcTotals(items, s.taxRate, (s.discountType as DiscountType) ?? "PERCENT", s.discountValue);
+  const t = calcTotals(items, s.taxRate, s.discountType === "AMOUNT" ? "AMOUNT" : "PERCENT", s.discountValue);
+  return Math.round(t.total * 100) / 100;
+}
+
+/** Same query as list_recurring_invoices; shared with the dashboard report. */
+export function findSchedules(where?: Prisma.RecurringInvoiceWhereInput, take?: number) {
+  return prisma.recurringInvoice.findMany({
+    where,
+    include: { company: { select: { name: true, currency: true } } },
+    orderBy: [{ status: "asc" }, { nextRunDate: "asc" }, { name: "asc" }],
+    take,
+  });
+}
+
+function summarizeSchedule(s: RecurringInvoice & { company?: { name: string; currency: string } | null }) {
   return {
     id: s.id,
     name: s.name,
@@ -416,18 +451,14 @@ function summarizeSchedule(s: RecurringInvoice & { company?: { name: string; cur
     clientId: s.clientId,
     clientName: s.clientName,
     projectTitle: s.projectTitle,
-    amountPerInvoice: Math.round(totals.total * 100) / 100,
+    amountPerInvoice: scheduleAmount(s),
     lastError: s.lastError,
     appUrl: appUrl(`/recurring/${s.id}`),
   };
 }
 
 export async function listRecurringInvoices(filter: { status?: ("ACTIVE" | "PAUSED" | "ENDED")[] } = {}) {
-  const rows = await prisma.recurringInvoice.findMany({
-    where: filter.status?.length ? { status: { in: filter.status } } : undefined,
-    include: { company: { select: { name: true, currency: true } } },
-    orderBy: [{ status: "asc" }, { nextRunDate: "asc" }, { name: "asc" }],
-  });
+  const rows = await findSchedules(filter.status?.length ? { status: { in: filter.status } } : undefined);
   return rows.map(summarizeSchedule);
 }
 
@@ -543,7 +574,7 @@ export async function generateForSchedule(
   let ended = false;
   try {
     for (let i = 0; i < MAX_CATCH_UP_PER_RUN; i++) {
-      const step = await prisma.$transaction(async (tx) => {
+      const step = await withFreshNumber(() => prisma.$transaction(async (tx) => {
         // Row lock: a concurrent run (cron + "Run now") waits, then sees the advanced state.
         await tx.$queryRaw`SELECT id FROM "RecurringInvoice" WHERE id = ${scheduleId} FOR UPDATE`;
         const s = await tx.recurringInvoice.findUnique({ where: { id: scheduleId } });
@@ -595,7 +626,7 @@ export async function generateForSchedule(
                 total: Math.round(doc.total * 100) / 100,
               },
         };
-      });
+      }));
       if (!step) break;
       if (step.doc) generated.push(step.doc);
       if (step.ended) {

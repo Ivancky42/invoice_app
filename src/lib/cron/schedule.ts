@@ -7,6 +7,13 @@ export type JobDescriptor = {
   job: string;
   cadence: Cadence;
   dependsOn: string[];
+  /**
+   * Run on every tick, even after a SUCCESS for this UTC run day. For idempotent jobs whose
+   * own notion of "today" is not the UTC run day (recurring invoices bill by the
+   * Asia/Kuala_Lumpur date): a manual re-run earlier in the UTC day must not stop the
+   * scheduled tick from doing that day's work.
+   */
+  everyTick?: boolean;
 };
 
 export type SkipReason = "already-success" | "not-due" | "deps-unmet";
@@ -73,7 +80,7 @@ export function shouldRunJob(
     return { run: false, reason: "not-due" };
   }
 
-  if (!options.force && ledger.get(descriptor.job) === "SUCCESS") {
+  if (!options.force && !descriptor.everyTick && ledger.get(descriptor.job) === "SUCCESS") {
     return { run: false, reason: "already-success" };
   }
 

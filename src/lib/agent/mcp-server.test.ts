@@ -1,4 +1,4 @@
-import { createMcpHandler } from "mcp-handler";
+import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { describe, expect, it } from "vitest";
 import { registerAgentMcpTools } from "@/lib/agent/mcp-tools";
 
@@ -86,5 +86,70 @@ describe("MCP server (SDK v2 via mcp-handler)", () => {
     });
     expect(message.result.isError).toBe(true);
     expect(message.result.content[0].text).toContain("branch_not_allowed_on_real_book");
+  });
+});
+
+/**
+ * Scopes through the real auth wrapper, not a hand-built handler context: if mcp-handler or
+ * the SDK ever passes authInfo somewhere else, a shadow connector must lose access (the
+ * billing tools fail closed), not gain it.
+ */
+describe("MCP auth scopes end to end (withMcpAuth + createMcpHandler)", () => {
+  const authed = withMcpAuth(
+    handler,
+    async (_req, token) =>
+      token === "shadow"
+        ? { token, clientId: "t", scopes: ["mcp:shadow"] }
+        : token === "full"
+          ? { token, clientId: "t", scopes: ["mcp:tools"] }
+          : undefined,
+    {
+      required: true,
+      requiredScopes: [],
+      resourceMetadataPath: "/.well-known/oauth-protected-resource",
+      resourceUrl: "http://localhost/api/mcp/mcp",
+    },
+  );
+
+  async function callAs(token: string | null, name: string, args: Record<string, unknown>) {
+    const res = await authed(
+      new Request("http://localhost/api/mcp/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": PROTOCOL,
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method: "tools/call", params: { name, arguments: args } }),
+      }),
+    );
+    if (res.status !== 200) return { status: res.status, text: "" };
+    const body = await res.text();
+    const json = res.headers.get("content-type")?.includes("text/event-stream")
+      ? body.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("")
+      : body;
+    const message = JSON.parse(json);
+    return { status: res.status, isError: message.result?.isError, text: String(message.result?.content?.[0]?.text ?? "") };
+  }
+
+  it("rejects a call with no token", async () => {
+    expect((await callAs(null, "list_invoices", {})).status).toBe(401);
+  });
+
+  it("refuses billing and real-book tools to a shadow-only token", async () => {
+    const billing = await callAs("shadow", "get_invoice", { id: "INV-2026-0001" });
+    expect(billing.isError).toBe(true);
+    expect(billing.text).toContain("invoice_scope_forbidden");
+    const realBook = await callAs("shadow", "sync_tracked_tickers", {});
+    expect(realBook.isError).toBe(true);
+    expect(realBook.text).toContain("shadow_scope_real_book_forbidden");
+  });
+
+  it("lets a full-scope token past the scope check", async () => {
+    // No database here, so the call itself fails later — but not on scope.
+    const res = await callAs("full", "get_invoice", { id: "INV-2026-0001" });
+    expect(res.status).toBe(200);
+    expect(res.text).not.toContain("invoice_scope_forbidden");
   });
 });

@@ -252,9 +252,12 @@ export const billingReportSchema = z.object({
     .enum(["documents", "recurring"])
     .describe("documents: one row per invoice/quotation/DO; recurring: one row per schedule"),
   companies: z
-    .array(z.string().min(1))
+    .array(z.string().trim().min(1))
+    .min(1)
     .max(50)
     .optional()
     .describe("Only these company profiles (names, case-insensitive). Omit for all"),
+  issuedFrom: dateString.optional().describe("documents view: only documents issued on/after this date"),
+  issuedTo: dateString.optional().describe("documents view: only documents issued on/before this date"),
 });
 export type BillingReportInput = z.infer<typeof billingReportSchema>;

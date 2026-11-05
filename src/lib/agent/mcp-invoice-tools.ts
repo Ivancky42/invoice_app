@@ -6,7 +6,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { mcpInput } from "@/lib/agent/mcp-input";
-import { canWriteRealBook } from "@/lib/agent/mcp-scope";
+import { MCP_SCOPE } from "@/lib/agent/mcp-scope";
 import { validationFailure } from "@/lib/agent/schemas";
 import {
   appUrl,
@@ -112,7 +112,10 @@ function register<S extends z.ZodObject>(server: McpServer, name: string, spec: 
       },
     },
     async (args: unknown, extra: ToolExtra) => {
-      if (!canWriteRealBook(extra?.http?.authInfo?.scopes)) {
+      // Fail closed: every authenticated path (OAuth JWT or AGENT_TOKEN) sets scopes, and
+      // full access always carries mcp:tools. Missing auth info — e.g. the SDK moving where
+      // it passes authInfo — must deny billing, not grant it.
+      if (!extra?.http?.authInfo?.scopes?.includes(MCP_SCOPE)) {
         return fail(
           "invoice_scope_forbidden",
           "Billing tools need the full mcp:tools connector; this connector is mcp:shadow only.",
@@ -347,7 +350,7 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Make an invoice recurring",
     kind: "write",
     description:
-      "Turn an existing invoice into a schedule using it as the template. By default the invoice counts as #1 of the series (so maxOccurrences=6 → 5 more), and the next invoice is dated one period after it on the same day of month. Use update_recurring_invoice afterwards to add {{period}} placeholders to the template lines.",
+      "Turn an existing invoice into a schedule using it as the template. By default the invoice counts as #1 of the series (so maxOccurrences=6 → 5 more), and the next invoice is dated one period after it on the same day of month — if that date has already passed, it (and any other missed periods) is generated immediately, each dated its own slot. Pass startDate to start the series later instead. Use update_recurring_invoice afterwards to add {{period}} placeholders to the template lines.",
     schema: recurringFromDocumentSchema,
     run: (input) => createRecurringFromDocument(input),
   });

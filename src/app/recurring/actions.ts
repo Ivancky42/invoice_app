@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { InvoicingError } from "@/lib/invoicing/documents";
 import { createRecurringSchema, updateRecurringSchema } from "@/lib/invoicing/inputs";
 import {
   createRecurringInvoice,
@@ -54,8 +55,17 @@ export async function setRecurringStatus(formData: FormData) {
   const id = String(formData.get("id") || "");
   const status = String(formData.get("status") || "") as "ACTIVE" | "PAUSED" | "ENDED";
   if (!id || !["ACTIVE", "PAUSED", "ENDED"].includes(status)) return;
-  await updateRecurringInvoice({ id, status });
+  let error: string | undefined;
+  try {
+    const r = await updateRecurringInvoice({ id, status });
+    error = r.error;
+  } catch (e) {
+    // e.g. resuming a schedule whose end date passed while paused: say so on the page.
+    if (!(e instanceof InvoicingError)) throw e;
+    error = e.message;
+  }
   refresh(id);
+  if (error) redirect(`/recurring/${id}?error=${encodeURIComponent(error.slice(0, 300))}`);
 }
 
 export async function runRecurringNow(formData: FormData) {
