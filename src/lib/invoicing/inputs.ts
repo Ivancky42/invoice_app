@@ -146,6 +146,13 @@ export const upsertCompanySchema = z.object({
   taxRate: z.number().min(0).max(100).optional(),
   notes: optionalText.describe("Default notes for new documents"),
   isDefault: z.boolean().optional(),
+  emailFrom: optionalText.describe(
+    'Sender for emailed invoices on a Resend-verified domain, e.g. "Grumpy Pixels <billing@grumpypixels.my>". null disables emailing',
+  ),
+  emailCc: optionalText.describe(
+    "Comma-separated addresses CC'd on every invoice email from this profile (default for manual sends, always for auto-emails)",
+  ),
+  emailBcc: optionalText.describe("Comma-separated addresses BCC'd on every invoice email from this profile"),
 });
 
 const scheduleFields = {
@@ -171,6 +178,18 @@ const scheduleFields = {
     .optional()
     .describe("Total invoices in the series, e.g. 6 for a six-month project. Omit/null with no endDate = indefinite"),
   autoIssue: z.boolean().optional().describe("true (default): generated invoices are ISSUED; false: DRAFT"),
+  autoEmail: z
+    .boolean()
+    .optional()
+    .describe(
+      "Email each generated ISSUED invoice to the client via Resend, PDF attached (needs the company profile's emailFrom). Default false",
+    ),
+  emailTo: z
+    .string()
+    .max(1000)
+    .nullable()
+    .optional()
+    .describe("Comma-separated recipients for auto-emails. Default: the invoice's client email"),
   dueInDays: z
     .number()
     .int()
@@ -216,6 +235,8 @@ export const recurringFromDocumentSchema = z.object({
     .optional()
     .describe("Link the template invoice to the schedule as invoice #1 (default true)"),
   autoIssue: z.boolean().optional(),
+  autoEmail: z.boolean().optional().describe("Email each generated ISSUED invoice to the client (Resend). Default false"),
+  emailTo: z.string().max(1000).nullable().optional().describe("Comma-separated recipients; default the client email"),
   dueInDays: z.number().int().min(0).max(365).nullable().optional(),
 });
 export type RecurringFromDocumentInput = z.infer<typeof recurringFromDocumentSchema>;
@@ -261,3 +282,19 @@ export const billingReportSchema = z.object({
   issuedTo: dateString.optional().describe("documents view: only documents issued on/before this date"),
 });
 export type BillingReportInput = z.infer<typeof billingReportSchema>;
+
+export const sendInvoiceEmailSchema = z.object({
+  id: z.string().min(1).describe("Document id or number (e.g. INV-2026-0018)"),
+  to: z
+    .array(z.string().min(3))
+    .max(20)
+    .optional()
+    .describe("Recipients. Default: the document's client email"),
+  cc: z
+    .array(z.string().min(3))
+    .max(20)
+    .optional()
+    .describe("CC recipients. Omit for the company profile's default CC list; [] for none"),
+  message: z.string().max(5000).optional().describe("Optional note placed above the invoice summary"),
+  confirm: z.literal(true).describe("Must be true — this emails the client immediately and can't be unsent"),
+});

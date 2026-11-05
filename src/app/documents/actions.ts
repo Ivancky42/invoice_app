@@ -11,6 +11,7 @@ import {
   withFreshNumber,
 } from "@/lib/invoicing/documents";
 import { createRecurringFromDocument } from "@/lib/invoicing/recurring";
+import { sendInvoiceEmail } from "@/lib/invoicing/email";
 
 type SaveInput = {
   id?: string;
@@ -86,9 +87,11 @@ export async function saveDocument(input: SaveInput): Promise<{ id: string; recu
   }
 
   const created = await withFreshNumber(async () =>
-    prisma.document.create({
-      data: { ...base, number: await nextDocumentNumber(input.type, { date: base.issueDate }) },
-    }),
+    prisma.$transaction(async (tx) =>
+      tx.document.create({
+        data: { ...base, number: await nextDocumentNumber(input.type, { db: tx, date: base.issueDate }) },
+      }),
+    ),
   );
   let recurringError: string | undefined;
   if (input.repeat && input.type === "INVOICE") {
@@ -132,5 +135,27 @@ export async function convertDocument(id: string): Promise<{ id: string } | null
   } catch (e) {
     if (e instanceof InvoicingError) return null;
     throw e;
+  }
+}
+
+/** Email a document from its page. Returns a message instead of throwing so the form can show it. */
+export async function emailDocument(
+  id: string,
+  input: { to: string; cc: string; message: string },
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const r = await sendInvoiceEmail(id, {
+      to: input.to,
+      cc: input.cc || null,
+      message: input.message || null,
+      trigger: "app",
+    });
+    revalidatePath(`/documents/${id}`);
+    revalidatePath("/documents");
+    const copies = r.cc.length ? ` (cc ${r.cc.join(", ")})` : "";
+    return { ok: true, message: `Sent to ${r.to.join(", ")}${copies}. Status: ${r.status}.` };
+  } catch (e) {
+    revalidatePath(`/documents/${id}`);
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
   }
 }

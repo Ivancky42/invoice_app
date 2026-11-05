@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { removeStoredLogo, saveLogoFile } from "@/lib/logo-storage";
+import { parseAddressList } from "@/lib/invoicing/emailAddress";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -19,9 +20,17 @@ export async function saveProfile(formData: FormData) {
     taxRate: parseFloat(String(formData.get("taxRate") || "0")) || 0,
     notes: String(formData.get("notes") || "") || null,
     isDefault: formData.get("isDefault") === "on",
+    emailFrom: String(formData.get("emailFrom") || "").trim() || null,
+    emailCc: String(formData.get("emailCc") || "").trim() || null,
+    emailBcc: String(formData.get("emailBcc") || "").trim() || null,
   };
 
   if (!data.name) throw new Error("Name is required");
+  if (data.emailFrom && parseAddressList(data.emailFrom).length !== 1) {
+    throw new Error("Email from must be a single address, e.g. Grumpy Pixels <billing@grumpypixels.my>");
+  }
+  if (data.emailCc) parseAddressList(data.emailCc);
+  if (data.emailBcc) parseAddressList(data.emailBcc);
 
   const profile = id
     ? await prisma.companyProfile.update({ where: { id }, data })

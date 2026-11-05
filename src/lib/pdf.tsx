@@ -92,7 +92,9 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
   const isDeliveryOrder = doc.type === "DELIVERY_ORDER";
 
   return (
-    <Document>
+    // Fixed metadata dates keep the bytes identical across renders, so a retried email
+    // carries exactly the same attachment (Resend idempotency compares the whole request).
+    <Document title={doc.number} creationDate={doc.issueDate} modificationDate={doc.issueDate}>
       <Page size="A4" style={styles.page}>
         <View style={styles.header}>
           <View style={styles.brand}>

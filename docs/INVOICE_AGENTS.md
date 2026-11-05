@@ -19,6 +19,7 @@ A shadow-only (`mcp:shadow`) connector is refused by every billing tool.
 | `convert_invoice` | Quotation → Invoice → Delivery Order (new DRAFT linked to its parent). |
 | `duplicate_invoice` | Copy as a new document, today's date. |
 | `delete_invoice` | Permanent; needs `confirm: true`. Prefer CANCELLED. |
+| `send_invoice_email` | Email a document to the client via Resend with its PDF attached (needs `confirm: true`; only when the user asks for that email). Default recipient: the client email. |
 | `list_invoice_clients` / `upsert_invoice_client` | Saved bill-to clients. |
 | `list_company_profiles` / `upsert_company_profile` | Billing entities (bank details, currency, tax, default). Logos stay in Settings. |
 | `list_recurring_invoices` / `get_recurring_invoice` | Schedules, next 6 dates, invoices generated. |
@@ -82,3 +83,20 @@ get_invoice_pdf { "id": "INV-2026-0013", "includeFile": false, "linkTtlDays": 30
 `/api/pdf/<id>?exp=<unix>&sig=<hmac>` passes the PIN gate when the HMAC
 (`PDF_LINK_SECRET`, else `APP_GATE_SECRET`, else `AGENT_TOKEN`) verifies and hasn't
 expired; anything else gets 403. Rotating the secret revokes every outstanding link.
+
+## Emailing invoices (Resend)
+
+Setup: `RESEND_API_KEY` in the app's environment, and **Email from** on the company profile
+(Settings) on a Resend-verified domain, e.g. `Grumpy Pixels <billing@grumpypixels.my>`.
+Replies go to the profile's Email; **CC** (e.g. `ivan.chewky@gmail.com, trishateh@gmail.com`)
+is copied on every send — prefilled and editable on manual sends, always on auto-emails — and
+**BCC** (optional) gets a hidden copy. Emailing a **draft** issues it once the send succeeds
+(due date from its payment terms); issued and paid documents keep their status.
+
+- **Manual**: "Email to client" on any issued invoice/quotation/DO, or the
+  `send_invoice_email` tool. Every attempt (sent or failed) is listed on the document.
+- **Automatic**: a schedule with `autoEmail` emails each invoice it issues, right after
+  generation (~06:00 MYT), to `emailTo` or the client email. A failed send retries on the
+  next daily run with the same Resend idempotency key, so an invoice is never emailed twice;
+  invoices issued more than 7 days ago, or after 5 failures, are given up on and flagged on
+  the schedule. Invoices that existed before auto-email was switched on are never sent.

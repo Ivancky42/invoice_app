@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getRecurringInvoice } from "@/lib/invoicing/recurring";
 import { InvoicingError } from "@/lib/invoicing/documents";
 import { formatMoney, type DiscountType } from "@/lib/types";
+import { canEmailFrom } from "@/lib/invoicing/email";
 import RecurringForm from "../RecurringForm";
 import { removeRecurring, runRecurringNow, setRecurringStatus } from "../actions";
 import { cadenceLabel, RECURRING_STATUS_COLORS } from "../labels";
@@ -42,7 +43,13 @@ export default async function RecurringDetail({
     return (
       <RecurringForm
         mode="edit"
-        companies={companies.map((c) => ({ id: c.id, name: c.name, currency: c.currency, taxRate: c.taxRate }))}
+        companies={companies.map((c) => ({
+        id: c.id,
+        name: c.name,
+        currency: c.currency,
+        taxRate: c.taxRate,
+        canEmail: canEmailFrom(c),
+      }))}
         clients={clients.map((c) => ({ id: c.id, name: c.name, address: c.address, email: c.email, phone: c.phone }))}
         initial={{
           id: s.id,
@@ -54,6 +61,8 @@ export default async function RecurringDetail({
           endDate: s.endDate,
           maxOccurrences: s.maxOccurrences,
           autoIssue: s.autoIssue,
+          autoEmail: s.autoEmail,
+          emailTo: s.emailTo ?? "",
           dueInDays: s.dueInDays,
           companyId: s.companyId,
           clientId: s.clientId,
@@ -74,6 +83,7 @@ export default async function RecurringDetail({
           notes: s.notes ?? "",
           terms: s.terms ?? "",
           occurrencesGenerated: s.occurrencesGenerated,
+          lastRunDate: s.lastRunDate,
         }}
       />
     );
@@ -89,6 +99,7 @@ export default async function RecurringDetail({
             <span className={`badge ${RECURRING_STATUS_COLORS[s.status]}`}>{s.status}</span>
             <span>{cadenceLabel(s.frequency, s.interval, s.dayOfMonth)}</span>
             <span>· {s.autoIssue ? "issued automatically" : "created as draft"}</span>
+            {s.autoEmail && <span>· emailed to {s.emailTo || s.clientEmail || "the client"}</span>}
             <span>· {formatMoney(s.amountPerInvoice, s.currency)} each</span>
           </div>
         </div>

@@ -14,6 +14,7 @@ import type {
 import { getAppOrigin } from "@/lib/agent/mcp-oauth";
 import { nextDocumentNumber } from "@/lib/numbering";
 import { prisma } from "@/lib/prisma";
+import { InvalidAddressError, parseAddressList } from "@/lib/invoicing/emailAddress";
 import { calcTotals, NEXT_STAGE, type DiscountType, type LineItem } from "@/lib/types";
 import type {
   CreateDocumentInput,
@@ -29,6 +30,32 @@ import {
   parseDateOnly,
   todayInTimeZone,
 } from "@/lib/invoicing/schedule";
+
+/** parseAddressList, but a bad address is an InvoicingError ("invalid") for callers. */
+export function checkedAddresses(raw: string | string[] | null | undefined): string[] {
+  try {
+    return parseAddressList(raw);
+  } catch (e) {
+    if (e instanceof InvalidAddressError) throw new InvoicingError("invalid", e.message);
+    throw e;
+  }
+}
+
+/**
+ * The profile a document is issued (and emailed) from: its own, else the default, else any.
+ * The PDF, the sender and the invoice page all resolve it this way.
+ */
+export async function companyForDocument(doc: { company?: CompanyProfile | null; companyId?: string | null }) {
+  if (doc.company) return doc.company;
+  if (doc.companyId) {
+    const own = await prisma.companyProfile.findUnique({ where: { id: doc.companyId } });
+    if (own) return own;
+  }
+  return (
+    (await prisma.companyProfile.findFirst({ where: { isDefault: true } })) ??
+    (await prisma.companyProfile.findFirst())
+  );
+}
 
 export class InvoicingError extends Error {
   constructor(
@@ -216,6 +243,7 @@ export async function getDocument(idOrNumber: string) {
       parent: { select: { id: true, number: true, type: true, status: true } },
       children: { select: { id: true, number: true, type: true, status: true } },
       recurringInvoice: { select: { id: true, name: true, status: true, nextRunDate: true } },
+      emails: { orderBy: { createdAt: "desc" }, take: 20 },
     },
   });
   return {
@@ -252,6 +280,16 @@ export async function getDocument(idOrNumber: string) {
       : null,
     nextStage: NEXT_STAGE[d.type] ?? null,
     pdfUrl: appUrl(`/api/pdf/${d.id}`),
+    emailPending: d.emailPending,
+    emails: d.emails.map((e) => ({
+      status: e.status,
+      trigger: e.trigger,
+      to: e.to,
+      cc: e.cc,
+      subject: e.subject,
+      error: e.error,
+      at: e.createdAt.toISOString(),
+    })),
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
   };
@@ -273,9 +311,10 @@ export function isNumberConflict(e: unknown): boolean {
 }
 
 /**
- * Numbers are allocated read-max-then-insert, so two concurrent creates (an agent and the
- * 06:00 recurring run, say) can pick the same one. The loser re-runs `create`, which reads
- * the max again. `create` must allocate its number inside the closure.
+ * Belt and braces around number allocation. Every create allocates under a per-series
+ * advisory lock (nextDocumentNumber with a transaction), so concurrent creates queue rather
+ * than collide; this retry only covers a number taken some other way (e.g. a manual edit).
+ * `create` must allocate its number inside the closure.
  */
 export async function withFreshNumber<T>(create: () => Promise<T>, attempts = 5): Promise<T> {
   for (let i = 1; ; i++) {
@@ -327,10 +366,10 @@ export async function createDocument(input: CreateDocumentInput) {
   const discountValue = input.discountValue ?? 0;
 
   const created = await withFreshNumber(async () =>
-    prisma.document.create({
+    prisma.$transaction(async (tx) => tx.document.create({
     data: {
       type,
-      number: await nextDocumentNumber(type, { date: issueDate }),
+      number: await nextDocumentNumber(type, { db: tx, date: issueDate }),
       status: input.status ?? "DRAFT",
       issueDate,
       dueDate,
@@ -354,7 +393,7 @@ export async function createDocument(input: CreateDocumentInput) {
       notes: input.notes === undefined ? (company?.notes ?? null) : nullIfBlank(input.notes),
       terms: nullIfBlank(input.terms),
     },
-    }),
+    })),
   );
   return getDocument(created.id);
 }
@@ -442,17 +481,17 @@ export async function convertDocument(idOrNumber: string) {
   const next = NEXT_STAGE[src.type] as DocumentType | null;
   if (!next) throw new InvoicingError("invalid", `${src.type} has no next stage`);
   const created = await withFreshNumber(async () =>
-    prisma.document.create({
+    prisma.$transaction(async (tx) => tx.document.create({
     data: {
       ...copyableFields(src),
       type: next,
-      number: await nextDocumentNumber(next, { date: todayInTimeZone() }),
+      number: await nextDocumentNumber(next, { db: tx, date: todayInTimeZone() }),
       status: "DRAFT",
       issueDate: todayInTimeZone(),
       dueDate: null,
       parentId: src.id,
     },
-    }),
+    })),
   );
   return getDocument(created.id);
 }
@@ -466,17 +505,17 @@ export async function duplicateDocument(
   const issueDate = opts.issueDate ? parseDateOnly(opts.issueDate) : todayInTimeZone();
   const net = src.type === "INVOICE" ? netDaysFromTerms(src.paymentTerms) : null;
   const created = await withFreshNumber(async () =>
-    prisma.document.create({
+    prisma.$transaction(async (tx) => tx.document.create({
     data: {
       ...copyableFields(src),
       type: src.type,
-      number: await nextDocumentNumber(src.type, { date: issueDate }),
+      number: await nextDocumentNumber(src.type, { db: tx, date: issueDate }),
       status: opts.status ?? "DRAFT",
       issueDate,
       dueDate: net != null ? addDays(issueDate, net) : null,
       parentId: src.parentId,
     },
-    }),
+    })),
   );
   return getDocument(created.id);
 }
@@ -673,7 +712,17 @@ export async function upsertCompany(input: {
   taxRate?: number;
   notes?: string | null;
   isDefault?: boolean;
+  emailFrom?: string | null;
+  emailCc?: string | null;
+  emailBcc?: string | null;
 }) {
+  // Validate email settings up front so a typo surfaces here, not at 06:00.
+  if (input.emailFrom) {
+    const from = checkedAddresses(input.emailFrom);
+    if (from.length !== 1) throw new InvoicingError("invalid", "emailFrom must be exactly one address");
+  }
+  if (input.emailCc) checkedAddresses(input.emailCc);
+  if (input.emailBcc) checkedAddresses(input.emailBcc);
   const { id, isDefault, ...rest } = input;
   const data: Prisma.CompanyProfileUpdateInput = {};
   for (const [k, v] of Object.entries(rest)) {

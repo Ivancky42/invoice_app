@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import AppSelect from "@/components/AppSelect";
 import { calcTotals, formatMoney, PAYMENT_TERMS_PRESETS, type DiscountType, type LineItem } from "@/lib/types";
 import {
+  addDays,
   formatDateOnly,
   parseDateOnly,
   previewOccurrences,
@@ -14,7 +15,7 @@ import {
 } from "@/lib/invoicing/schedule";
 import { saveRecurring } from "./actions";
 
-type CompanyOption = { id: string; name: string; currency: string; taxRate: number };
+type CompanyOption = { id: string; name: string; currency: string; taxRate: number; canEmail?: boolean };
 type ClientOption = { id: string; name: string; address?: string | null; email?: string | null; phone?: string | null };
 
 export type RecurringFormInitial = {
@@ -27,6 +28,8 @@ export type RecurringFormInitial = {
   endDate: string | null;
   maxOccurrences: number | null;
   autoIssue: boolean;
+  autoEmail: boolean;
+  emailTo: string;
   dueInDays: number | null;
   companyId: string | null;
   clientId: string | null;
@@ -47,6 +50,8 @@ export type RecurringFormInitial = {
   notes: string;
   terms: string;
   occurrencesGenerated?: number;
+  /** Edit mode: last date already billed; the preview starts after it. */
+  lastRunDate?: string | null;
 };
 
 const FREQ_OPTIONS = [
@@ -101,7 +106,15 @@ export default function RecurringForm({
       // A series continued from a linked invoice bills passed slots on save; otherwise
       // dates before today are skipped.
       const continuing = mode === "create" && Boolean(linkDocument) && linkAsFirst;
-      const from = continuing || shape.startDate >= today ? shape.startDate : today;
+      const afterLast = initial.lastRunDate ? addDays(parseDateOnly(initial.lastRunDate), 1) : null;
+      const from =
+        mode === "edit" && afterLast
+          ? afterLast > today
+            ? afterLast
+            : today
+          : continuing || shape.startDate >= today
+            ? shape.startDate
+            : today;
       const dates = previewOccurrences(shape, from, already, 4);
       return dates.map((d, i) => ({
         date: formatDateOnly(d),
@@ -118,7 +131,7 @@ export default function RecurringForm({
     } catch {
       return [];
     }
-  }, [f, endMode, already, mode, linkDocument, linkAsFirst]);
+  }, [f, endMode, already, mode, linkDocument, linkAsFirst, initial.lastRunDate]);
 
   function selectClient(id: string) {
     const c = clients.find((x) => x.id === id);
@@ -161,6 +174,8 @@ export default function RecurringForm({
         endDate: endMode === "date" ? f.endDate || null : null,
         maxOccurrences: endMode === "count" ? Number(f.maxOccurrences) || null : null,
         autoIssue: f.autoIssue,
+        autoEmail: f.autoEmail && f.autoIssue && Boolean(companies.find((c) => c.id === f.companyId)?.canEmail),
+        emailTo: f.emailTo.trim() || null,
         dueInDays: f.dueInDays == null || Number.isNaN(f.dueInDays) ? null : f.dueInDays,
         ...(f.companyId ? { companyId: f.companyId } : {}),
         clientId: f.clientId || (mode === "edit" ? null : undefined),
@@ -272,6 +287,29 @@ export default function RecurringForm({
               <input type="checkbox" checked={f.autoIssue} onChange={(e) => set("autoIssue", e.target.checked)} />
               Issue automatically (unticked: create as Draft for review)
             </label>
+          </div>
+          <div className="md:col-span-4 border-t pt-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={f.autoEmail && f.autoIssue && Boolean(companies.find((c) => c.id === f.companyId)?.canEmail)}
+                disabled={!f.autoIssue || !companies.find((c) => c.id === f.companyId)?.canEmail}
+                onChange={(e) => set("autoEmail", e.target.checked)}
+              />
+              Email each invoice to the client automatically (PDF attached, via Resend)
+            </label>
+            {!companies.find((c) => c.id === f.companyId)?.canEmail ? (
+              <p className="text-xs text-gray-500 mt-1">
+                Set “Email from” on this company profile in Settings (and RESEND_API_KEY on the server) to turn this on.
+              </p>
+            ) : !f.autoIssue ? (
+              <p className="text-xs text-gray-500 mt-1">Only issued invoices are emailed; drafts wait for you.</p>
+            ) : f.autoEmail ? (
+              <div className="mt-2 max-w-md">
+                <label className="label">Send to <span className="text-gray-400 font-normal">(comma-separated; blank = client email{f.clientEmail ? ` ${f.clientEmail}` : ""})</span></label>
+                <input className="input" value={f.emailTo} onChange={(e) => set("emailTo", e.target.value)} />
+              </div>
+            ) : null}
           </div>
           <div>
             <label className="label">Due after (days)</label>

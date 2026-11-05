@@ -17,6 +17,9 @@ type Profile = {
   taxRate?: number;
   notes?: string | null;
   isDefault?: boolean;
+  emailFrom?: string | null;
+  emailCc?: string | null;
+  emailBcc?: string | null;
 };
 
 export default function ProfileForm({ profile, action }: { profile: Profile; action: (fd: FormData) => Promise<void> }) {
@@ -110,6 +113,35 @@ export default function ProfileForm({ profile, action }: { profile: Profile; act
           <div className="md:col-span-2">
             <label className="label">Default footer notes</label>
             <textarea name="notes" rows={2} className="input" defaultValue={profile.notes ?? ""} />
+          </div>
+          <div className="md:col-span-2 border-t pt-4 mt-2">
+            <div className="font-medium text-sm">Invoice emails (Resend)</div>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Lets this profile email invoices with the PDF attached. The address must be on a domain verified in
+              Resend, and the app needs <code>RESEND_API_KEY</code>. Replies go to the Email above.
+            </p>
+          </div>
+          <div>
+            <label className="label">Email from</label>
+            <input
+              name="emailFrom"
+              className="input"
+              placeholder="Grumpy Pixels <billing@grumpypixels.my>"
+              defaultValue={profile.emailFrom ?? ""}
+            />
+          </div>
+          <div>
+            <label className="label">CC every invoice email to <span className="text-gray-400 font-normal">(comma-separated)</span></label>
+            <input
+              name="emailCc"
+              className="input"
+              placeholder="you@example.com, partner@example.com"
+              defaultValue={profile.emailCc ?? ""}
+            />
+          </div>
+          <div>
+            <label className="label">BCC every invoice email to <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input name="emailBcc" className="input" placeholder="hello@grumpypixels.my" defaultValue={profile.emailBcc ?? ""} />
           </div>
           <label className="md:col-span-2 inline-flex items-center gap-2 text-sm">
             <input type="checkbox" name="isDefault" defaultChecked={profile.isDefault ?? false} />

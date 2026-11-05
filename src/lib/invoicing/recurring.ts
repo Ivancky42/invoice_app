@@ -8,10 +8,13 @@
  */
 import type { Prisma, RecurringInvoice } from "@/generated/prisma/client";
 import { nextDocumentNumber } from "@/lib/numbering";
+import { canEmailFrom, mergeEmailResults, sendPendingInvoiceEmails } from "@/lib/invoicing/email";
 import { prisma } from "@/lib/prisma";
 import { calcTotals, type DiscountType, type LineItem } from "@/lib/types";
 import {
   appUrl,
+  checkedAddresses,
+  companyForDocument,
   findDocumentRow,
   withFreshNumber,
   InvoicingError,
@@ -94,11 +97,29 @@ async function claimSourceInvoice(
  *   "Make recurring" flow in the app): it counts toward maxOccurrences and the first
  *   generated invoice is the first slot after it.
  */
+/** Reject an auto-email setup that would only fail at 06:00. */
+function assertEmailSetup(
+  autoEmail: boolean | undefined,
+  emailTo: string | null | undefined,
+  company: { name: string; emailFrom: string | null } | null,
+) {
+  if (emailTo) checkedAddresses(emailTo);
+  if (autoEmail && !canEmailFrom(company)) {
+    throw new InvoicingError(
+      "invalid",
+      company?.emailFrom
+        ? "Auto-email needs RESEND_API_KEY in the app's environment"
+        : `Auto-email needs "Email from" on the ${company?.name ?? "company"} profile (Settings)`,
+    );
+  }
+}
+
 export async function createRecurringInvoice(
   input: CreateRecurringInput,
   opts: { linkDocumentId?: string } = {},
 ) {
   const company = await resolveCompany(input);
+  assertEmailSetup(input.autoEmail, input.emailTo, company);
   const client = await resolveClient(input);
   // An explicit clientId may carry a custom bill-to name; a name match uses the saved spelling.
   const clientName =
@@ -154,6 +175,8 @@ export async function createRecurringInvoice(
         nextRunDate: state.nextRunDate,
         status: "ACTIVE",
         autoIssue: input.autoIssue ?? true,
+        autoEmail: input.autoEmail ?? false,
+        emailTo: input.emailTo?.trim() || null,
         dueInDays: input.dueInDays ?? null,
         companyId: company?.id ?? null,
         clientId: client?.id ?? null,
@@ -229,6 +252,7 @@ export async function createRecurringFromDocument(input: RecurringFromDocumentIn
     throw new InvoicingError("invalid", "This schedule has no billing dates left — check maxOccurrences / endDate");
   }
   const company = doc.companyId ? await prisma.companyProfile.findUnique({ where: { id: doc.companyId } }) : null;
+  assertEmailSetup(input.autoEmail, input.emailTo, await companyForDocument(doc));
 
   const schedule = await prisma.$transaction(async (tx) => {
     const s = await tx.recurringInvoice.create({
@@ -245,6 +269,8 @@ export async function createRecurringFromDocument(input: RecurringFromDocumentIn
         nextRunDate: state.nextRunDate,
         status: "ACTIVE",
         autoIssue: input.autoIssue ?? true,
+        autoEmail: input.autoEmail ?? false,
+        emailTo: input.emailTo?.trim() || null,
         dueInDays: input.dueInDays ?? null,
         companyId: doc.companyId,
         clientId: doc.clientId,
@@ -289,6 +315,14 @@ export async function updateRecurringInvoice(input: UpdateRecurringInput) {
   const data: Prisma.RecurringInvoiceUncheckedUpdateInput = {};
   if (input.name !== undefined) data.name = input.name.trim();
   if (input.autoIssue !== undefined) data.autoIssue = input.autoIssue;
+  if (input.autoEmail !== undefined) data.autoEmail = input.autoEmail;
+  if (input.emailTo !== undefined) data.emailTo = input.emailTo?.trim() || null;
+  {
+    // Validate against the company the schedule will bill from after this update.
+    const companyId = input.companyId || input.companyName ? (await resolveCompany(input))!.id : s.companyId;
+    const company = companyId ? await prisma.companyProfile.findUnique({ where: { id: companyId } }) : null;
+    assertEmailSetup(input.autoEmail ?? s.autoEmail, input.emailTo !== undefined ? input.emailTo : s.emailTo, company);
+  }
   if (input.dueInDays !== undefined) data.dueInDays = input.dueInDays;
   if (input.companyId || input.companyName) data.companyId = (await resolveCompany(input))!.id;
   if (input.clientId !== undefined) {
@@ -446,6 +480,8 @@ function summarizeSchedule(s: RecurringInvoice & { company?: { name: string; cur
     nextRunDate: s.nextRunDate ? formatDateOnly(s.nextRunDate) : null,
     lastRunDate: s.lastRunDate ? formatDateOnly(s.lastRunDate) : null,
     autoIssue: s.autoIssue,
+    autoEmail: s.autoEmail,
+    emailTo: s.emailTo,
     dueInDays: s.dueInDays,
     company: s.company?.name ?? null,
     companyId: s.companyId,
@@ -564,6 +600,8 @@ function buildInvoiceData(s: RecurringInvoice, runDate: Date, n: number) {
     terms: s.terms,
     recurringInvoiceId: s.id,
     recurringRunDate: runDate,
+    // Only issued invoices are emailed; a DRAFT waits for review.
+    emailPending: s.autoEmail && s.autoIssue,
   };
 }
 
@@ -571,7 +609,14 @@ function buildInvoiceData(s: RecurringInvoice, runDate: Date, n: number) {
 export async function generateForSchedule(
   scheduleId: string,
   today: Date = todayInTimeZone(),
-): Promise<{ generated: GeneratedInvoice[]; ended: boolean; error?: string }> {
+): Promise<{
+  generated: GeneratedInvoice[];
+  ended: boolean;
+  error?: string;
+  emails?: Awaited<ReturnType<typeof sendPendingInvoiceEmails>>;
+  /** Pending-email documents this call already tried; a later sweep in the same run skips them. */
+  emailed?: string[];
+}> {
   const generated: GeneratedInvoice[] = [];
   let ended = false;
   try {
@@ -636,13 +681,30 @@ export async function generateForSchedule(
         break;
       }
     }
-    return { generated, ended };
+    return { generated, ended, emails: await emailGenerated(generated, today), emailed: generated.map((g) => g.documentId) };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await prisma.recurringInvoice
       .update({ where: { id: scheduleId }, data: { lastError: message.slice(0, 1000) } })
       .catch(() => undefined);
-    return { generated, ended, error: message };
+    return {
+      generated,
+      ended,
+      error: message,
+      emails: await emailGenerated(generated, today),
+      emailed: generated.map((g) => g.documentId),
+    };
+  }
+}
+
+/** Email what a run just generated (only invoices marked emailPending). Never throws. */
+async function emailGenerated(generated: GeneratedInvoice[], today: Date) {
+  if (generated.length === 0) return undefined;
+  try {
+    return await sendPendingInvoiceEmails({ documentIds: generated.map((g) => g.documentId), today });
+  } catch (e) {
+    console.error("[recurring] emailing generated invoices failed", e);
+    return undefined;
   }
 }
 
@@ -661,11 +723,19 @@ export async function runDueRecurringInvoices(opts: { today?: Date; scheduleId?:
   const generated: GeneratedInvoice[] = [];
   const ended: string[] = [];
   const errors: { scheduleId: string; name: string; error: string }[] = [];
+  const generationEmails = [];
+  const tried: string[] = [];
   for (const s of due) {
     const r = await generateForSchedule(s.id, today);
     generated.push(...r.generated);
+    generationEmails.push(r.emails);
+    tried.push(...(r.emailed ?? []));
     if (r.ended) ended.push(s.id);
     if (r.error) errors.push({ scheduleId: s.id, name: s.name, error: r.error });
   }
-  return { today: formatDateOnly(today), schedulesDue: due.length, generated, ended, errors };
+  // Retry auto-emails that failed on an EARLIER run — never one just tried above (one attempt
+  // per invoice per run), and only this schedule's when running one schedule.
+  const retries = await sendPendingInvoiceEmails({ today, scheduleId: opts.scheduleId, skipDocumentIds: tried });
+  const emails = mergeEmailResults(...generationEmails, retries);
+  return { today: formatDateOnly(today), schedulesDue: due.length, generated, ended, errors, emails };
 }
