@@ -231,6 +231,7 @@ export async function sendInvoiceEmail(
       },
     });
 
+  let sent: { providerId: string; to: string[]; cc: string[]; bcc: string[]; subject: string };
   try {
     const company = await companyForDocument(doc);
     if (!company?.emailFrom) {
@@ -291,16 +292,7 @@ export async function sendInvoiceEmail(
       opts.idempotencyKey ?? `invoice/${doc.id}/${crypto.randomUUID()}`,
       opts.fetchImpl,
     );
-    await record("SENT", { providerId });
-    if (doc.emailPending) await prisma.document.update({ where: { id: doc.id }, data: { emailPending: false } });
-    // Sending a draft issues it (and fixes its due date from Net-N terms, like issuing by hand).
-    // Issued stays issued; paid stays paid.
-    let status = doc.status;
-    if (doc.status === "DRAFT") {
-      await setDocumentStatus(doc.id, "ISSUED");
-      status = "ISSUED";
-    }
-    return { sent: true as const, number: doc.number, status, to, cc, bcc, subject, providerId };
+    sent = { providerId, to, cc, bcc, subject };
   } catch (e) {
     const unknown = e instanceof ResendError && e.delivered === "unknown";
     const error = e instanceof Error ? e.message : String(e);
@@ -313,6 +305,32 @@ export async function sendInvoiceEmail(
         : `Email not sent: ${error}`,
     );
   }
+
+  // Resend accepted it: the email is out. Bookkeeping below must never turn that into a
+  // reported failure (or a FAILED row a retry would act on), so each step is best-effort.
+  const bestEffort = async (what: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (e) {
+      console.error(`[email] ${doc.number} was sent (${sent.providerId}) but ${what} failed`, e);
+    }
+  };
+  await bestEffort("recording it", () => record("SENT", { providerId: sent.providerId }));
+  if (doc.emailPending) {
+    await bestEffort("clearing emailPending", () =>
+      prisma.document.update({ where: { id: doc.id }, data: { emailPending: false } }),
+    );
+  }
+  // Sending a draft issues it (due date from Net-N terms, as when issuing by hand).
+  // Issued stays issued; paid stays paid.
+  let status = doc.status;
+  if (doc.status === "DRAFT") {
+    await bestEffort("issuing the draft", async () => {
+      await setDocumentStatus(doc.id, "ISSUED");
+      status = "ISSUED";
+    });
+  }
+  return { sent: true as const, number: doc.number, status, ...sent };
 }
 
 export type PendingEmailResult = {
@@ -350,12 +368,18 @@ export async function sendPendingInvoiceEmails(
     include: {
       recurringInvoice: { select: { id: true, emailTo: true, autoEmail: true } },
       emails: { where: { trigger: "recurring", status: "FAILED" }, orderBy: { createdAt: "desc" } },
+      _count: { select: { emails: { where: { trigger: "recurring", status: "SENT" } } } },
     },
     orderBy: { issueDate: "asc" },
   });
   const result: PendingEmailResult = { sent: [], failed: [], dropped: [] };
 
   for (const doc of pending) {
+    if (doc._count.emails > 0) {
+      // Already delivered (the flag just wasn't cleared): never send again.
+      await prisma.document.update({ where: { id: doc.id }, data: { emailPending: false } });
+      continue;
+    }
     // Anchor on the FIRST attempt whose delivery is unknown: Resend's dedupe for this key runs
     // 24h from that request, however many retries (or later clean refusals) followed it.
     const firstUnconfirmed = doc.emails.filter((e) => e.error?.startsWith(UNCONFIRMED)).at(-1);

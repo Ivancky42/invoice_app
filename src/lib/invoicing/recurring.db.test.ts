@@ -357,6 +357,28 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
       expect((await rec.getRecurringInvoice(s.id)).lastError).toMatch(/check Resend/);
     });
 
+    it("once Resend accepts, a bookkeeping failure is not reported as a failed send, and it's never re-sent", async () => {
+      const { sendInvoiceEmail, sendPendingInvoiceEmails } = await import("@/lib/invoicing/email");
+      const d = await docs.createDocument({ clientName: "Acme Sdn. Bhd.", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+      // Recording the SENT row fails once, right after Resend accepted the email.
+      const spy = vi
+        .spyOn(prisma.invoiceEmail, "create")
+        .mockImplementationOnce((() => Promise.reject(new Error("db blip"))) as never);
+      const r = await sendInvoiceEmail(d.id, { trigger: "app" });
+      spy.mockRestore();
+      expect(r.sent).toBe(true);
+      expect(r.status).toBe("ISSUED");
+      expect((await docs.getDocument(d.id)).emails).toHaveLength(0); // nothing claims it failed
+
+      // A pending invoice that already has a recorded successful send is cleared, not re-sent.
+      const { generatedNow } = await schedule();
+      const sentBefore = sends.length;
+      await prisma.document.update({ where: { id: generatedNow[0].documentId }, data: { emailPending: true } });
+      await sendPendingInvoiceEmails();
+      expect(sends.length).toBe(sentBefore);
+      expect((await docs.getDocument(generatedNow[0].documentId)).emailPending).toBe(false);
+    });
+
     it("the 24h window runs from the FIRST unconfirmed attempt, not the latest retry or refusal", async () => {
       hangNext = 1;
       const { generatedNow } = await schedule();
