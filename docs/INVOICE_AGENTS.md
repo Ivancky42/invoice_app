@@ -12,10 +12,10 @@ A shadow-only (`mcp:shadow`) connector is refused by every billing tool.
 | `get_invoice` | One document by id **or number** (`INV-2026-0007`): lines, totals, parent/children, schedule. |
 | `get_invoice_pdf` | The PDF as an embedded `application/pdf` resource **and** a signed download link (no PIN, 7 days by default, max 90). |
 | `get_billing_summary` | Per company: invoiced, collected, outstanding, overdue, drafts, open quotes; next recurring run. |
-| `get_billing_report` | Flat compact rows for dashboards: `view=documents` (with effective due date and days overdue) or `view=recurring` (with next run and amount per invoice); optional company-name and issue-date filters (max 5000 rows, `cut` flag). Feeds the billing dashboard artifact. |
+| `get_billing_report` | Flat compact rows for dashboards: `view=documents` (with effective due date, days overdue, paid date and days to pay, and email status: `SENT` / `FAILED` / `UNCONFIRMED` / `PENDING` / none, last emailed date, last error) or `view=recurring` (with next run and amount per invoice); optional company-name and issue-date filters (max 5000 rows, `cut` flag). Feeds the billing dashboard artifact. |
 | `create_invoice` | New invoice (default) / quotation / DO. Client autofill from saved clients; tax and notes from the company profile; Net-N → due date. |
 | `update_invoice` | Patch any field; `items` replaces the lines; totals recomputed. |
-| `set_invoice_status` | DRAFT / ISSUED / PAID / CANCELLED. Issuing derives a due date from Net-N terms if none. |
+| `set_invoice_status` | DRAFT / ISSUED / PAID / CANCELLED. Issuing derives a due date from Net-N terms if none. PAID records the paid date (`paidDate`, else today; kept while it stays paid; cleared if it leaves PAID). |
 | `convert_invoice` | Quotation → Invoice → Delivery Order (new DRAFT linked to its parent). |
 | `duplicate_invoice` | Copy as a new document, today's date. |
 | `delete_invoice` | Permanent; needs `confirm: true`. Prefer CANCELLED. |

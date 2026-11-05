@@ -10,6 +10,7 @@ import {
   setDocumentStatus,
   withFreshNumber,
 } from "@/lib/invoicing/documents";
+import { nextPaidAt, todayInTimeZone } from "@/lib/invoicing/schedule";
 import { createRecurringFromDocument } from "@/lib/invoicing/recurring";
 import { previewInvoiceEmail, sendInvoiceEmail } from "@/lib/invoicing/email";
 
@@ -80,7 +81,12 @@ export async function saveDocument(input: SaveInput): Promise<{ id: string; recu
   };
 
   if (input.id) {
-    const updated = await prisma.document.update({ where: { id: input.id }, data: base });
+    // Paid date follows the status: kept while PAID, today when it becomes PAID, else cleared.
+    const prev = await prisma.document.findUnique({ where: { id: input.id }, select: { status: true, paidAt: true } });
+    const updated = await prisma.document.update({
+      where: { id: input.id },
+      data: { ...base, paidAt: nextPaidAt(prev, input.status, todayInTimeZone()) },
+    });
     revalidatePath(`/documents/${updated.id}`);
     revalidatePath(`/documents`);
     return { id: updated.id };
@@ -89,7 +95,11 @@ export async function saveDocument(input: SaveInput): Promise<{ id: string; recu
   const created = await withFreshNumber(async () =>
     prisma.$transaction(async (tx) =>
       tx.document.create({
-        data: { ...base, number: await nextDocumentNumber(input.type, { db: tx, date: base.issueDate }) },
+        data: {
+          ...base,
+          paidAt: nextPaidAt(null, input.status, todayInTimeZone()),
+          number: await nextDocumentNumber(input.type, { db: tx, date: base.issueDate }),
+        },
       }),
     ),
   );
@@ -120,11 +130,24 @@ export async function deleteDocument(id: string) {
   revalidatePath("/documents");
 }
 
-export async function setStatus(id: string, status: string) {
-  if (!["DRAFT", "ISSUED", "PAID", "CANCELLED"].includes(status)) return;
-  // Shared with the MCP tool: issuing an invoice without a due date derives one from Net-N terms.
-  await setDocumentStatus(id, status as "DRAFT" | "ISSUED" | "PAID" | "CANCELLED");
+export async function setStatus(
+  id: string,
+  status: string,
+  paidDate?: string | null,
+): Promise<{ ok: boolean; message?: string }> {
+  if (!["DRAFT", "ISSUED", "PAID", "CANCELLED"].includes(status)) return { ok: false, message: "Unknown status" };
+  try {
+    // Shared with the MCP tool: issuing an invoice without a due date derives one from Net-N
+    // terms; marking it paid records the paid date (today unless one is given).
+    await setDocumentStatus(id, status as "DRAFT" | "ISSUED" | "PAID" | "CANCELLED", {
+      paidDate: status === "PAID" ? paidDate || null : null,
+    });
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
   revalidatePath(`/documents/${id}`);
+  revalidatePath("/documents");
+  return { ok: true };
 }
 
 export async function convertDocument(id: string): Promise<{ id: string } | null> {

@@ -26,6 +26,9 @@ export const documentFieldsSchema = z.object({
   type: z.enum(DOCUMENT_TYPES).optional().describe("Default INVOICE"),
   status: z.enum(DOCUMENT_STATUSES).optional().describe("Default DRAFT"),
   issueDate: dateString.optional().describe("Default: today (Asia/Kuala_Lumpur)"),
+  paidDate: dateString
+    .optional()
+    .describe("When status is PAID: the day it was paid (default: kept if already paid, else today). Not in the future"),
   dueDate: dateString
     .nullable()
     .optional()
@@ -95,6 +98,9 @@ export type ListDocumentsInput = z.infer<typeof listDocumentsSchema>;
 export const setStatusSchema = z.object({
   id: z.string().min(1).describe("Document id or number"),
   status: z.enum(DOCUMENT_STATUSES),
+  paidDate: dateString
+    .optional()
+    .describe("With status PAID: the day it was paid (default: kept if already paid, else today). Not in the future"),
 });
 
 export const duplicateDocumentSchema = z.object({

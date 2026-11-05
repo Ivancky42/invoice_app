@@ -599,6 +599,72 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
     expect((await billingReport({ view: "recurring", companies: ["Other Co"] })).rows).toHaveLength(0);
   });
 
+  it("records the paid date as status changes, and the report gives days to pay and email status", async () => {
+    const inv = await docs.createDocument({
+      status: "ISSUED",
+      issueDate: iso(sched.addDays(today, -20)),
+      clientName: "Acme Sdn. Bhd.",
+      items: [{ description: "Work", quantity: 1, unitPrice: 100 }],
+    });
+    expect(inv.paidDate).toBeNull();
+
+    // Marking it paid records today; a given date wins; a future one is refused.
+    expect((await docs.setDocumentStatus(inv.id, "PAID")).paidDate).toBe(iso(today));
+    expect((await docs.setDocumentStatus(inv.id, "PAID", { paidDate: iso(sched.addDays(today, -5)) })).paidDate).toBe(
+      iso(sched.addDays(today, -5)),
+    );
+    await expect(docs.setDocumentStatus(inv.id, "PAID", { paidDate: iso(sched.addDays(today, 1)) })).rejects.toThrow(
+      /future/,
+    );
+    await expect(docs.setDocumentStatus(inv.id, "ISSUED", { paidDate: iso(today) })).rejects.toThrow(/PAID/);
+    // Editing a paid invoice keeps its date; re-marking it paid without a date keeps it too.
+    expect((await docs.updateDocument({ id: inv.id, notes: "thanks" })).paidDate).toBe(iso(sched.addDays(today, -5)));
+    expect((await docs.setDocumentStatus(inv.id, "PAID")).paidDate).toBe(iso(sched.addDays(today, -5)));
+
+    const { billingReport } = await import("@/lib/invoicing/report");
+    const docRow = (rows: object[], number: string) =>
+      (rows as Record<string, unknown>[]).find((r) => r.number === number)!;
+    let row = docRow((await billingReport({ view: "documents" })).rows, inv.number);
+    expect(row).toMatchObject({ status: "PAID", paid_date: iso(sched.addDays(today, -5)), days_to_pay: 15, email_status: null });
+
+    // Paid before dates were recorded (null): edits and re-marking keep it undated; a date sets it.
+    await prisma.document.update({ where: { id: inv.id }, data: { paidAt: null } });
+    expect((await docs.updateDocument({ id: inv.id, notes: "edited" })).paidDate).toBeNull();
+    expect((await docs.setDocumentStatus(inv.id, "PAID")).paidDate).toBeNull();
+    expect((await docs.setDocumentStatus(inv.id, "PAID", { paidDate: iso(sched.addDays(today, -5)) })).paidDate).toBe(
+      iso(sched.addDays(today, -5)),
+    );
+
+    // Back to issued clears it; created paid (agent) defaults to today or takes paidDate.
+    expect((await docs.setDocumentStatus(inv.id, "ISSUED")).paidDate).toBeNull();
+    const paid = await docs.createDocument({
+      status: "PAID",
+      issueDate: iso(sched.addDays(today, -3)),
+      paidDate: iso(sched.addDays(today, -1)),
+      clientName: "Acme Sdn. Bhd.",
+      items: [{ description: "Work", quantity: 1, unitPrice: 100 }],
+    });
+    expect(paid.paidDate).toBe(iso(sched.addDays(today, -1)));
+    expect((await docs.updateDocument({ id: paid.id, status: "ISSUED" })).paidDate).toBeNull();
+
+    // Email status follows the latest attempt; emailed_at is the last successful send.
+    const at = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000);
+    await prisma.invoiceEmail.createMany({
+      data: [
+        { documentId: inv.id, status: "SENT", trigger: "app", to: "a@acme.test", subject: "s", providerId: "p1", createdAt: at(2) },
+        { documentId: inv.id, status: "FAILED", trigger: "app", to: "a@acme.test", subject: "s", error: "Resend 403: domain not verified", createdAt: at(1) },
+      ],
+    });
+    row = docRow((await billingReport({ view: "documents" })).rows, inv.number);
+    expect(row).toMatchObject({
+      paid_date: null,
+      days_to_pay: null,
+      email_status: "FAILED",
+      emailed_at: iso(sched.todayInTimeZone(at(2))),
+      email_error: "Resend 403: domain not verified",
+    });
+  });
+
   it("document lifecycle: status, overdue, convert, duplicate, delete, summary", async () => {
     const q = await docs.createDocument({
       type: "QUOTATION",
