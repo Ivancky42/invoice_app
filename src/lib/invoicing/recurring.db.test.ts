@@ -189,6 +189,41 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
     expect(sched.parseDateOnly(schedule.nextRunDate!) > today).toBe(true);
   });
 
+  it("the app's Make recurring flow (linked invoice, past start) bills the passed slot instead of skipping it", async () => {
+    const issue = sched.addDays(today, -40);
+    const src = await docs.createDocument({
+      type: "INVOICE",
+      status: "ISSUED",
+      issueDate: iso(issue),
+      clientName: "Walk-in",
+      items: [{ description: "Retainer", quantity: 1, unitPrice: 100 }],
+    });
+    const shape = { frequency: "MONTHLY" as const, interval: 1, dayOfMonth: issue.getUTCDate(), startDate: issue };
+    const second = sched.nextOccurrenceAfter(shape, issue);
+    const { schedule, generatedNow } = await rec.createRecurringInvoice(
+      {
+        name: "From UI",
+        startDate: iso(second),
+        dayOfMonth: issue.getUTCDate(),
+        maxOccurrences: 6,
+        clientName: "Walk-in",
+        items: [{ description: "Retainer {{period}}", quantity: 1, unitPrice: 100 }],
+      },
+      { linkDocumentId: src.id },
+    );
+    expect(generatedNow.map((g) => g.runDate)).toEqual([iso(second)]);
+    expect(schedule.occurrencesGenerated).toBe(2);
+  });
+
+  it("billing summary counts only the requested company's recurring schedules", async () => {
+    const other = await prisma.companyProfile.create({ data: { name: "Other Co", address: "x", currency: "USD" } });
+    await rec.createRecurringInvoice({ name: "Mine", startDate: iso(sched.addDays(today, 9)), clientName: "A", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+    await rec.createRecurringInvoice({ name: "Theirs", companyId: other.id, startDate: iso(sched.addDays(today, 2)), clientName: "B", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+    const mine = await docs.billingSummary({ companyId: companyId });
+    expect(mine.recurring).toMatchObject({ activeSchedules: 1, next: { name: "Mine" } });
+    expect((await docs.billingSummary({})).recurring.activeSchedules).toBe(2);
+  });
+
   it("concurrent creates never collide on a document number", async () => {
     const made = await Promise.all(
       Array.from({ length: 6 }, (_, i) =>

@@ -98,7 +98,10 @@ export default function RecurringForm({
         maxOccurrences: endMode === "count" ? f.maxOccurrences : null,
       };
       const today = todayInTimeZone(new Date(), "Asia/Kuala_Lumpur");
-      const from = shape.startDate < today ? today : shape.startDate;
+      // A series continued from a linked invoice bills passed slots on save; otherwise
+      // dates before today are skipped.
+      const continuing = mode === "create" && Boolean(linkDocument) && linkAsFirst;
+      const from = continuing || shape.startDate >= today ? shape.startDate : today;
       const dates = previewOccurrences(shape, from, already, 4);
       return dates.map((d, i) => ({
         date: formatDateOnly(d),
@@ -115,7 +118,7 @@ export default function RecurringForm({
     } catch {
       return [];
     }
-  }, [f, endMode, already]);
+  }, [f, endMode, already, mode, linkDocument, linkAsFirst]);
 
   function selectClient(id: string) {
     const c = clients.find((x) => x.id === id);
@@ -284,7 +287,10 @@ export default function RecurringForm({
         </div>
         <div className="text-sm bg-gray-50 rounded-md p-3">
           <div className="text-gray-500 mb-1">
-            Next invoices (generated ~06:00 Malaysia time on each date{already ? `; ${already} already in the series` : ""}):
+            Next invoices (generated ~06:00 Malaysia time on each date{already ? `; ${already} already in the series` : ""}
+            {preview.some((p) => p.date < formatDateOnly(todayInTimeZone(new Date(), "Asia/Kuala_Lumpur")))
+              ? "; dates already passed are billed as soon as you save"
+              : ""}):
           </div>
           {preview.length === 0 ? (
             <div className="text-gray-500">No dates — check the start and end settings.</div>

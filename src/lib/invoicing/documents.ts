@@ -592,9 +592,15 @@ export async function billingSummary(input: { companyId?: string; issuedFrom?: s
     openQuotes: money(b.openQuotes),
   }));
   const [activeSchedules, nextScheduled] = await Promise.all([
-    prisma.recurringInvoice.count({ where: { status: "ACTIVE" } }),
+    prisma.recurringInvoice.count({
+      where: { status: "ACTIVE", ...(input.companyId ? { companyId: input.companyId } : {}) },
+    }),
     prisma.recurringInvoice.findFirst({
-      where: { status: "ACTIVE", nextRunDate: { not: null } },
+      where: {
+        status: "ACTIVE",
+        nextRunDate: { not: null },
+        ...(input.companyId ? { companyId: input.companyId } : {}),
+      },
       orderBy: { nextRunDate: "asc" },
       select: { id: true, name: true, nextRunDate: true },
     }),

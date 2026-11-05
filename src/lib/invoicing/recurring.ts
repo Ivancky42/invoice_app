@@ -126,7 +126,9 @@ export async function createRecurringInvoice(
     throw new InvoicingError("conflict", `${linked.number} already belongs to a recurring schedule`);
   }
   const already = linked ? 1 : 0;
-  let firstFrom = input.backfill || startDate >= today ? startDate : today;
+  // Adopting an invoice as #1 continues its series, so a past slot is billed now (as
+  // createRecurringFromDocument does) rather than skipped while the invoice still counts.
+  let firstFrom = input.backfill || linked || startDate >= today ? startDate : today;
   if (linked && firstFrom <= toDateOnly(linked.issueDate)) firstFrom = addDays(linked.issueDate, 1);
   const state = nextState(shape, firstFrom, already);
   if (!state.nextRunDate) {

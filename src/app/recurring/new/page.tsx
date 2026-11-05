@@ -45,7 +45,9 @@ export default async function NewRecurringPage({ searchParams }: { searchParams:
       frequency: "MONTHLY",
       interval: 1,
       dayOfMonth: day,
-      startDate: formatDateOnly(next < today ? today : next),
+      // The next slot after the source invoice, even if it has passed: with the invoice
+      // counted as #1 the series continues, and a passed slot is billed on save.
+      startDate: formatDateOnly(next),
       endDate: null,
       maxOccurrences: null,
       autoIssue: true,
