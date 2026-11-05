@@ -18,7 +18,12 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
   const { id } = await params;
   const doc = await prisma.document.findUnique({
     where: { id },
-    include: { parent: true, children: true, company: true },
+    include: {
+      parent: true,
+      children: true,
+      company: true,
+      recurringInvoice: { select: { id: true, name: true, status: true, nextRunDate: true } },
+    },
   });
   if (!doc) return notFound();
   const items = (doc.items as unknown as LineItem[]) ?? [];
@@ -56,6 +61,14 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
                 ← from {doc.parent.number}
               </Link>
             )}
+            {doc.recurringInvoice && (
+              <Link href={`/recurring/${doc.recurringInvoice.id}`} className="text-sm text-blue-600 hover:underline">
+                ↻ {doc.recurringInvoice.name}
+                {doc.recurringInvoice.status === "ACTIVE" && doc.recurringInvoice.nextRunDate
+                  ? ` · next ${doc.recurringInvoice.nextRunDate.toISOString().slice(0, 10)}`
+                  : ` · ${doc.recurringInvoice.status.toLowerCase()}`}
+              </Link>
+            )}
           </div>
         </div>
 
@@ -63,6 +76,9 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
           <a className="btn" href={`/api/pdf/${doc.id}`} target="_blank" rel="noopener">View PDF</a>
           <a className="btn btn-primary" href={`/api/pdf/${doc.id}?download=1`}>Download PDF</a>
           <Link className="btn" href={`/documents/${doc.id}/edit`}>Edit</Link>
+          {doc.type === "INVOICE" && !doc.recurringInvoice && (
+            <Link className="btn" href={`/recurring/new?from=${doc.id}`}>Make recurring</Link>
+          )}
           {next && (
             <form action={doConvert}>
               <button className="btn">Convert → {DOC_LABELS[next]}</button>

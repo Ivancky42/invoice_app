@@ -1,28 +1,28 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { renderDocPDF } from "@/lib/pdf";
+import { renderDocumentPdf } from "@/lib/invoicing/pdfRender";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * Inline view, or `?download=1` for an attachment. Reached either behind the PIN gate
+ * (cookie) or with a signed `exp`/`sig` link that src/proxy.ts has already verified.
+ */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const doc = await prisma.document.findUnique({ where: { id }, include: { company: true } });
-  if (!doc) return new Response("Not found", { status: 404 });
+  const rendered = await renderDocumentPdf(id);
+  if (!rendered) return new Response("Not found", { status: 404 });
 
-  const company = doc.company ?? (await prisma.companyProfile.findFirst({ where: { isDefault: true } })) ?? (await prisma.companyProfile.findFirst());
+  const download = req.nextUrl.searchParams.get("download");
+  const disposition = `${download ? "attachment" : "inline"}; filename="${rendered.number}.pdf"`;
 
-  const pdf = await renderDocPDF(doc as any, company as any);
-  const url = new URL(req.url);
-  const download = url.searchParams.get("download");
-  const disposition = `${download ? "attachment" : "inline"}; filename="${doc.number}.pdf"`;
-
-  return new Response(new Uint8Array(pdf), {
+  return new Response(new Uint8Array(rendered.pdf), {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": disposition,
       "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex",
     },
   });
 }

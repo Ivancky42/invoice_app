@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAgentMcpTools } from "@/lib/agent/mcp-tools";
+import { INVOICE_TOOL_NAMES, registerInvoiceMcpTools } from "@/lib/agent/mcp-invoice-tools";
 
 /**
  * Checked-in snapshot of every MCP tool exposed to routines.
@@ -47,6 +48,28 @@ const EXPECTED_TOOL_NAMES = [
   "upsert_report",
   "upsert_trend",
   "upsert_watchlist",
+  // Invoicing (src/lib/agent/mcp-invoice-tools.ts) — mcp:tools scope only.
+  "convert_invoice",
+  "create_invoice",
+  "create_recurring_from_invoice",
+  "create_recurring_invoice",
+  "delete_invoice",
+  "delete_recurring_invoice",
+  "duplicate_invoice",
+  "get_billing_summary",
+  "get_invoice",
+  "get_invoice_pdf",
+  "get_recurring_invoice",
+  "list_company_profiles",
+  "list_invoice_clients",
+  "list_invoices",
+  "list_recurring_invoices",
+  "run_recurring_invoices",
+  "set_invoice_status",
+  "update_invoice",
+  "update_recurring_invoice",
+  "upsert_company_profile",
+  "upsert_invoice_client",
 ];
 
 function collectToolNames(): string[] {
@@ -87,5 +110,47 @@ describe("MCP tool surface", () => {
   it("registers each tool exactly once", () => {
     const names = collectToolNames();
     expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+describe("invoice MCP tools", () => {
+  type Handler = (args: unknown, extra: unknown) => Promise<{ isError?: boolean; content: { text?: string }[] }>;
+  type Config = { annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } };
+
+  function collect() {
+    const tools = new Map<string, { config: Config; handler: Handler }>();
+    const stub = {
+      registerTool(name: string, config: Config, handler: Handler) {
+        tools.set(name, { config, handler });
+      },
+    } as unknown as McpServer;
+    registerInvoiceMcpTools(stub);
+    return tools;
+  }
+
+  it("exports a name list matching what it registers", () => {
+    expect([...collect().keys()].sort()).toEqual([...INVOICE_TOOL_NAMES].sort());
+  });
+
+  it("refuses every invoice tool on a shadow-only connector before touching the database", async () => {
+    for (const [name, { handler }] of collect()) {
+      const res = await handler({}, { authInfo: { scopes: ["mcp:shadow"] } });
+      expect(res.isError, name).toBe(true);
+      expect(res.content[0].text, name).toContain("invoice_scope_forbidden");
+    }
+  });
+
+  it("marks deletes destructive and reads read-only", () => {
+    const tools = collect();
+    for (const [name, { config }] of tools) {
+      if (name.startsWith("delete_")) expect(config.annotations?.destructiveHint, name).toBe(true);
+      if (/^(list|get)_/.test(name)) expect(config.annotations?.readOnlyHint, name).toBe(true);
+      else expect(config.annotations?.readOnlyHint, name).toBe(false);
+    }
+  });
+
+  it("requires confirm=true to delete", async () => {
+    const res = await collect().get("delete_invoice")!.handler({ id: "INV-1" }, { authInfo: { scopes: ["mcp:tools"] } });
+    expect(res.isError).toBe(true);
   });
 });

@@ -13,6 +13,7 @@ import { runCounterfactuals } from "@/lib/fitness/counterfactuals";
 import { runFitnessSnapshot } from "@/lib/fitness/snapshot";
 import { runEvolutionEvaluate } from "@/lib/evolution/evaluate";
 import { runRuleScoring } from "@/lib/evolution/scoring";
+import { runDueRecurringInvoices } from "@/lib/invoicing/recurring";
 import { runDecisionReturns } from "@/lib/shadow/decisionReturns";
 import { runShadowEnqueue } from "@/lib/shadow/enqueue";
 import { runShadowFill } from "@/lib/shadow/fill";
@@ -45,6 +46,7 @@ export type CronJob = {
   run(ctx: JobContext): Promise<JobResult>;
 };
 
+export const RECURRING_INVOICES_JOB = "recurring_invoices";
 export const PRICE_SYNC_JOB = "price_sync";
 export const PORTFOLIO_SNAPSHOT_JOB = "portfolio_snapshot";
 export const PRICE_HISTORY_JOB = "price_history";
@@ -63,6 +65,35 @@ export const RULE_SCORING_JOB = "rule_scoring";
  * order, `dependsOn` is the hard gate.
  */
 export const CRON_JOBS: CronJob[] = [
+  // Billing runs first and depends on nothing, so a stock-data outage or a long shadow
+  // tick can never delay an invoice. The tick fires 22:00 UTC = 06:00 Asia/Kuala_Lumpur,
+  // and "today" is judged in BILLING_TIMEZONE, so a schedule dated the 5th bills at
+  // ~06:00 on the 5th. Idempotent: a re-run or a forced tick never bills a date twice.
+  {
+    job: RECURRING_INVOICES_JOB,
+    cadence: "daily",
+    dependsOn: [],
+    async run() {
+      const result = await runDueRecurringInvoices();
+      const detail = {
+        today: result.today,
+        schedulesDue: result.schedulesDue,
+        generated: result.generated.map((g) => ({ schedule: g.scheduleName, number: g.number, runDate: g.runDate })),
+        ended: result.ended,
+        errors: result.errors,
+      };
+      if (result.errors.length > 0) {
+        // Other schedules already billed; FAILED surfaces the error in the ledger.
+        throw new Error(
+          `recurring_invoices: ${result.errors.length} schedule(s) failed — ${result.errors
+            .map((e) => `${e.name}: ${e.error}`)
+            .join("; ")
+            .slice(0, 800)}`,
+        );
+      }
+      return { done: true, detail: detail as unknown as Prisma.InputJsonValue };
+    },
+  },
   {
     job: PRICE_SYNC_JOB,
     cadence: "daily",

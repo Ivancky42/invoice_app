@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { calcTotals, NEXT_STAGE, DiscountType } from "@/lib/types";
 import { nextDocumentNumber } from "@/lib/numbering";
+import { setDocumentStatus } from "@/lib/invoicing/documents";
+import { createRecurringFromDocument } from "@/lib/invoicing/recurring";
 
 type SaveInput = {
   id?: string;
@@ -29,6 +31,13 @@ type SaveInput = {
   paymentTerms?: string;
   notes?: string;
   terms?: string;
+  /** New invoices only: bill this invoice again automatically. It counts as #1 of the series. */
+  repeat?: {
+    frequency: "WEEKLY" | "MONTHLY" | "QUARTERLY" | "YEARLY";
+    interval: number;
+    /** Total invoices including this one; null = indefinite. */
+    totalInvoices: number | null;
+  } | null;
 };
 
 export async function saveDocument(input: SaveInput): Promise<{ id: string }> {
@@ -71,8 +80,19 @@ export async function saveDocument(input: SaveInput): Promise<{ id: string }> {
     return { id: updated.id };
   }
 
-  const number = await nextDocumentNumber(input.type);
+  const number = await nextDocumentNumber(input.type, { date: base.issueDate });
   const created = await prisma.document.create({ data: { ...base, number } });
+  if (input.repeat && input.type === "INVOICE") {
+    await createRecurringFromDocument({
+      documentId: created.id,
+      frequency: input.repeat.frequency,
+      interval: Math.max(1, input.repeat.interval || 1),
+      maxOccurrences: input.repeat.totalInvoices,
+      countTemplateAsFirst: true,
+      autoIssue: true,
+    });
+    revalidatePath("/recurring");
+  }
   revalidatePath(`/documents`);
   return { id: created.id };
 }
@@ -83,7 +103,9 @@ export async function deleteDocument(id: string) {
 }
 
 export async function setStatus(id: string, status: string) {
-  await prisma.document.update({ where: { id }, data: { status: status as any } });
+  if (!["DRAFT", "ISSUED", "PAID", "CANCELLED"].includes(status)) return;
+  // Shared with the MCP tool: issuing an invoice without a due date derives one from Net-N terms.
+  await setDocumentStatus(id, status as "DRAFT" | "ISSUED" | "PAID" | "CANCELLED");
   revalidatePath(`/documents/${id}`);
 }
 

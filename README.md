@@ -2,7 +2,7 @@
 
 Personal Next.js dashboard hosting two apps behind a single PIN gate:
 
-- **Invoices** — Quotation → Invoice → Delivery Order lifecycle with PDF export.
+- **Invoices** — Quotation → Invoice → Delivery Order lifecycle with PDF export, recurring invoices (auto-generated daily ~06:00 MYT), and full agent control over MCP. See [docs/INVOICE_AGENTS.md](docs/INVOICE_AGENTS.md).
 - **Stocks** — Neon is the book of record. Agents read/write via `/api/agent/*` and MCP (`/api/mcp/mcp`). A daily Vercel cron refreshes Finnhub/EODHD prices into Neon (`/api/sync/prices`). Notion sync is legacy/frozen (Phase 5). See [docs/STOCK_HQ_AGENTS.md](docs/STOCK_HQ_AGENTS.md).
 
 ## Stack
@@ -54,6 +54,11 @@ Each document is one of: `QUOTATION`, `INVOICE`, `DELIVERY_ORDER`. From a docume
 
 - Inline view: `/api/pdf/<id>`
 - Download: `/api/pdf/<id>?download=1`
+- Signed link (no PIN, expiring): minted by the `get_invoice_pdf` MCP tool.
+
+## Recurring invoices
+
+Invoices ▸ **Recurring**, **Make recurring** on an invoice, or **Bill this automatically** on a new invoice. A schedule bills every N weeks/months/quarters/years on a set day, for N invoices, until a date, or indefinitely. The `recurring_invoices` job runs first in the daily `/api/cron/tick` (22:00 UTC = 06:00 Asia/Kuala_Lumpur) and catches up missed days without ever billing a date twice. Agent tools and details: [docs/INVOICE_AGENTS.md](docs/INVOICE_AGENTS.md).
 
 The PDF reads the latest company settings + logo each time, so changes to your branding are reflected automatically when you re-export.
 
