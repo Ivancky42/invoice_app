@@ -42,6 +42,7 @@ import {
   recurringFromDocumentSchema,
   recurringRefSchema,
   runRecurringSchema,
+  previewInvoiceEmailSchema,
   sendInvoiceEmailSchema,
   setStatusSchema,
   updateDocumentSchema,
@@ -49,7 +50,7 @@ import {
   upsertClientSchema,
   upsertCompanySchema,
 } from "@/lib/invoicing/inputs";
-import { sendInvoiceEmail } from "@/lib/invoicing/email";
+import { previewInvoiceEmail, sendInvoiceEmail } from "@/lib/invoicing/email";
 import { signPdfPath } from "@/lib/invoicing/pdfLink";
 import { renderDocumentPdf } from "@/lib/invoicing/pdfRender";
 import {
@@ -320,11 +321,20 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     run: (input) => upsertCompany(input),
   });
 
+  register(server, "preview_invoice_email", {
+    title: "Preview invoice email",
+    kind: "read",
+    description:
+      "Show exactly what send_invoice_email would send — from, reply-to, to, cc, bcc, subject, plain-text and HTML body, attachment name — without sending or recording anything. Takes the same id/to/cc/message. Use it to show the user the email before they approve sending it.",
+    schema: previewInvoiceEmailSchema,
+    run: ({ id, to, cc, message }) => previewInvoiceEmail(id, { to, cc, message }),
+  });
+
   register(server, "send_invoice_email", {
     title: "Email invoice to client",
     kind: "write",
     description:
-      "Email a document (invoice, quotation or DO) to the client through Resend with its PDF attached, from the company profile's emailFrom; replies go to the profile's email and emailBcc gets a hidden copy. Default recipients: the client's invoiceEmailTo (else the document's client email) and invoiceEmailCc; the company profile's emailCc is always added. Emailing a DRAFT marks it ISSUED (due date from its terms) once sent; CANCELLED documents can't be emailed. This contacts the client immediately and can't be undone — only call it when the user has asked for this specific email to be sent (confirm=true). Every attempt is recorded and shown by get_invoice.",
+      "Email a document (invoice, quotation or DO) to the client through Resend with its PDF attached, from the company profile's emailFrom; replies go to the profile's email and emailBcc gets a hidden copy. Default recipients: the client's invoiceEmailTo (else the document's client email) and invoiceEmailCc; the company profile's emailCc is always added. Emailing a DRAFT marks it ISSUED (due date from its terms) once sent; CANCELLED documents can't be emailed. This contacts the client immediately and can't be undone — only call it when the user has asked for this specific email to be sent (confirm=true); preview_invoice_email shows it first. Every attempt is recorded and shown by get_invoice.",
     schema: sendInvoiceEmailSchema,
     run: ({ id, to, cc, message }) => sendInvoiceEmail(id, { to, cc, message, trigger: "agent" }),
   });
@@ -411,6 +421,7 @@ export const INVOICE_TOOL_NAMES = [
   "list_invoice_clients",
   "list_invoices",
   "list_recurring_invoices",
+  "preview_invoice_email",
   "run_recurring_invoices",
   "send_invoice_email",
   "set_invoice_status",

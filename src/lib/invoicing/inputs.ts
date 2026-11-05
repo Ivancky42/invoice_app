@@ -302,3 +302,5 @@ export const sendInvoiceEmailSchema = z.object({
   message: z.string().max(5000).optional().describe("Optional note placed above the invoice summary"),
   confirm: z.literal(true).describe("Must be true — this emails the client immediately and can't be unsent"),
 });
+
+export const previewInvoiceEmailSchema = sendInvoiceEmailSchema.omit({ confirm: true });

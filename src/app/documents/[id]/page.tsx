@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { DOC_LABELS, NEXT_STAGE, formatMoney, LineItem } from "@/lib/types";
 import DocStatusForm from "../DocStatusForm";
-import { convertDocument, deleteDocument, emailDocument, setStatus } from "../actions";
+import { convertDocument, deleteDocument, emailDocument, previewDocumentEmail, setStatus } from "../actions";
 import EmailInvoiceForm from "../EmailInvoiceForm";
 import { canEmailFrom, resendConfigured } from "@/lib/invoicing/email";
 import { companyForDocument } from "@/lib/invoicing/documents";
@@ -91,7 +91,7 @@ export default async function DocDetail({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-start gap-2">
           <a className="btn" href={`/api/pdf/${doc.id}`} target="_blank" rel="noopener">View PDF</a>
           <a className="btn btn-primary" href={`/api/pdf/${doc.id}?download=1`}>Download PDF</a>
           <Link className="btn" href={`/documents/${doc.id}/edit`}>Edit</Link>
@@ -119,6 +119,7 @@ export default async function DocDetail({
                   ? `Set "Email from" on the ${sender?.name ?? "company"} profile in Settings`
                   : "Cancelled documents can't be emailed"
             }
+            preview={previewDocumentEmail}
             action={emailDocument}
           />
           <form action={doDelete}>

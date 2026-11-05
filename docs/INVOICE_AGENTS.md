@@ -19,6 +19,7 @@ A shadow-only (`mcp:shadow`) connector is refused by every billing tool.
 | `convert_invoice` | Quotation → Invoice → Delivery Order (new DRAFT linked to its parent). |
 | `duplicate_invoice` | Copy as a new document, today's date. |
 | `delete_invoice` | Permanent; needs `confirm: true`. Prefer CANCELLED. |
+| `preview_invoice_email` | Exactly what `send_invoice_email` would send (from, to, cc, bcc, subject, body, attachment) — sends nothing. |
 | `send_invoice_email` | Email a document to the client via Resend with its PDF attached (needs `confirm: true`; only when the user asks for that email). Default recipient: the client email. |
 | `list_invoice_clients` / `upsert_invoice_client` | Saved bill-to clients. |
 | `list_company_profiles` / `upsert_company_profile` | Billing entities (bank details, currency, tax, default). Logos stay in Settings. |

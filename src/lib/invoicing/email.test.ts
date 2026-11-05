@@ -28,6 +28,13 @@ describe("composeInvoiceEmail", () => {
     expect(e.html).toContain("Bank: AmBank<br>Account: 123");
   });
 
+  it("ends with a small system-generated note pointing replies at the company email", () => {
+    const e = composeInvoiceEmail(base);
+    expect(e.text).toMatch(/--\nThis is a system-generated email from Grumpy Pixels\. If you have any questions, reply to this email or write to [^\s]+@[^\s]+\.$/);
+    expect(e.html).toContain("font-size:11px");
+    expect(e.html).toContain("This is a system-generated email from Grumpy Pixels.");
+  });
+
   it("escapes client-controlled text in the HTML", () => {
     const e = composeInvoiceEmail({ ...base, clientName: '<img src=x onerror="x">', message: "Hi & <b>thanks</b>" });
     expect(e.html).not.toContain("<img");

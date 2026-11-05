@@ -506,9 +506,26 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
 
       const d = await docs.createDocument({ status: "ISSUED", clientName: "Acme Sdn. Bhd.", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
       expect(d.clientEmail).toBe("ap@acme.test"); // the printed bill-to email is unchanged
-      await sendInvoiceEmail(d.id, { trigger: "app" });
-      expect(sends.at(-1)!.body.to).toEqual(["xinjie@acme.test"]);
-      expect(sends.at(-1)!.body.cc).toEqual(expectedCc);
+
+      // The confirmation dialog's preview is exactly what the send then posts to Resend.
+      const { previewInvoiceEmail } = await import("@/lib/invoicing/email");
+      const before = await prisma.invoiceEmail.count({ where: { documentId: d.id } });
+      const preview = await previewInvoiceEmail(d.id, { message: "Hi Xinjie" });
+      expect(await prisma.invoiceEmail.count({ where: { documentId: d.id } })).toBe(before); // nothing recorded
+      const sendsBefore = sends.length;
+
+      await sendInvoiceEmail(d.id, { trigger: "app", message: "Hi Xinjie" });
+      expect(sends.length).toBe(sendsBefore + 1);
+      const sent = sends.at(-1)!.body;
+      expect(sent.to).toEqual(["xinjie@acme.test"]);
+      expect(sent.cc).toEqual(expectedCc);
+      expect(preview.to).toEqual(sent.to);
+      expect(preview.cc).toEqual(sent.cc);
+      expect(preview.bcc).toEqual(sent.bcc ?? []);
+      expect(preview.from).toBe(sent.from);
+      expect(preview.subject).toBe(sent.subject);
+      expect(preview.html).toBe(sent.html);
+      expect(preview.attachment).toBe(sent.attachments[0].filename);
 
       // Auto-email from a schedule without its own "send to" uses the same recipients.
       await schedule();
