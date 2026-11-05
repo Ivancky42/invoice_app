@@ -27,7 +27,7 @@ import {
 } from "@/lib/invoicing/documents";
 import { parseAddressList } from "@/lib/invoicing/emailAddress";
 import { renderDocumentPdf } from "@/lib/invoicing/pdfRender";
-import { addDays, effectiveDueDate, formatDateOnly, todayInTimeZone } from "@/lib/invoicing/schedule";
+import { addDays, effectiveDueDate, formatDateOnly, quoteValidUntil, todayInTimeZone } from "@/lib/invoicing/schedule";
 
 export { parseAddressList };
 
@@ -103,6 +103,7 @@ export function composeInvoiceEmail(d: ComposeInput) {
   const isInvoice = d.type === "INVOICE";
   const paid = isInvoice && d.status === "PAID";
   const due = isInvoice && !paid ? effectiveDueDate(d) : null;
+  const validUntil = d.type === "QUOTATION" ? quoteValidUntil(d) : null;
   const amount = formatMoney(d.total, d.currency);
   const subject = `${label} ${d.number} from ${d.companyName}${d.projectTitle ? ` – ${d.projectTitle}` : ""}`;
   const firstLine = d.items[0]?.description;
@@ -111,6 +112,7 @@ export function composeInvoiceEmail(d: ComposeInput) {
     [label, d.number],
     ["Date", longDate(d.issueDate)],
     ...(due ? ([["Due", longDate(due)]] as [string, string][]) : []),
+    ...(validUntil ? ([["Valid until", longDate(validUntil)]] as [string, string][]) : []),
     ["Amount", amount],
     ...(paid ? ([["Status", "Paid"]] as [string, string][]) : []),
     ...(firstLine ? ([["For", firstLine]] as [string, string][]) : []),
@@ -120,7 +122,7 @@ export function composeInvoiceEmail(d: ComposeInput) {
     ? `Here is a copy of invoice ${d.number} for ${amount}, which has been paid. Thank you!`
     : isInvoice
       ? `Please find attached invoice ${d.number} for ${amount}${due ? `, due ${longDate(due)}` : ""}.`
-      : `Please find attached ${label.toLowerCase()} ${d.number} for ${amount}.`;
+      : `Please find attached ${label.toLowerCase()} ${d.number} for ${amount}${validUntil ? `, valid until ${longDate(validUntil)}` : ""}.`;
   const showPayment = isInvoice && !paid && Boolean(d.bankDetails);
 
   const text = [
@@ -141,7 +143,7 @@ export function composeInvoiceEmail(d: ComposeInput) {
   ].join("\n");
 
   const p = (s: string) => `<p style="margin:0 0 12px">${s}</p>`;
-  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#f7f7f8;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111827">
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(subject)}</title></head><body style="margin:0;padding:24px;background:#f7f7f8;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111827">
 <div style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:24px;font-size:14px;line-height:1.5">
 ${p(`Hi ${escapeHtml(d.clientName)},`)}
 ${d.message?.trim() ? p(escapeHtml(d.message.trim()).replace(/\n/g, "<br>")) : ""}

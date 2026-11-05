@@ -29,7 +29,7 @@ export const documentFieldsSchema = z.object({
   dueDate: dateString
     .nullable()
     .optional()
-    .describe("Omit on an invoice to derive it from Net-N payment terms; null for none"),
+    .describe("Invoice: due date (omit to derive it from Net-N payment terms; null for none). Quotation: valid until (default issue date + 30 days)"),
   companyId: z.string().optional().describe("Company profile (biller) id"),
   companyName: z
     .string()

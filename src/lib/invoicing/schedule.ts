@@ -19,6 +19,9 @@ export function billingTimeZone(): string {
 /** Fallback when an invoice has neither a due date nor parseable payment terms. */
 export const DEFAULT_NET_DAYS = 30;
 
+/** A quotation without its own date is valid this many days from issue. */
+export const QUOTE_VALID_DAYS = 30;
+
 const DAY_MS = 86_400_000;
 
 export function dateOnly(year: number, month0: number, day: number): Date {
@@ -249,4 +252,9 @@ export function effectiveDueDate(doc: {
 }): Date {
   if (doc.dueDate) return toDateOnly(doc.dueDate);
   return addDays(doc.issueDate, netDaysFromTerms(doc.paymentTerms) ?? DEFAULT_NET_DAYS);
+}
+
+/** Last day a quotation can be accepted: its due date, else issue date + {@link QUOTE_VALID_DAYS}. */
+export function quoteValidUntil(doc: { issueDate: Date; dueDate: Date | null }): Date {
+  return doc.dueDate ? toDateOnly(doc.dueDate) : addDays(doc.issueDate, QUOTE_VALID_DAYS);
 }

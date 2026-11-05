@@ -28,6 +28,19 @@ describe("composeInvoiceEmail", () => {
     expect(e.html).toContain("Bank: AmBank<br>Account: 123");
   });
 
+  it("gives quotations a valid-until date", () => {
+    const e = composeInvoiceEmail({ ...base, type: "QUOTATION", dueDate: null });
+    expect(e.text).toContain("Valid until: 1 December 2026");
+    expect(e.text).toMatch(/quotation INV-2026-0018 for MYR\s?2,000\.00, valid until 1 December 2026\./);
+    expect(e.text).not.toContain("Due:");
+  });
+
+  it("declares UTF-8 so the non-breaking space and en dash don't render as mojibake", () => {
+    const e = composeInvoiceEmail(base);
+    expect(e.html).toMatch(/^<!doctype html><html><head><meta charset="utf-8">/);
+    expect(e.html).toContain("<title>Invoice INV-2026-0018 from Grumpy Pixels");
+  });
+
   it("escapes client-controlled text in the HTML", () => {
     const e = composeInvoiceEmail({ ...base, clientName: '<img src=x onerror="x">', message: "Hi & <b>thanks</b>" });
     expect(e.html).not.toContain("<img");

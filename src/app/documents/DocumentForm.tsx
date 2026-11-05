@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import AppSelect from "@/components/AppSelect";
 import { LineItem, calcTotals, formatMoney, DOC_LABELS, DiscountType, PAYMENT_TERMS_PRESETS } from "@/lib/types";
+import { QUOTE_VALID_DAYS } from "@/lib/invoicing/schedule";
 
 const TYPE_OPTIONS = [
   { value: "QUOTATION", label: "Quotation" },
@@ -211,8 +212,11 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
             <input type="date" className="input" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} />
           </div>
           <div>
-            <label className="label">Due date</label>
+            <label className="label">{type === "QUOTATION" ? "Valid until" : "Due date"}</label>
             <input type="date" className="input" value={form.dueDate ?? ""} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
+            {type === "QUOTATION" && !form.dueDate ? (
+              <p className="mt-1 text-xs text-gray-500">Blank: {QUOTE_VALID_DAYS} days from the issue date.</p>
+            ) : null}
           </div>
           <div className="md:col-span-2">
             <label className="label">Payment terms</label>
