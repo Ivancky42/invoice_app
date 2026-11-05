@@ -1,12 +1,8 @@
 import "dotenv/config";
 import { defineConfig, env } from "prisma/config";
+import { directDatabaseUrl } from "./scripts/lib/directDatabaseUrl";
 
-/** Neon: use DIRECT_DATABASE_URL (non‑pooled) for CLI if pooled URLs cause issues with `db push`. */
-function datasourceUrl(): string {
-  const direct = process.env.DIRECT_DATABASE_URL?.trim();
-  if (direct) return direct;
-  return env("DATABASE_URL");
-}
+// Migrations run over a direct (non-pooled) connection — see directDatabaseUrl.
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -14,6 +10,6 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: datasourceUrl(),
+    url: directDatabaseUrl(process.env, () => env("DATABASE_URL")),
   },
 });
