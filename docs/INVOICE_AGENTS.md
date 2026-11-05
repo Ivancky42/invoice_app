@@ -19,6 +19,7 @@ A shadow-only (`mcp:shadow`) connector is refused by every billing tool.
 | `convert_invoice` | Quotation → Invoice → Delivery Order (new DRAFT linked to its parent). |
 | `duplicate_invoice` | Copy as a new document, today's date. |
 | `delete_invoice` | Permanent; needs `confirm: true`. Prefer CANCELLED. |
+| `preview_invoice_email` | Exactly what `send_invoice_email` would send (from, to, cc, bcc, subject, body, attachment) — sends nothing. |
 | `send_invoice_email` | Email a document to the client via Resend with its PDF attached (needs `confirm: true`; only when the user asks for that email). Default recipient: the client email. |
 | `list_invoice_clients` / `upsert_invoice_client` | Saved bill-to clients. |
 | `list_company_profiles` / `upsert_company_profile` | Billing entities (bank details, currency, tax, default). Logos stay in Settings. |
@@ -88,9 +89,13 @@ expired; anything else gets 403. Rotating the secret revokes every outstanding l
 
 Setup: `RESEND_API_KEY` in the app's environment, and **Email from** on the company profile
 (Settings) on a Resend-verified domain, e.g. `Grumpy Pixels <billing@grumpypixels.my>`.
-Replies go to the profile's Email; **CC** (e.g. `ivan.chewky@gmail.com, trishateh@gmail.com`)
-is copied on every send — prefilled and editable on manual sends, always on auto-emails — and
-**BCC** (optional) gets a hidden copy. Emailing a **draft** issues it once the send succeeds
+Replies go to the profile's Email; the profile's **CC** (e.g. `ivan.chewky@gmail.com,
+trishateh@gmail.com`) is added to **every** send, and **BCC** (optional) gets a hidden copy.
+
+Who receives a client's invoices is set on the client (Clients ▸ client ▸ Invoice emails):
+**Send invoices to** (To; blank = the client's Email) and **CC on invoices**. Manual sends
+prefill both (editable per email); auto-emails use them unless the schedule has its own
+"send to". The company CC is always added on top; nobody is copied twice. Emailing a **draft** issues it once the send succeeds
 (due date from its payment terms); issued and paid documents keep their status.
 
 - **Manual**: "Email to client" on any issued invoice/quotation/DO, or the

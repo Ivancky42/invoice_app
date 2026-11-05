@@ -131,6 +131,12 @@ export const upsertClientSchema = z.object({
   phone: optionalText,
   shipToAttn: optionalText,
   shipToAddress: optionalText,
+  invoiceEmailTo: optionalText.describe(
+    "Comma-separated recipients for invoices emailed to this client (manual and automatic). Null → the client email",
+  ),
+  invoiceEmailCc: optionalText.describe(
+    "Comma-separated CC for every invoice emailed to this client; the company profile's CC is always added too",
+  ),
 });
 
 export const upsertCompanySchema = z.object({
@@ -149,9 +155,7 @@ export const upsertCompanySchema = z.object({
   emailFrom: optionalText.describe(
     'Sender for emailed invoices on a Resend-verified domain, e.g. "Grumpy Pixels <billing@grumpypixels.my>". null disables emailing',
   ),
-  emailCc: optionalText.describe(
-    "Comma-separated addresses CC'd on every invoice email from this profile (default for manual sends, always for auto-emails)",
-  ),
+  emailCc: optionalText.describe("Comma-separated addresses CC'd on EVERY invoice email from this profile"),
   emailBcc: optionalText.describe("Comma-separated addresses BCC'd on every invoice email from this profile"),
 });
 
@@ -289,12 +293,14 @@ export const sendInvoiceEmailSchema = z.object({
     .array(z.string().min(3))
     .max(20)
     .optional()
-    .describe("Recipients. Default: the document's client email"),
+    .describe("Recipients. Default: the client's 'send invoices to' list, else the document's client email"),
   cc: z
     .array(z.string().min(3))
     .max(20)
     .optional()
-    .describe("CC recipients. Omit for the company profile's default CC list; [] for none"),
+    .describe("CC recipients. Omit for the client's invoice CC list; [] for none. The company profile's CC is always added"),
   message: z.string().max(5000).optional().describe("Optional note placed above the invoice summary"),
   confirm: z.literal(true).describe("Must be true — this emails the client immediately and can't be unsent"),
 });
+
+export const previewInvoiceEmailSchema = sendInvoiceEmailSchema.omit({ confirm: true });

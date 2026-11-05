@@ -11,7 +11,7 @@ import {
   withFreshNumber,
 } from "@/lib/invoicing/documents";
 import { createRecurringFromDocument } from "@/lib/invoicing/recurring";
-import { sendInvoiceEmail } from "@/lib/invoicing/email";
+import { previewInvoiceEmail, sendInvoiceEmail } from "@/lib/invoicing/email";
 
 type SaveInput = {
   id?: string;
@@ -139,6 +139,25 @@ export async function convertDocument(id: string): Promise<{ id: string } | null
 }
 
 /** Email a document from its page. Returns a message instead of throwing so the form can show it. */
+export type EmailPreview = Awaited<ReturnType<typeof previewInvoiceEmail>>;
+
+/** What "Send" would email — for the confirmation dialog. Sends and records nothing. */
+export async function previewDocumentEmail(
+  id: string,
+  input: { to: string; cc: string; message: string },
+): Promise<{ ok: true; preview: EmailPreview } | { ok: false; message: string }> {
+  try {
+    const preview = await previewInvoiceEmail(id, {
+      to: input.to,
+      cc: input.cc || null,
+      message: input.message || null,
+    });
+    return { ok: true, preview };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function emailDocument(
   id: string,
   input: { to: string; cc: string; message: string },

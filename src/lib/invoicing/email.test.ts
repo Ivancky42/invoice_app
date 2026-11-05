@@ -99,3 +99,12 @@ describe("postToResend", () => {
     await expect(postToResend(payload, "k", fetchImpl as unknown as typeof fetch)).rejects.toThrow("Resend 403: domain not verified");
   });
 });
+
+describe("composeInvoiceEmail footer", () => {
+  it("ends with a small system-generated note pointing replies at the company email", () => {
+    const e = composeInvoiceEmail(base);
+    expect(e.text).toMatch(/--\nThis is a system-generated email from Grumpy Pixels\. If you have any questions, reply to this email or write to [^\s]+@[^\s]+\.$/);
+    expect(e.html).toContain("font-size:11px");
+    expect(e.html).toContain("This is a system-generated email from Grumpy Pixels.");
+  });
+});

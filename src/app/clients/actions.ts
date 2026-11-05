@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { parseAddressList } from "@/lib/invoicing/emailAddress";
 
 export async function saveClient(formData: FormData) {
   const id = String(formData.get("id") || "");
@@ -13,9 +14,14 @@ export async function saveClient(formData: FormData) {
     phone: String(formData.get("phone") || "") || null,
     shipToAttn: String(formData.get("shipToAttn") || "") || null,
     shipToAddress: String(formData.get("shipToAddress") || "") || null,
+    invoiceEmailTo: String(formData.get("invoiceEmailTo") || "").trim() || null,
+    invoiceEmailCc: String(formData.get("invoiceEmailCc") || "").trim() || null,
   };
 
   if (!data.name) throw new Error("Name is required");
+  // Throws "Not an email address: …" on a typo, before it can fail at 06:00.
+  if (data.invoiceEmailTo) parseAddressList(data.invoiceEmailTo);
+  if (data.invoiceEmailCc) parseAddressList(data.invoiceEmailCc);
 
   if (id) {
     await prisma.clientProfile.update({ where: { id }, data });

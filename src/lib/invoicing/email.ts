@@ -2,8 +2,9 @@
  * Emailing invoices through Resend (https://resend.com), PDF attached.
  *
  * Config: RESEND_API_KEY (env) + a company profile's `emailFrom` on a Resend-verified
- * domain. Replies go to the profile's `email`; `emailCc` is CC'd (default, overridable per
- * send) and `emailBcc` gets a hidden copy. Emailing a DRAFT issues it once the send succeeds.
+ * domain. Replies go to the profile's `email`. Recipients: the client's `invoiceEmailTo` /
+ * `invoiceEmailCc` (or what the sender passes), plus the company's `emailCc` on every send
+ * and `emailBcc` as a hidden copy. Emailing a DRAFT issues it once the send succeeds.
  * Every attempt — including ones refused before reaching Resend — is an InvoiceEmail row.
  *
  * Auto-email: a schedule with `autoEmail` marks each ISSUED invoice it generates
@@ -89,6 +90,13 @@ export type ComposeInput = {
   message?: string | null;
 };
 
+/** The small print under every document email. Replies go to the company email (reply-to). */
+function systemNote(d: Pick<ComposeInput, "companyName" | "companyEmail">): string {
+  return `This is a system-generated email from ${d.companyName}.${
+    d.companyEmail ? ` If you have any questions, reply to this email or write to ${d.companyEmail}.` : ""
+  }`;
+}
+
 /** Subject + HTML + text for one document email. Pure, so it is unit-tested. */
 export function composeInvoiceEmail(d: ComposeInput) {
   const label = DOC_LABELS[d.type] ?? "Document";
@@ -127,6 +135,9 @@ export function composeInvoiceEmail(d: ComposeInput) {
     "Thank you,",
     d.companyName,
     ...(d.companyEmail ? [d.companyEmail] : []),
+    "",
+    "--",
+    systemNote(d),
   ].join("\n");
 
   const p = (s: string) => `<p style="margin:0 0 12px">${s}</p>`;
@@ -143,7 +154,9 @@ ${p(escapeHtml(intro))}
     .join("")}</table>
 ${showPayment ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase">Payment details</p>${p(escapeHtml(d.bankDetails!).replace(/\n/g, "<br>"))}` : ""}
 ${p(`Thank you,<br>${escapeHtml(d.companyName)}${d.companyEmail ? `<br><a href="mailto:${escapeHtml(d.companyEmail)}" style="color:#111827">${escapeHtml(d.companyEmail)}</a>` : ""}`)}
-</div></body></html>`;
+</div>
+<p style="max-width:560px;margin:12px auto 0;font-size:11px;line-height:1.5;color:#9ca3af;text-align:center">${escapeHtml(systemNote(d))}</p>
+</body></html>`;
 
   return { subject, html, text };
 }
@@ -192,6 +205,110 @@ export async function postToResend(
   throw new ResendError(message, res.status === 409 || res.ok ? "unknown" : "no");
 }
 
+type EmailOpts = {
+  to?: string | string[] | null;
+  cc?: string | string[] | null;
+  message?: string | null;
+};
+
+type DocWithCompany = Awaited<ReturnType<typeof loadDocument>>;
+
+async function loadDocument(idOrNumber: string) {
+  const row = await findDocumentRow(idOrNumber);
+  return prisma.document.findUniqueOrThrow({ where: { id: row.id }, include: { company: true } });
+}
+
+/**
+ * Everything about a document email except the PDF: sender, recipients, subject and body.
+ * The preview and the real send both come from here, so what is reviewed is what goes out.
+ * Throws InvoicingError when the email can't be sent (no sender, cancelled, no recipient).
+ */
+async function prepareInvoiceEmail(doc: DocWithCompany, opts: EmailOpts) {
+  const company = await companyForDocument(doc);
+  if (!company?.emailFrom) {
+    throw new InvoicingError(
+      "invalid",
+      `${company?.name ?? "This company profile"} has no "Email from" address — set it in Settings (e.g. "${company?.name ?? "Company"} <billing@yourdomain>")`,
+    );
+  }
+  if (doc.status === "CANCELLED") throw new InvoicingError("invalid", `${doc.number} is CANCELLED — it can't be emailed`);
+  // Recipients. To: explicit → the client's "send invoices to" → the invoice's client email.
+  // CC: explicit (even "" = none) → the client's invoice CC; the company's CC list is ALWAYS
+  // added on top. Nobody gets two copies: CC drops To addresses, BCC drops both.
+  const client = doc.clientId
+    ? await prisma.clientProfile.findUnique({
+        where: { id: doc.clientId },
+        select: { invoiceEmailTo: true, invoiceEmailCc: true },
+      })
+    : null;
+  const to = checkedAddresses(opts.to ?? (client?.invoiceEmailTo || doc.clientEmail));
+  if (to.length === 0) throw new InvoicingError("invalid", `${doc.number} has no client email — pass "to"`);
+  const addr = (x: string) => (/<([^>]+)>/.exec(x)?.[1] ?? x).trim().toLowerCase();
+  const uniqueExcluding = (list: string[], exclude: Set<string>) => {
+    const out: string[] = [];
+    for (const a of list) {
+      if (exclude.has(addr(a))) continue;
+      exclude.add(addr(a));
+      out.push(a);
+    }
+    return out;
+  };
+  const taken = new Set(to.map(addr));
+  const cc = uniqueExcluding(
+    [
+      ...checkedAddresses(opts.cc !== undefined && opts.cc !== null ? opts.cc : client?.invoiceEmailCc),
+      ...checkedAddresses(company.emailCc),
+    ],
+    taken,
+  );
+  const bcc = uniqueExcluding(checkedAddresses(company.emailBcc), taken);
+
+  const { subject, html, text } = composeInvoiceEmail({
+    type: doc.type,
+    status: doc.status,
+    number: doc.number,
+    issueDate: doc.issueDate,
+    dueDate: doc.dueDate,
+    paymentTerms: doc.paymentTerms,
+    clientName: doc.clientName,
+    projectTitle: doc.projectTitle,
+    items: (doc.items as unknown as LineItem[]) ?? [],
+    total: doc.total,
+    currency: company.currency,
+    companyName: company.name,
+    companyEmail: company.email,
+    bankDetails: company.bankDetails,
+    message: opts.message,
+  });
+  return {
+    from: company.emailFrom,
+    replyTo: company.email || null,
+    to,
+    cc,
+    bcc,
+    subject,
+    html,
+    text,
+    attachment: `${doc.number}.pdf`,
+  };
+}
+
+/**
+ * What emailing a document would send — sender, recipients, subject, body, attachment name —
+ * without sending or recording anything. Throws the same errors a send would.
+ */
+export async function previewInvoiceEmail(idOrNumber: string, opts: EmailOpts = {}) {
+  const doc = await loadDocument(idOrNumber);
+  const email = await prepareInvoiceEmail(doc, opts);
+  return {
+    number: doc.number,
+    status: doc.status,
+    // Sending a draft issues it once the email is accepted.
+    issuesDraft: doc.status === "DRAFT",
+    ...email,
+  };
+}
+
 /**
  * Email one document to its client (or `to`), PDF attached. Every attempt is recorded,
  * including ones refused before reaching Resend. Manual sends get a fresh idempotency key
@@ -208,10 +325,9 @@ export async function sendInvoiceEmail(
     fetchImpl?: typeof fetch;
   },
 ) {
-  const row = await findDocumentRow(idOrNumber);
-  const doc = await prisma.document.findUniqueOrThrow({ where: { id: row.id }, include: { company: true } });
+  const doc = await loadDocument(idOrNumber);
   const attempt = {
-    to: typeof opts.to === "string" ? opts.to : (opts.to ?? []).join(", ") || (doc.clientEmail ?? ""),
+    to: typeof opts.to === "string" ? opts.to : (opts.to ?? []).join(", ") || (doc.clientEmail ?? ""), // refined below
     cc: null as string | null,
     bcc: null as string | null,
     subject: `${DOC_LABELS[doc.type] ?? "Document"} ${doc.number}`,
@@ -233,61 +349,26 @@ export async function sendInvoiceEmail(
 
   let sent: { providerId: string; to: string[]; cc: string[]; bcc: string[]; subject: string };
   try {
-    const company = await companyForDocument(doc);
-    if (!company?.emailFrom) {
-      throw new InvoicingError(
-        "invalid",
-        `${company?.name ?? "This company profile"} has no "Email from" address — set it in Settings (e.g. "${company?.name ?? "Company"} <billing@yourdomain>")`,
-      );
-    }
-    if (doc.status === "CANCELLED") throw new InvoicingError("invalid", `${doc.number} is CANCELLED — it can't be emailed`);
-    const to = checkedAddresses(opts.to ?? doc.clientEmail);
-    if (to.length === 0) throw new InvoicingError("invalid", `${doc.number} has no client email — pass "to"`);
-    // CC: what the caller passed (even "" = none), else the profile's default list. A copy
-    // address that's already a recipient is dropped so nobody gets it twice.
-    const lower = (xs: string[]) => new Set(xs.map((x) => (/<([^>]+)>/.exec(x)?.[1] ?? x).toLowerCase()));
-    const toSet = lower(to);
-    const cc = checkedAddresses(opts.cc !== undefined && opts.cc !== null ? opts.cc : company.emailCc).filter(
-      (a) => !toSet.has((/<([^>]+)>/.exec(a)?.[1] ?? a).toLowerCase()),
-    );
-    const seen = lower([...to, ...cc]);
-    const bcc = checkedAddresses(company.emailBcc).filter((a) => !seen.has((/<([^>]+)>/.exec(a)?.[1] ?? a).toLowerCase()));
+    const email = await prepareInvoiceEmail(doc, opts);
+    const { to, cc, bcc, subject, html, text } = email;
     attempt.to = to.join(", ");
     attempt.cc = cc.length ? cc.join(", ") : null;
     attempt.bcc = bcc.length ? bcc.join(", ") : null;
-
-    const { subject, html, text } = composeInvoiceEmail({
-      type: doc.type,
-      status: doc.status,
-      number: doc.number,
-      issueDate: doc.issueDate,
-      dueDate: doc.dueDate,
-      paymentTerms: doc.paymentTerms,
-      clientName: doc.clientName,
-      projectTitle: doc.projectTitle,
-      items: (doc.items as unknown as LineItem[]) ?? [],
-      total: doc.total,
-      currency: company.currency,
-      companyName: company.name,
-      companyEmail: company.email,
-      bankDetails: company.bankDetails,
-      message: opts.message,
-    });
     attempt.subject = subject;
 
     const rendered = await renderDocumentPdf(doc.id);
     if (!rendered) throw new InvoicingError("not_found", `No document "${idOrNumber}"`);
     const providerId = await postToResend(
       {
-        from: company.emailFrom,
+        from: email.from,
         to,
         ...(cc.length ? { cc } : {}),
         ...(bcc.length ? { bcc } : {}),
-        ...(company.email ? { reply_to: [company.email] } : {}),
+        ...(email.replyTo ? { reply_to: [email.replyTo] } : {}),
         subject,
         html,
         text,
-        attachments: [{ filename: `${doc.number}.pdf`, content: rendered.pdf.toString("base64") }],
+        attachments: [{ filename: email.attachment, content: rendered.pdf.toString("base64") }],
       },
       opts.idempotencyKey ?? `invoice/${doc.id}/${crypto.randomUUID()}`,
       opts.fetchImpl,

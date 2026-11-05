@@ -54,7 +54,7 @@ describe("MCP server (SDK v2 via mcp-handler)", () => {
   it("lists every tool with an object JSON Schema", async () => {
     const { message } = await rpc("tools/list");
     const tools = message.result.tools as { name: string; inputSchema: { type?: string } }[];
-    expect(tools).toHaveLength(62);
+    expect(tools).toHaveLength(63);
     for (const tool of tools) expect(tool.inputSchema.type, tool.name).toBe("object");
     const createInvoice = tools.find((t) => t.name === "create_invoice") as unknown as {
       inputSchema: { properties: Record<string, { enum?: string[] }>; required?: string[] };

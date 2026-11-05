@@ -65,6 +65,7 @@ const EXPECTED_TOOL_NAMES = [
   "list_invoice_clients",
   "list_invoices",
   "list_recurring_invoices",
+  "preview_invoice_email",
   "run_recurring_invoices",
   "send_invoice_email",
   "set_invoice_status",
@@ -146,7 +147,7 @@ describe("invoice MCP tools", () => {
     const tools = collect();
     for (const [name, { config }] of tools) {
       if (name.startsWith("delete_")) expect(config.annotations?.destructiveHint, name).toBe(true);
-      if (/^(list|get)_/.test(name)) expect(config.annotations?.readOnlyHint, name).toBe(true);
+      if (/^(list|get|preview)_/.test(name)) expect(config.annotations?.readOnlyHint, name).toBe(true);
       else expect(config.annotations?.readOnlyHint, name).toBe(false);
     }
   });
