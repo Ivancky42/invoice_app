@@ -37,6 +37,9 @@ model CompanyProfile {
   /// Sender for emailed invoices, e.g. "Grumpy Pixels <billing@grumpypixels.my>". Must be on a
   /// domain verified in Resend. Null = this profile can't email invoices.
   emailFrom    String?
+  /// Comma-separated addresses CC'd (visible to the client) on every invoice email from this
+  /// profile — the default for manual sends (editable per email) and for auto-emails.
+  emailCc      String?
   /// Comma-separated addresses copied (BCC) on every invoice email from this profile.
   emailBcc     String?
   createdAt    DateTime @default(now())

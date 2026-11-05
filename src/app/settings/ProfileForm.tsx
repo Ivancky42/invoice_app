@@ -18,6 +18,7 @@ type Profile = {
   notes?: string | null;
   isDefault?: boolean;
   emailFrom?: string | null;
+  emailCc?: string | null;
   emailBcc?: string | null;
 };
 
@@ -127,6 +128,15 @@ export default function ProfileForm({ profile, action }: { profile: Profile; act
               className="input"
               placeholder="Grumpy Pixels <billing@grumpypixels.my>"
               defaultValue={profile.emailFrom ?? ""}
+            />
+          </div>
+          <div>
+            <label className="label">CC every invoice email to <span className="text-gray-400 font-normal">(comma-separated)</span></label>
+            <input
+              name="emailCc"
+              className="input"
+              placeholder="you@example.com, partner@example.com"
+              defaultValue={profile.emailCc ?? ""}
             />
           </div>
           <div>

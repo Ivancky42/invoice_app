@@ -151,7 +151,9 @@ export async function emailDocument(
       trigger: "app",
     });
     revalidatePath(`/documents/${id}`);
-    return { ok: true, message: `Sent to ${r.to.join(", ")}.` };
+    revalidatePath("/documents");
+    const copies = r.cc.length ? ` (cc ${r.cc.join(", ")})` : "";
+    return { ok: true, message: `Sent to ${r.to.join(", ")}${copies}. Status: ${r.status}.` };
   } catch (e) {
     revalidatePath(`/documents/${id}`);
     return { ok: false, message: e instanceof Error ? e.message : String(e) };

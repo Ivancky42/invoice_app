@@ -8,6 +8,8 @@ export default function EmailInvoiceForm({
   documentId,
   number,
   defaultTo,
+  defaultCc = "",
+  isDraft = false,
   canSend,
   disabledReason,
   action,
@@ -15,6 +17,10 @@ export default function EmailInvoiceForm({
   documentId: string;
   number: string;
   defaultTo: string;
+  /** The company profile's default CC list, prefilled and editable. */
+  defaultCc?: string;
+  /** Sending a draft issues it; the form says so. */
+  isDraft?: boolean;
   canSend: boolean;
   disabledReason?: string;
   action: (id: string, input: { to: string; cc: string; message: string }) => Promise<{ ok: boolean; message: string }>;
@@ -22,7 +28,7 @@ export default function EmailInvoiceForm({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [to, setTo] = useState(defaultTo);
-  const [cc, setCc] = useState("");
+  const [cc, setCc] = useState(defaultCc);
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [pending, start] = useTransition();
@@ -67,6 +73,9 @@ export default function EmailInvoiceForm({
         <label className="label">Note <span className="text-gray-400 font-normal">(optional, shown above the summary)</span></label>
         <textarea className="input" rows={3} value={message} onChange={(e) => setMessage(e.target.value)} />
       </div>
+      {isDraft && (
+        <div className="text-amber-700">This is a draft: sending it marks it ISSUED, with its due date set from the payment terms.</div>
+      )}
       {result && <div className={result.ok ? "text-green-700" : "text-red-700"}>{result.message}</div>}
       <div className="flex gap-2 justify-end">
         <button className="btn" onClick={() => setOpen(false)} disabled={pending}>

@@ -21,6 +21,7 @@ export async function saveProfile(formData: FormData) {
     notes: String(formData.get("notes") || "") || null,
     isDefault: formData.get("isDefault") === "on",
     emailFrom: String(formData.get("emailFrom") || "").trim() || null,
+    emailCc: String(formData.get("emailCc") || "").trim() || null,
     emailBcc: String(formData.get("emailBcc") || "").trim() || null,
   };
 
@@ -28,6 +29,7 @@ export async function saveProfile(formData: FormData) {
   if (data.emailFrom && parseAddressList(data.emailFrom).length !== 1) {
     throw new Error("Email from must be a single address, e.g. Grumpy Pixels <billing@grumpypixels.my>");
   }
+  if (data.emailCc) parseAddressList(data.emailCc);
   if (data.emailBcc) parseAddressList(data.emailBcc);
 
   const profile = id

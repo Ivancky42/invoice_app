@@ -2,7 +2,8 @@
  * Emailing invoices through Resend (https://resend.com), PDF attached.
  *
  * Config: RESEND_API_KEY (env) + a company profile's `emailFrom` on a Resend-verified
- * domain. Replies go to the profile's `email`; `emailBcc` gets a copy of every send.
+ * domain. Replies go to the profile's `email`; `emailCc` is CC'd (default, overridable per
+ * send) and `emailBcc` gets a hidden copy. Emailing a DRAFT issues it once the send succeeds.
  * Every attempt — including ones refused before reaching Resend — is an InvoiceEmail row.
  *
  * Auto-email: a schedule with `autoEmail` marks each ISSUED invoice it generates
@@ -21,6 +22,7 @@ import {
   companyForDocument,
   findDocumentRow,
   InvoicingError,
+  setDocumentStatus,
 } from "@/lib/invoicing/documents";
 import { parseAddressList } from "@/lib/invoicing/emailAddress";
 import { renderDocumentPdf } from "@/lib/invoicing/pdfRender";
@@ -237,12 +239,18 @@ export async function sendInvoiceEmail(
         `${company?.name ?? "This company profile"} has no "Email from" address — set it in Settings (e.g. "${company?.name ?? "Company"} <billing@yourdomain>")`,
       );
     }
-    if (doc.status === "DRAFT") throw new InvoicingError("invalid", `${doc.number} is a DRAFT — issue it before emailing it`);
     if (doc.status === "CANCELLED") throw new InvoicingError("invalid", `${doc.number} is CANCELLED — it can't be emailed`);
     const to = checkedAddresses(opts.to ?? doc.clientEmail);
     if (to.length === 0) throw new InvoicingError("invalid", `${doc.number} has no client email — pass "to"`);
-    const cc = checkedAddresses(opts.cc ?? null);
-    const bcc = checkedAddresses(company.emailBcc);
+    // CC: what the caller passed (even "" = none), else the profile's default list. A copy
+    // address that's already a recipient is dropped so nobody gets it twice.
+    const lower = (xs: string[]) => new Set(xs.map((x) => (/<([^>]+)>/.exec(x)?.[1] ?? x).toLowerCase()));
+    const toSet = lower(to);
+    const cc = checkedAddresses(opts.cc !== undefined && opts.cc !== null ? opts.cc : company.emailCc).filter(
+      (a) => !toSet.has((/<([^>]+)>/.exec(a)?.[1] ?? a).toLowerCase()),
+    );
+    const seen = lower([...to, ...cc]);
+    const bcc = checkedAddresses(company.emailBcc).filter((a) => !seen.has((/<([^>]+)>/.exec(a)?.[1] ?? a).toLowerCase()));
     attempt.to = to.join(", ");
     attempt.cc = cc.length ? cc.join(", ") : null;
     attempt.bcc = bcc.length ? bcc.join(", ") : null;
@@ -285,7 +293,14 @@ export async function sendInvoiceEmail(
     );
     await record("SENT", { providerId });
     if (doc.emailPending) await prisma.document.update({ where: { id: doc.id }, data: { emailPending: false } });
-    return { sent: true as const, number: doc.number, to, cc, bcc, subject, providerId };
+    // Sending a draft issues it (and fixes its due date from Net-N terms, like issuing by hand).
+    // Issued stays issued; paid stays paid.
+    let status = doc.status;
+    if (doc.status === "DRAFT") {
+      await setDocumentStatus(doc.id, "ISSUED");
+      status = "ISSUED";
+    }
+    return { sent: true as const, number: doc.number, status, to, cc, bcc, subject, providerId };
   } catch (e) {
     const unknown = e instanceof ResendError && e.delivered === "unknown";
     const error = e instanceof Error ? e.message : String(e);

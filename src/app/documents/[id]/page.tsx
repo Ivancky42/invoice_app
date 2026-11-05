@@ -102,15 +102,15 @@ export default async function DocDetail({
             documentId={doc.id}
             number={doc.number}
             defaultTo={doc.clientEmail ?? ""}
-            canSend={canEmailFrom(sender) && doc.status !== "DRAFT" && doc.status !== "CANCELLED"}
+            defaultCc={sender?.emailCc ?? ""}
+            isDraft={doc.status === "DRAFT"}
+            canSend={canEmailFrom(sender) && doc.status !== "CANCELLED"}
             disabledReason={
               !resendConfigured()
                 ? "Email isn't set up: add RESEND_API_KEY to the app's environment"
                 : !sender?.emailFrom
                   ? `Set "Email from" on the ${sender?.name ?? "company"} profile in Settings`
-                  : doc.status === "CANCELLED"
-                    ? "Cancelled documents can't be emailed"
-                    : "Issue it first: drafts can't be emailed"
+                  : "Cancelled documents can't be emailed"
             }
             action={emailDocument}
           />

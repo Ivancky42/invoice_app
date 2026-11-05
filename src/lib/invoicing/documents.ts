@@ -713,6 +713,7 @@ export async function upsertCompany(input: {
   notes?: string | null;
   isDefault?: boolean;
   emailFrom?: string | null;
+  emailCc?: string | null;
   emailBcc?: string | null;
 }) {
   // Validate email settings up front so a typo surfaces here, not at 06:00.
@@ -720,6 +721,7 @@ export async function upsertCompany(input: {
     const from = checkedAddresses(input.emailFrom);
     if (from.length !== 1) throw new InvoicingError("invalid", "emailFrom must be exactly one address");
   }
+  if (input.emailCc) checkedAddresses(input.emailCc);
   if (input.emailBcc) checkedAddresses(input.emailBcc);
   const { id, isDefault, ...rest } = input;
   const data: Prisma.CompanyProfileUpdateInput = {};

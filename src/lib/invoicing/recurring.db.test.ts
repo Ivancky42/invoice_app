@@ -238,7 +238,12 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
       process.env.RESEND_API_KEY = "re_test";
       await prisma.companyProfile.update({
         where: { id: companyId },
-        data: { emailFrom: "Grumpy Pixels <billing@grumpypixels.my>", email: "hello@grumpypixels.my", emailBcc: "copy@grumpypixels.my" },
+        data: {
+          emailFrom: "Grumpy Pixels <billing@grumpypixels.my>",
+          email: "hello@grumpypixels.my",
+          emailCc: "ivan.chewky@gmail.com, trishateh@gmail.com",
+          emailBcc: "copy@grumpypixels.my",
+        },
       });
       vi.stubGlobal(
         "fetch",
@@ -381,6 +386,7 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
       const { sendInvoiceEmail } = await import("@/lib/invoicing/email");
       const d = await docs.createDocument({ status: "CANCELLED", clientName: "Acme Sdn. Bhd.", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
       await expect(sendInvoiceEmail(d.id, { trigger: "agent" })).rejects.toThrow(/CANCELLED/);
+      expect((await docs.getDocument(d.id)).status).toBe("CANCELLED");
       await expect(sendInvoiceEmail(d.id, { trigger: "agent", to: "nope" })).rejects.toThrow(/CANCELLED|Not an email/);
       expect((await docs.getDocument(d.id)).emails.map((e) => e.status)).toEqual(["FAILED", "FAILED"]);
 
@@ -391,18 +397,51 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
       await expect(rec.updateRecurringInvoice({ id: plain.schedule.id, autoEmail: true })).rejects.toThrow(/Email from/);
     });
 
-    it("draft schedules don't email; manual sends need emailFrom and a non-draft", async () => {
+    it("draft schedules don't auto-email; emailing a draft by hand sends it and marks it ISSUED", async () => {
       await schedule({ autoIssue: false });
       expect(sends).toHaveLength(0);
       const { sendInvoiceEmail } = await import("@/lib/invoicing/email");
-      const draft = await docs.createDocument({ clientName: "Acme Sdn. Bhd.", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
-      await expect(sendInvoiceEmail(draft.id, { trigger: "app" })).rejects.toThrow(/DRAFT/);
-      await docs.setDocumentStatus(draft.id, "ISSUED");
-      const r = await sendInvoiceEmail(draft.number, { trigger: "agent", cc: "boss@acme.test", message: "Thanks!" });
-      expect(r.to).toEqual(["ap@acme.test"]);
-      expect(sends.at(-1)!.body.cc).toEqual(["boss@acme.test"]);
+      const draft = await docs.createDocument({
+        clientName: "Acme Sdn. Bhd.",
+        paymentTerms: "Net 14",
+        items: [{ description: "x", quantity: 1, unitPrice: 1 }],
+      });
+      expect(draft.status).toBe("DRAFT");
+      expect(draft.dueDate).toBe(iso(sched.addDays(today, 14))); // set from terms on create
+      await prisma.document.update({ where: { id: draft.id }, data: { dueDate: null } });
+
+      const r = await sendInvoiceEmail(draft.id, { trigger: "app" });
+      expect(r.status).toBe("ISSUED");
+      const after = await docs.getDocument(draft.id);
+      expect(after.status).toBe("ISSUED");
+      expect(after.dueDate).toBe(iso(sched.addDays(today, 14))); // re-derived when issued
+
       await prisma.companyProfile.update({ where: { id: companyId }, data: { emailFrom: null } });
       await expect(sendInvoiceEmail(draft.id, { trigger: "app" })).rejects.toThrow(/Email from/);
+    });
+
+    it("CCs the company's default list unless the sender overrides it, without duplicating recipients", async () => {
+      const { sendInvoiceEmail } = await import("@/lib/invoicing/email");
+      const d = await docs.createDocument({ status: "ISSUED", clientName: "Acme Sdn. Bhd.", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+
+      await sendInvoiceEmail(d.id, { trigger: "agent" });
+      expect(sends.at(-1)!.body.cc).toEqual(["ivan.chewky@gmail.com", "trishateh@gmail.com"]);
+      expect(sends.at(-1)!.body.bcc).toEqual(["copy@grumpypixels.my"]);
+
+      await sendInvoiceEmail(d.id, { trigger: "app", cc: "boss@acme.test" });
+      expect(sends.at(-1)!.body.cc).toEqual(["boss@acme.test"]);
+
+      await sendInvoiceEmail(d.id, { trigger: "app", cc: "" });
+      expect(sends.at(-1)!.body.cc).toBeUndefined();
+
+      // Sending to someone already on the CC list doesn't copy them again.
+      await sendInvoiceEmail(d.id, { trigger: "app", to: "Ivan.Chewky@gmail.com" });
+      expect(sends.at(-1)!.body.to).toEqual(["Ivan.Chewky@gmail.com"]);
+      expect(sends.at(-1)!.body.cc).toEqual(["trishateh@gmail.com"]);
+
+      // Auto-emails CC the default list too.
+      await schedule();
+      expect(sends.at(-1)!.body.cc).toEqual(["ivan.chewky@gmail.com", "trishateh@gmail.com"]);
     });
   });
 

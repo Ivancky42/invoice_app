@@ -315,7 +315,7 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Create or update company profile",
     kind: "write",
     description:
-      "Create a billing entity (name + address required) or update one by id. bankDetails print on invoices; setting isDefault=true clears the flag on the others. emailFrom (on a Resend-verified domain) enables emailing invoices; emailBcc copies every send. Logo upload stays in the app's Settings page.",
+      "Create a billing entity (name + address required) or update one by id. bankDetails print on invoices; setting isDefault=true clears the flag on the others. emailFrom (on a Resend-verified domain) enables emailing invoices; emailCc is CC'd and emailBcc BCC'd on every send. Logo upload stays in the app's Settings page.",
     schema: upsertCompanySchema,
     run: (input) => upsertCompany(input),
   });
@@ -324,7 +324,7 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Email invoice to client",
     kind: "write",
     description:
-      "Email a document (invoice, quotation or DO) to the client through Resend with its PDF attached, from the company profile's emailFrom; replies go to the profile's email and emailBcc gets a copy. Default recipient: the document's client email. DRAFTs can't be emailed. This contacts the client immediately and can't be undone — only call it when the user has asked for this specific email to be sent (confirm=true). Every attempt is recorded and shown by get_invoice.",
+      "Email a document (invoice, quotation or DO) to the client through Resend with its PDF attached, from the company profile's emailFrom; replies go to the profile's email, the profile's emailCc is CC'd unless cc is given, and emailBcc gets a hidden copy. Default recipient: the document's client email. Emailing a DRAFT marks it ISSUED (due date from its terms) once sent; CANCELLED documents can't be emailed. This contacts the client immediately and can't be undone — only call it when the user has asked for this specific email to be sent (confirm=true). Every attempt is recorded and shown by get_invoice.",
     schema: sendInvoiceEmailSchema,
     run: ({ id, to, cc, message }) => sendInvoiceEmail(id, { to, cc, message, trigger: "agent" }),
   });

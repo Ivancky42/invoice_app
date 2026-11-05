@@ -149,6 +149,9 @@ export const upsertCompanySchema = z.object({
   emailFrom: optionalText.describe(
     'Sender for emailed invoices on a Resend-verified domain, e.g. "Grumpy Pixels <billing@grumpypixels.my>". null disables emailing',
   ),
+  emailCc: optionalText.describe(
+    "Comma-separated addresses CC'd on every invoice email from this profile (default for manual sends, always for auto-emails)",
+  ),
   emailBcc: optionalText.describe("Comma-separated addresses BCC'd on every invoice email from this profile"),
 });
 
@@ -287,7 +290,11 @@ export const sendInvoiceEmailSchema = z.object({
     .max(20)
     .optional()
     .describe("Recipients. Default: the document's client email"),
-  cc: z.array(z.string().min(3)).max(20).optional(),
+  cc: z
+    .array(z.string().min(3))
+    .max(20)
+    .optional()
+    .describe("CC recipients. Omit for the company profile's default CC list; [] for none"),
   message: z.string().max(5000).optional().describe("Optional note placed above the invoice summary"),
   confirm: z.literal(true).describe("Must be true — this emails the client immediately and can't be unsent"),
 });
