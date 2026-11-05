@@ -231,11 +231,21 @@ export function pdfDate(d: Date | string): string {
   }).format(new Date(d));
 }
 
-/** 2,000.00 — the table's amount columns; the currency is in the column header. */
-export function pdfAmount(n: number): string {
+/**
+ * 2,000.00 — the table's amount columns; the currency is in the column header. Uses the
+ * currency's own decimals (JPY 0, KWD 3) so lines agree with the formatMoney totals.
+ */
+export function pdfAmount(n: number, currency = "USD"): string {
+  let digits = 2;
+  try {
+    digits =
+      new Intl.NumberFormat("en-US", { style: "currency", currency }).resolvedOptions().maximumFractionDigits ?? 2;
+  } catch {
+    // Unknown code: formatMoney falls back to 2 decimals too.
+  }
   return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
   }).format(n || 0);
 }
 
@@ -359,37 +369,40 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
           </View>
 
           {doc.projectTitle || doc.projectDescription ? (
-            <View style={styles.project} wrap={false}>
+            <View style={styles.project}>
               <Text style={styles.label}>Project</Text>
               {doc.projectTitle ? <Text style={styles.projectTitle}>{doc.projectTitle}</Text> : null}
               {doc.projectDescription ? <Text style={styles.projectText}>{clean(doc.projectDescription)}</Text> : null}
             </View>
           ) : null}
 
-          <View style={styles.th} fixed>
-            <Text style={styles.cNo}>#</Text>
-            <Text style={styles.cDesc}>Description</Text>
-            <Text style={styles.cQty}>Qty</Text>
-            {!isDeliveryOrder ? (
-              <>
-                <Text style={styles.cUnit}>Unit price ({currency})</Text>
-                <Text style={styles.cAmt}>Amount ({currency})</Text>
-              </>
-            ) : null}
-          </View>
-          {items.map((it, i) => (
-            <View style={styles.tr} key={i} wrap={false}>
-              <Text style={styles.cNo}>{i + 1}</Text>
-              <Text style={styles.cDesc}>{clean(it.description)}</Text>
-              <Text style={styles.cQty}>{pdfQty(it.quantity)}</Text>
+          {/* The header is fixed inside this view, so it repeats only on pages the table reaches. */}
+          <View>
+            <View style={styles.th} fixed>
+              <Text style={styles.cNo}>#</Text>
+              <Text style={styles.cDesc}>Description</Text>
+              <Text style={styles.cQty}>Qty</Text>
               {!isDeliveryOrder ? (
                 <>
-                  <Text style={styles.cUnit}>{pdfAmount(it.unitPrice)}</Text>
-                  <Text style={styles.cAmt}>{pdfAmount((it.quantity || 0) * (it.unitPrice || 0))}</Text>
+                  <Text style={styles.cUnit}>Unit price ({currency})</Text>
+                  <Text style={styles.cAmt}>Amount ({currency})</Text>
                 </>
               ) : null}
             </View>
-          ))}
+            {items.map((it, i) => (
+              <View style={styles.tr} key={i} wrap={false}>
+                <Text style={styles.cNo}>{i + 1}</Text>
+                <Text style={styles.cDesc}>{clean(it.description)}</Text>
+                <Text style={styles.cQty}>{pdfQty(it.quantity)}</Text>
+                {!isDeliveryOrder ? (
+                  <>
+                    <Text style={styles.cUnit}>{pdfAmount(it.unitPrice, currency)}</Text>
+                    <Text style={styles.cAmt}>{pdfAmount((it.quantity || 0) * (it.unitPrice || 0), currency)}</Text>
+                  </>
+                ) : null}
+              </View>
+            ))}
+          </View>
 
           {!isDeliveryOrder ? (
             <View style={styles.totals} wrap={false}>
@@ -423,43 +436,37 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
             </View>
           ) : null}
 
-          {bank.length || doc.notes || doc.terms ? (
-            <View style={styles.info} wrap={false}>
-              <View style={styles.infoCol}>
-                {bank.length ? (
-                  <View style={styles.infoBlock}>
-                    <Text style={styles.label}>Payment details</Text>
-                    {bank.map((l, i) => (
-                      <Text key={i} style={styles.infoText}>
-                        {l}
-                      </Text>
-                    ))}
-                    {doc.status !== "PAID" ? (
-                      <Text style={styles.reference}>Please quote {doc.number} as the payment reference.</Text>
-                    ) : null}
-                  </View>
-                ) : null}
-                {!bank.length && doc.notes ? (
-                  <View style={styles.infoBlock}>
-                    <Text style={styles.label}>Notes</Text>
-                    <Text style={styles.infoText}>{clean(doc.notes)}</Text>
-                  </View>
-                ) : null}
-              </View>
-              <View style={styles.infoCol}>
-                {bank.length && doc.notes ? (
-                  <View style={styles.infoBlock}>
-                    <Text style={styles.label}>Notes</Text>
-                    <Text style={styles.infoText}>{clean(doc.notes)}</Text>
-                  </View>
-                ) : null}
-                {doc.terms ? (
-                  <View style={styles.infoBlock}>
-                    <Text style={styles.label}>Terms &amp; conditions</Text>
-                    <Text style={styles.infoText}>{clean(doc.terms)}</Text>
-                  </View>
-                ) : null}
-              </View>
+          {bank.length || doc.notes ? (
+            <View style={styles.info}>
+              {bank.length ? (
+                <View style={[styles.infoCol, styles.infoBlock]} wrap={false}>
+                  <Text style={styles.label}>Payment details</Text>
+                  {bank.map((l, i) => (
+                    <Text key={i} style={styles.infoText}>
+                      {l}
+                    </Text>
+                  ))}
+                  {doc.status !== "PAID" ? (
+                    <Text style={styles.reference}>Please quote {doc.number} as the payment reference.</Text>
+                  ) : null}
+                </View>
+              ) : null}
+              {doc.notes ? (
+                <View style={[styles.infoCol, styles.infoBlock]}>
+                  <Text style={styles.label}>Notes</Text>
+                  <Text style={styles.infoText}>{clean(doc.notes)}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/* Full width and free to break across pages: terms can run to several thousand characters. */}
+          {doc.terms ? (
+            <View style={[styles.infoBlock, { marginTop: bank.length || doc.notes ? 0 : 26 }]}>
+              <Text style={styles.label} minPresenceAhead={24}>
+                Terms &amp; conditions
+              </Text>
+              <Text style={styles.infoText}>{clean(doc.terms)}</Text>
             </View>
           ) : null}
 

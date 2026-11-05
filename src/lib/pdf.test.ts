@@ -72,6 +72,10 @@ describe("pdf formatting helpers", () => {
   test("amounts and quantities", () => {
     expect(pdfAmount(2000)).toBe("2,000.00");
     expect(pdfAmount(0.5)).toBe("0.50");
+    expect(pdfAmount(2000, "MYR")).toBe("2,000.00");
+    expect(pdfAmount(1.234, "KWD")).toBe("1.234"); // 3-decimal currency, as in the totals
+    expect(pdfAmount(1500, "JPY")).toBe("1,500");
+    expect(pdfAmount(5, "ZZZ")).toBe("5.00"); // unknown code
     expect(pdfQty(1)).toBe("1");
     expect(pdfQty(2.5)).toBe("2.5");
   });
@@ -134,5 +138,13 @@ describe("renderDocPDF", () => {
     expect(out).not.toContain("payment reference");
     const dated = text(await renderDocPDF({ ...quote, dueDate: day("2026-11-15") }, company));
     expect(dated).toContain("15 November 2026");
+  });
+
+  test.runIf(hasPdftotext())("long notes and terms continue onto the next page instead of overflowing", async () => {
+    const terms = Array.from({ length: 120 }, (_, i) => `Clause ${i + 1}: the services are provided as described in the statement of work.`).join("\n");
+    const out = text(await renderDocPDF({ ...invoice, terms: terms.slice(0, 5000), notes: "Short note." }, company));
+    expect(out).toMatch(/Page 1 of [2-9]/);
+    const lastClause = terms.slice(0, 5000).split("\n").at(-2)!; // the last complete clause
+    expect(out).toContain(lastClause.slice(0, 20));
   });
 });
