@@ -627,6 +627,14 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
     let row = docRow((await billingReport({ view: "documents" })).rows, inv.number);
     expect(row).toMatchObject({ status: "PAID", paid_date: iso(sched.addDays(today, -5)), days_to_pay: 15, email_status: null });
 
+    // Paid before dates were recorded (null): edits and re-marking keep it undated; a date sets it.
+    await prisma.document.update({ where: { id: inv.id }, data: { paidAt: null } });
+    expect((await docs.updateDocument({ id: inv.id, notes: "edited" })).paidDate).toBeNull();
+    expect((await docs.setDocumentStatus(inv.id, "PAID")).paidDate).toBeNull();
+    expect((await docs.setDocumentStatus(inv.id, "PAID", { paidDate: iso(sched.addDays(today, -5)) })).paidDate).toBe(
+      iso(sched.addDays(today, -5)),
+    );
+
     // Back to issued clears it; created paid (agent) defaults to today or takes paidDate.
     expect((await docs.setDocumentStatus(inv.id, "ISSUED")).paidDate).toBeNull();
     const paid = await docs.createDocument({

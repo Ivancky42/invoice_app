@@ -61,8 +61,9 @@ export function daysBetween(from: Date, to: Date): number {
 }
 
 /**
- * When a document was paid, as its status changes: a given date wins; it keeps its date
- * while it stays PAID; it becomes PAID today; any other status clears it.
+ * When a document was paid, as its status changes: a given date wins; while it stays PAID it
+ * keeps what it has (none, for invoices paid before dates were recorded, rather than the day
+ * of an unrelated edit); becoming PAID records today; any other status clears it.
  */
 export function nextPaidAt(
   prev: { status: string; paidAt: Date | null } | null,
@@ -72,7 +73,7 @@ export function nextPaidAt(
 ): Date | null {
   if (status !== "PAID") return null;
   if (paidDate) return toDateOnly(paidDate);
-  if (prev?.status === "PAID" && prev.paidAt) return toDateOnly(prev.paidAt);
+  if (prev?.status === "PAID") return prev.paidAt ? toDateOnly(prev.paidAt) : null;
   return today;
 }
 

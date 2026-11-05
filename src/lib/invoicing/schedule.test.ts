@@ -172,6 +172,10 @@ describe("nextPaidAt", () => {
     expect(nextPaidAt({ status: "PAID", paidAt: d("2026-10-01") }, "PAID", today)).toEqual(d("2026-10-01"));
     expect(nextPaidAt(null, "PAID", today)).toEqual(today);
   });
+  it("leaves an invoice paid before dates were recorded undated until a date is given", () => {
+    expect(nextPaidAt({ status: "PAID", paidAt: null }, "PAID", today)).toBeNull();
+    expect(nextPaidAt({ status: "PAID", paidAt: null }, "PAID", today, d("2026-10-20"))).toEqual(d("2026-10-20"));
+  });
   it("takes a given date, and clears it for any other status", () => {
     expect(nextPaidAt({ status: "PAID", paidAt: d("2026-10-01") }, "PAID", today, d("2026-10-20"))).toEqual(d("2026-10-20"));
     expect(nextPaidAt({ status: "PAID", paidAt: d("2026-10-01") }, "ISSUED", today)).toBeNull();

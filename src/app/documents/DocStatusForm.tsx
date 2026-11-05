@@ -33,7 +33,9 @@ export default function DocStatusForm({
   const [paidDate, setPaidDate] = useState(defaultPaidDate || today);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const changed = status !== defaultStatus || (status === "PAID" && paidDate !== (defaultPaidDate || today));
+  // A paid invoice with no recorded date counts as changed as soon as a date is picked (even
+  // today's), so an old payment can be dated without a status change.
+  const changed = status !== defaultStatus || (status === "PAID" && paidDate !== (defaultPaidDate ?? ""));
 
   return (
     <form
