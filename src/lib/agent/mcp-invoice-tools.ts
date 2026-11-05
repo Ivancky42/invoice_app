@@ -4,8 +4,9 @@
  * shadow-only (paper-trading) connector can neither read nor change billing.
  */
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { canWriteRealBook } from "@/lib/agent/mcp-scope";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { mcpInput } from "@/lib/agent/mcp-input";
+import { MCP_SCOPE } from "@/lib/agent/mcp-scope";
 import { validationFailure } from "@/lib/agent/schemas";
 import {
   appUrl,
@@ -25,7 +26,9 @@ import {
   upsertClient,
   upsertCompany,
 } from "@/lib/invoicing/documents";
+import { billingReport } from "@/lib/invoicing/report";
 import {
+  billingReportSchema,
   billingSummarySchema,
   createDocumentSchema,
   createRecurringSchema,
@@ -57,7 +60,8 @@ import {
   updateRecurringInvoice,
 } from "@/lib/invoicing/recurring";
 
-type ToolExtra = { authInfo?: { scopes?: string[] } };
+/** The slice of the SDK v2 handler context we read: auth lives under `http` (undefined on stdio). */
+type ToolExtra = { http?: { authInfo?: { scopes?: string[] } } };
 type ToolResult = {
   content: (
     | { type: "text"; text: string }
@@ -80,7 +84,7 @@ function fail(error: string, message: string, extra: Record<string, unknown> = {
   return { content: [{ type: "text", text: JSON.stringify({ error, message, ...extra }) }], isError: true };
 }
 
-type InvoiceToolSpec<S extends z.AnyZodObject> = {
+type InvoiceToolSpec<S extends z.ZodObject> = {
   title: string;
   description: string;
   schema: S;
@@ -92,13 +96,13 @@ function isToolResult(v: unknown): v is ToolResult {
   return typeof v === "object" && v !== null && Array.isArray((v as ToolResult).content);
 }
 
-function register<S extends z.AnyZodObject>(server: McpServer, name: string, spec: InvoiceToolSpec<S>) {
+function register<S extends z.ZodObject>(server: McpServer, name: string, spec: InvoiceToolSpec<S>) {
   server.registerTool(
     name,
     {
       title: spec.title,
       description: spec.description,
-      inputSchema: spec.schema.shape,
+      inputSchema: mcpInput(spec.schema),
       annotations: {
         title: spec.title,
         readOnlyHint: spec.kind === "read",
@@ -108,7 +112,10 @@ function register<S extends z.AnyZodObject>(server: McpServer, name: string, spe
       },
     },
     async (args: unknown, extra: ToolExtra) => {
-      if (!canWriteRealBook(extra?.authInfo?.scopes)) {
+      // Fail closed: every authenticated path (OAuth JWT or AGENT_TOKEN) sets scopes, and
+      // full access always carries mcp:tools. Missing auth info — e.g. the SDK moving where
+      // it passes authInfo — must deny billing, not grant it.
+      if (!extra?.http?.authInfo?.scopes?.includes(MCP_SCOPE)) {
         return fail(
           "invoice_scope_forbidden",
           "Billing tools need the full mcp:tools connector; this connector is mcp:shadow only.",
@@ -210,6 +217,15 @@ export function registerInvoiceMcpTools(server: McpServer): void {
       "Per company profile: invoiced (ISSUED+PAID), collected (PAID), outstanding (ISSUED), overdue amount and count, draft invoices, open quotations; plus active recurring schedules and the next one due. Optional company and issue-date range.",
     schema: billingSummarySchema,
     run: (input) => billingSummary(input),
+  });
+
+  register(server, "get_billing_report", {
+    title: "Get billing report rows",
+    kind: "read",
+    description:
+      "Flat, compact rows for dashboards and analysis — no paging. view=documents: one row per invoice/quotation/DO with company, type, status, issue_date, due_date (effective: due date, else Net-N terms, else 30 days; invoices only), days_overdue (ISSUED invoices), client, project, total, currency. view=recurring: one row per schedule with status, cadence, next_run, generated / max_invoices and per_invoice amount. Optionally limit to company profile names. Returns {view, as_of, cut, rows}.",
+    schema: billingReportSchema,
+    run: (input) => billingReport(input),
   });
 
   // ---------------------------------------------------------------- documents: write
@@ -334,7 +350,7 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Make an invoice recurring",
     kind: "write",
     description:
-      "Turn an existing invoice into a schedule using it as the template. By default the invoice counts as #1 of the series (so maxOccurrences=6 → 5 more), and the next invoice is dated one period after it on the same day of month. Use update_recurring_invoice afterwards to add {{period}} placeholders to the template lines.",
+      "Turn an existing invoice into a schedule using it as the template. By default the invoice counts as #1 of the series (so maxOccurrences=6 → 5 more), and the next invoice is dated one period after it on the same day of month — if that date has already passed, it (and any other missed periods) is generated immediately, each dated its own slot. Pass startDate to start the series later instead. Use update_recurring_invoice afterwards to add {{period}} placeholders to the template lines.",
     schema: recurringFromDocumentSchema,
     run: (input) => createRecurringFromDocument(input),
   });
@@ -375,6 +391,7 @@ export const INVOICE_TOOL_NAMES = [
   "delete_invoice",
   "delete_recurring_invoice",
   "duplicate_invoice",
+  "get_billing_report",
   "get_billing_summary",
   "get_invoice",
   "get_invoice_pdf",

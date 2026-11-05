@@ -171,6 +171,68 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
     expect(r.schedule.notes).toBe("new notes");
   });
 
+  it("a backdated template continues its series: a period already passed is billed now, dated its slot", async () => {
+    const issue = sched.addDays(today, -40);
+    const src = await docs.createDocument({
+      type: "INVOICE",
+      status: "ISSUED",
+      issueDate: iso(issue),
+      clientName: "Walk-in",
+      items: [{ description: "Retainer", quantity: 1, unitPrice: 100 }],
+    });
+    const { schedule, generatedNow } = await rec.createRecurringFromDocument({ documentId: src.id, maxOccurrences: 6 });
+    const shape = { frequency: "MONTHLY" as const, interval: 1, dayOfMonth: issue.getUTCDate(), startDate: issue };
+    const second = sched.nextOccurrenceAfter(shape, issue);
+    expect(second <= today).toBe(true);
+    expect(generatedNow.map((g) => g.runDate)).toEqual([iso(second)]);
+    expect(schedule.occurrencesGenerated).toBe(2);
+    expect(sched.parseDateOnly(schedule.nextRunDate!) > today).toBe(true);
+  });
+
+  it("the app's Make recurring flow (linked invoice, past start) bills the passed slot instead of skipping it", async () => {
+    const issue = sched.addDays(today, -40);
+    const src = await docs.createDocument({
+      type: "INVOICE",
+      status: "ISSUED",
+      issueDate: iso(issue),
+      clientName: "Walk-in",
+      items: [{ description: "Retainer", quantity: 1, unitPrice: 100 }],
+    });
+    const shape = { frequency: "MONTHLY" as const, interval: 1, dayOfMonth: issue.getUTCDate(), startDate: issue };
+    const second = sched.nextOccurrenceAfter(shape, issue);
+    const { schedule, generatedNow } = await rec.createRecurringInvoice(
+      {
+        name: "From UI",
+        startDate: iso(second),
+        dayOfMonth: issue.getUTCDate(),
+        maxOccurrences: 6,
+        clientName: "Walk-in",
+        items: [{ description: "Retainer {{period}}", quantity: 1, unitPrice: 100 }],
+      },
+      { linkDocumentId: src.id },
+    );
+    expect(generatedNow.map((g) => g.runDate)).toEqual([iso(second)]);
+    expect(schedule.occurrencesGenerated).toBe(2);
+  });
+
+  it("billing summary counts only the requested company's recurring schedules", async () => {
+    const other = await prisma.companyProfile.create({ data: { name: "Other Co", address: "x", currency: "USD" } });
+    await rec.createRecurringInvoice({ name: "Mine", startDate: iso(sched.addDays(today, 9)), clientName: "A", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+    await rec.createRecurringInvoice({ name: "Theirs", companyId: other.id, startDate: iso(sched.addDays(today, 2)), clientName: "B", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+    const mine = await docs.billingSummary({ companyId: companyId });
+    expect(mine.recurring).toMatchObject({ activeSchedules: 1, next: { name: "Mine" } });
+    expect((await docs.billingSummary({})).recurring.activeSchedules).toBe(2);
+  });
+
+  it("concurrent creates never collide on a document number", async () => {
+    const made = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        docs.createDocument({ clientName: "Walk-in", items: [{ description: `Job ${i}`, quantity: 1, unitPrice: 1 }] }),
+      ),
+    );
+    expect(new Set(made.map((d) => d.number)).size).toBe(6);
+  });
+
   it("pause stops generation; resume skips the paused dates", async () => {
     const { schedule } = await rec.createRecurringInvoice({
       name: "Pausable",
@@ -184,6 +246,45 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
     expect(resumed.schedule.status).toBe("ACTIVE");
     expect(sched.parseDateOnly(resumed.schedule.nextRunDate!) > today).toBe(true);
     expect(resumed.schedule.occurrencesGenerated).toBe(1);
+  });
+
+  it("billing report rows: due/overdue computed server-side, filtered by company name", async () => {
+    const other = await prisma.companyProfile.create({ data: { name: "Other Co", address: "x", currency: "USD" } });
+    const late = await docs.createDocument({
+      type: "INVOICE",
+      status: "ISSUED",
+      issueDate: iso(sched.addDays(today, -40)),
+      paymentTerms: "Net 30",
+      clientName: "Acme Sdn. Bhd.",
+      items: [{ description: "Work", quantity: 1, unitPrice: 100 }],
+    });
+    await docs.createDocument({ companyId: other.id, clientName: "Elsewhere", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+    await rec.createRecurringInvoice({
+      name: "Retainer",
+      startDate: iso(sched.addDays(today, 3)),
+      clientName: "Walk-in",
+      items: [{ description: "Fee", quantity: 2, unitPrice: 50 }],
+    });
+    const { billingReport } = await import("@/lib/invoicing/report");
+
+    const d = await billingReport({ view: "documents", companies: ["grumpy pixels"] });
+    expect(d.cut).toBe(false);
+    expect(d.rows).toHaveLength(1);
+    expect(d.rows[0]).toMatchObject({
+      number: late.number,
+      company: "Grumpy Pixels",
+      due_date: iso(sched.addDays(today, -10)),
+      days_overdue: 10,
+      total: 108,
+      recurring: false,
+    });
+    expect((await billingReport({ view: "documents" })).rows).toHaveLength(2);
+
+    const r = await billingReport({ view: "recurring", companies: ["Grumpy Pixels"] });
+    expect(r.rows).toEqual([
+      expect.objectContaining({ name: "Retainer", status: "ACTIVE", next_run: iso(sched.addDays(today, 3)), generated: 0, per_invoice: 108 }),
+    ]);
+    expect((await billingReport({ view: "recurring", companies: ["Other Co"] })).rows).toHaveLength(0);
   });
 
   it("document lifecycle: status, overdue, convert, duplicate, delete, summary", async () => {

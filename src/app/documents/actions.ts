@@ -2,9 +2,14 @@
 
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
-import { calcTotals, NEXT_STAGE, DiscountType } from "@/lib/types";
+import { calcTotals, DiscountType } from "@/lib/types";
 import { nextDocumentNumber } from "@/lib/numbering";
-import { setDocumentStatus } from "@/lib/invoicing/documents";
+import {
+  convertDocument as convertDocumentService,
+  InvoicingError,
+  setDocumentStatus,
+  withFreshNumber,
+} from "@/lib/invoicing/documents";
 import { createRecurringFromDocument } from "@/lib/invoicing/recurring";
 
 type SaveInput = {
@@ -40,7 +45,7 @@ type SaveInput = {
   } | null;
 };
 
-export async function saveDocument(input: SaveInput): Promise<{ id: string }> {
+export async function saveDocument(input: SaveInput): Promise<{ id: string; recurringError?: string }> {
   const discountType = input.discountType ?? "PERCENT";
   const discountValue = Number(input.discountValue) || 0;
   const totals = calcTotals(input.items, input.taxRate, discountType, discountValue);
@@ -80,21 +85,31 @@ export async function saveDocument(input: SaveInput): Promise<{ id: string }> {
     return { id: updated.id };
   }
 
-  const number = await nextDocumentNumber(input.type, { date: base.issueDate });
-  const created = await prisma.document.create({ data: { ...base, number } });
+  const created = await withFreshNumber(async () =>
+    prisma.document.create({
+      data: { ...base, number: await nextDocumentNumber(input.type, { date: base.issueDate }) },
+    }),
+  );
+  let recurringError: string | undefined;
   if (input.repeat && input.type === "INVOICE") {
-    await createRecurringFromDocument({
-      documentId: created.id,
-      frequency: input.repeat.frequency,
-      interval: Math.max(1, input.repeat.interval || 1),
-      maxOccurrences: input.repeat.totalInvoices,
-      countTemplateAsFirst: true,
-      autoIssue: true,
-    });
-    revalidatePath("/recurring");
+    // The invoice is already saved: never let a schedule failure read as a failed save,
+    // or a retry would create a second invoice. Report it on the invoice page instead.
+    try {
+      await createRecurringFromDocument({
+        documentId: created.id,
+        frequency: input.repeat.frequency,
+        interval: Math.max(1, input.repeat.interval || 1),
+        maxOccurrences: input.repeat.totalInvoices,
+        countTemplateAsFirst: true,
+        autoIssue: true,
+      });
+      revalidatePath("/recurring");
+    } catch (e) {
+      recurringError = e instanceof Error ? e.message : String(e);
+    }
   }
   revalidatePath(`/documents`);
-  return { id: created.id };
+  return { id: created.id, recurringError };
 }
 
 export async function deleteDocument(id: string) {
@@ -110,42 +125,12 @@ export async function setStatus(id: string, status: string) {
 }
 
 export async function convertDocument(id: string): Promise<{ id: string } | null> {
-  const src = await prisma.document.findUnique({ where: { id } });
-  if (!src) return null;
-  const next = NEXT_STAGE[src.type];
-  if (!next) return null;
-  const number = await nextDocumentNumber(next);
-  const created = await prisma.document.create({
-    data: {
-      type: next as any,
-      number,
-      status: "DRAFT",
-      issueDate: new Date(),
-      companyId: src.companyId,
-      clientId: src.clientId,
-      clientName: src.clientName,
-      clientAddress: src.clientAddress,
-      clientEmail: src.clientEmail,
-      clientPhone: src.clientPhone,
-      shipToAttn: src.shipToAttn,
-      shipToAddress: src.shipToAddress,
-      poNumber: src.poNumber,
-      projectTitle: src.projectTitle,
-      projectDescription: src.projectDescription,
-      items: src.items as any,
-      subtotal: src.subtotal,
-      discountType: src.discountType,
-      discountValue: src.discountValue,
-      discountAmount: src.discountAmount,
-      taxRate: src.taxRate,
-      taxAmount: src.taxAmount,
-      total: src.total,
-      paymentTerms: src.paymentTerms,
-      notes: src.notes,
-      terms: src.terms,
-      parentId: src.id,
-    },
-  });
-  revalidatePath("/documents");
-  return { id: created.id };
+  try {
+    const created = await convertDocumentService(id);
+    revalidatePath("/documents");
+    return { id: created.id };
+  } catch (e) {
+    if (e instanceof InvoicingError) return null;
+    throw e;
+  }
 }

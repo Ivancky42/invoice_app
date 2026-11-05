@@ -43,6 +43,7 @@ export type CronJob = {
   job: string;
   cadence: Cadence;
   dependsOn: string[];
+  everyTick?: boolean;
   run(ctx: JobContext): Promise<JobResult>;
 };
 
@@ -73,6 +74,9 @@ export const CRON_JOBS: CronJob[] = [
     job: RECURRING_INVOICES_JOB,
     cadence: "daily",
     dependsOn: [],
+    // The ledger keys runs by UTC day but billing is by MYT day; a no-op re-run at 09:00 MYT
+    // (01:00 UTC) must not mark the next 06:00 MYT tick as already done.
+    everyTick: true,
     async run() {
       const result = await runDueRecurringInvoices();
       const detail = {

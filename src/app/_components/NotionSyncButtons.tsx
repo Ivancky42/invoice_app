@@ -121,7 +121,7 @@ export function NotionSyncButtons({
         ) : null}
       </div>
       {(showPriceMsg || showSyncMsg) && (
-        <div className="w-full min-w-0 text-xs text-right space-y-1 leading-snug break-words">
+        <div className="w-full min-w-0 text-xs text-right space-y-1 leading-snug wrap-break-word">
           {showPriceMsg && priceResult ? (
             <p className={`m-0 ${priceResult.ok ? "text-emerald-700" : "text-red-700"}`}>
               {formatPriceSyncMessage(priceResult)}

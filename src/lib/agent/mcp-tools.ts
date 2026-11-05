@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import {
   buildAgentContext,
   getAllConfig,
@@ -25,6 +25,7 @@ import {
   realBookWriteBlockedError,
   resolveShadowCall,
 } from "@/lib/agent/mcp-scope";
+import { mcpInput } from "@/lib/agent/mcp-input";
 import { composePromptText } from "@/lib/agent/styleBlock";
 import { getShadowFitness, listCounterfactuals } from "@/lib/fitness/read";
 import { applyGapFix } from "@/lib/evolution/gapfix";
@@ -92,7 +93,8 @@ import {
   upsertWatchlist,
 } from "@/lib/agent/writes";
 
-type ToolExtra = { authInfo?: { scopes?: string[] } };
+/** The slice of the SDK v2 handler context we read: auth lives under `http` (undefined on stdio). */
+type ToolExtra = { http?: { authInfo?: { scopes?: string[] } } };
 
 function textJson(data: unknown) {
   // Compact JSON — pretty-print bloated get_context ~25% and can stall MCP bridges.
@@ -118,7 +120,7 @@ function parseTool<T>(schema: z.ZodType<T>, args: unknown): T | { __error: strin
 }
 
 function toolScopes(extra: ToolExtra | undefined): string[] | undefined {
-  return extra?.authInfo?.scopes;
+  return extra?.http?.authInfo?.scopes;
 }
 
 /**
@@ -149,7 +151,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "Get agent context",
       description:
         "Bundle portfolio state, watchlist, trends, ideas, limits, enums, and rulesVersion for a routine. Default is Ivan's live book (branch LIVE, book REAL). Pass branch=CANDIDATE for the paper test (book is forced PAPER); that payload includes paperBooks for both LIVE and CANDIDATE so Pass A is not skipped. Pass book=PAPER with branch=LIVE for the current-rules paper book.",
-      inputSchema: {
+      inputSchema: mcpInput(z.object({
         routine: z.enum(AGENT_ROUTINES).describe("Which Cowork routine is running"),
         branch: z
           .enum(["LIVE", "CANDIDATE"])
@@ -158,7 +160,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         book: decisionBookInputSchema.describe(
           "REAL (Ivan's live book, default) or PAPER (shadow ledger). branch=CANDIDATE is always PAPER.",
         ),
-      },
+      })),
     },
     async ({ routine, branch, book }, extra) => {
       if (!isAgentRoutine(routine)) {
@@ -196,7 +198,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "Get prompt markdown",
       description:
         "Read a prompt from the active ruleset (falls back to the committed /prompts file). Read-only. Every caller receives a Writing for Ivan style note prepended. branch=CANDIDATE prepends the two-pass PAPER PASS brief. Pass A should call branch=LIVE book=PAPER (LIVE rules text only — not Ivan's live-advice daily). Stored RuleVersion files are untouched.",
-      inputSchema: {
+      inputSchema: mcpInput(z.object({
         name: z.enum(PROMPT_NAMES).describe("Prompt basename without .md"),
         branch: z
           .enum(["LIVE", "CANDIDATE"])
@@ -205,7 +207,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
         book: decisionBookInputSchema.describe(
           "Pass A: LIVE + PAPER so the LIVE rules prompt is labelled as paper, not live advice. CANDIDATE is always PAPER.",
         ),
-      },
+      })),
     },
     async ({ name, branch, book }, extra) => {
       if (!isPromptName(name)) {
@@ -238,7 +240,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List portfolio",
       description: "List current portfolio positions with weightPct, averageDownsUsed, lastPriceUpdate, priceStatus. lastPriceUpdate is the GMT+8 session date (noon UTC), not the sync clock time. pageNotes preview is newest ~3 dated entries, char-budgeted (see pageNotesTruncated / get_page_notes).",
-      inputSchema: {},
+      inputSchema: mcpInput(z.object({})),
     },
     async (_args, extra) => {
       if (isShadowOnlyScope(toolScopes(extra))) {
@@ -254,12 +256,12 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List watchlist",
       description:
         "List watchlist rows with lastPriceUpdate and priceStatus. lastPriceUpdate is the GMT+8 session date (noon UTC), not the sync clock time. Excludes DEMOTED/DROPPED by default; pass includeDemoted=true to include soft-demoted names. pageNotes preview is newest ~3 dated entries, char-budgeted (use get_page_notes for history).",
-      inputSchema: {
+      inputSchema: mcpInput(z.object({
         includeDemoted: z
           .boolean()
           .optional()
           .describe("Include DEMOTED/DROPPED rows (default false)"),
-      },
+      })),
     },
     async ({ includeDemoted }) =>
       textJson(await listWatchlistItems({ includeDemoted: includeDemoted === true })),
@@ -271,7 +273,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List decision reviews",
       description:
         "List Decision Review Log rows (filter by ticker, reviewStatus, branch LIVE|CANDIDATE, book REAL|PAPER, or pendingDueWithinDays). book=PAPER is the paper book for that branch; mcp:shadow is always PAPER and may address LIVE or CANDIDATE.",
-      inputSchema: listDecisionReviewsQuerySchema.shape,
+      inputSchema: mcpInput(listDecisionReviewsQuerySchema),
     },
     async (args, extra) => {
       const parsed = parseTool(listDecisionReviewsQuerySchema, args);
@@ -288,7 +290,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List daily logs",
       description:
         "List DailyLog rows (newest first). Optional since/until YYYY-MM-DD and routineType (DAILY|EARNINGS); default limit 14 (max 90).",
-      inputSchema: listDailyLogsQuerySchema.shape,
+      inputSchema: mcpInput(listDailyLogsQuerySchema),
     },
     async (args, extra) => {
       const parsed = parseTool(listDailyLogsQuerySchema, args);
@@ -305,7 +307,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List stock reports",
       description:
         "List StockReport rows (WEEKLY/MONTHLY). Optional reportType, since/until; default limit 8 (max 36).",
-      inputSchema: listReportsQuerySchema.shape,
+      inputSchema: mcpInput(listReportsQuerySchema),
     },
     async (args, extra) => {
       const parsed = parseTool(listReportsQuerySchema, args);
@@ -322,7 +324,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "Get daily price history",
       description:
         "List PriceHistory daily OHLC bars for one ticker, newest first. Covers Portfolio, Watchlist, and Idea leadTicker symbols (plus SPY/QQQ/AAPL/MSFT/CSPX). Optional from/to YYYY-MM-DD; default limit 120 (max 500).",
-      inputSchema: getPriceHistoryInputSchema.shape,
+      inputSchema: mcpInput(getPriceHistoryInputSchema),
     },
     async (args) => {
       const parsed = parseTool(getPriceHistoryInputSchema, args);
@@ -337,7 +339,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "Get content document",
       description:
         "Read Strategy Lessons Summary or Investment Style Profile (Neon ContentPage, ReportBlock[] body). Missing rows are auto-seeded as stubs — never 404 for these keys.",
-      inputSchema: getContentPageInputSchema.shape,
+      inputSchema: mcpInput(getContentPageInputSchema),
     },
     async (args) => {
       const parsed = parseTool(getContentPageInputSchema, args);
@@ -353,7 +355,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List trades",
       description: "List trade log rows.",
-      inputSchema: {},
+      inputSchema: mcpInput(z.object({})),
     },
     async (_args, extra) => {
       if (isShadowOnlyScope(toolScopes(extra))) {
@@ -368,7 +370,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List ideas",
       description: "List ideas funnel rows including ideaStage, leadTicker, graduation fields.",
-      inputSchema: {},
+      inputSchema: mcpInput(z.object({})),
     },
     async () => textJson(await listIdeaItems()),
   );
@@ -378,7 +380,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "List trends",
       description: "List trends including score components.",
-      inputSchema: {},
+      inputSchema: mcpInput(z.object({})),
     },
     async () => textJson(await listTrendItems(true)),
   );
@@ -388,7 +390,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
     {
       title: "Get config",
       description: "Return all Config key/value pairs (read-only).",
-      inputSchema: {},
+      inputSchema: mcpInput(z.object({})),
     },
     async () => textJson(await getAllConfig()),
   );
@@ -399,7 +401,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List shadow positions",
       description:
         "List PAPER positions in a shadow branch's ledger (default LIVE). Open only unless includeClosed=true. Paper accounting — never the real portfolio.",
-      inputSchema: listShadowPositionsInputSchema.shape,
+      inputSchema: mcpInput(listShadowPositionsInputSchema),
     },
     async (args, extra) => {
       const parsed = parseTool(listShadowPositionsInputSchema, args);
@@ -416,7 +418,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List shadow orders",
       description:
         "List PAPER orders in a shadow branch's ledger (default LIVE), newest decision first. Optional status filter; default limit 50 (max 200). These are simulated fills, never broker orders.",
-      inputSchema: listShadowOrdersInputSchema.shape,
+      inputSchema: mcpInput(listShadowOrdersInputSchema),
     },
     async (args, extra) => {
       const parsed = parseTool(listShadowOrdersInputSchema, args);
@@ -433,7 +435,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "Get shadow fitness",
       description:
         "Daily fitness snapshots for a shadow branch (default LIVE), newest session first. All values are FRACTIONS (0.03 = 3%). avoidedCreditDelta is SIGNED: refusing a name that fell credits, refusing one that rose debits. turnoverDelta is fill-friction only (0 on hold days). maxDrawdown is rolling 30-session peak-to-trough, not lifetime HWM. Default limit 30 (max 90).",
-      inputSchema: getShadowFitnessInputSchema.shape,
+      inputSchema: mcpInput(getShadowFitnessInputSchema),
     },
     async (args, extra) => {
       const parsed = parseTool(getShadowFitnessInputSchema, args);
@@ -450,7 +452,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List counterfactuals",
       description:
         "List what NOT-taken decisions (AVOID / WAIT / DO_NOT_AVERAGE_DOWN) would have been worth for a shadow branch (default LIVE), newest decision first. Rows exist at dual horizons (21 interim for loop speed, 63 full-quarter residual). `credit` is SIGNED and in NAV fractions. Optional status filter; default limit 50 (max 200).",
-      inputSchema: listCounterfactualsInputSchema.shape,
+      inputSchema: mcpInput(listCounterfactualsInputSchema),
     },
     async (args, extra) => {
       const parsed = parseTool(listCounterfactualsInputSchema, args);
@@ -467,7 +469,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List evolution log",
       description:
         "Read the APPEND-ONLY evolution audit log (proposals, rejections, kernel attempts, promotions, kills, scores), newest first. Rejections are logged too — read them before re-proposing. Default limit 50 (max 200).",
-      inputSchema: listEvolutionLogInputSchema.shape,
+      inputSchema: mcpInput(listEvolutionLogInputSchema),
     },
     async (args) => {
       const parsed = parseTool(listEvolutionLogInputSchema, args);
@@ -482,7 +484,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "Get rule version",
       description:
         "Metadata for one RuleVersion: status, lane, limits, changedPaths, direction/scope, reasoningPattern, outcome. Never returns prompt text — use get_prompt for the ruleset you are running.",
-      inputSchema: getRuleVersionInputSchema.shape,
+      inputSchema: mcpInput(getRuleVersionInputSchema),
     },
     async (args) => {
       const parsed = parseTool(getRuleVersionInputSchema, args);
@@ -499,7 +501,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List rule versions",
       description:
         "List RuleVersion metadata (newest first), optionally filtered by status. Metadata only — never prompt text. Default limit 20 (max 100).",
-      inputSchema: listRuleVersionsInputSchema.shape,
+      inputSchema: mcpInput(listRuleVersionsInputSchema),
     },
     async (args) => {
       const parsed = parseTool(listRuleVersionsInputSchema, args);
@@ -514,7 +516,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "Get kernel clauses",
       description:
         "The pinned kernel clauses (id + sha256 + canonical text) from the deployed bundle. Read this BEFORE proposing: any change that edits a line inside a kernel fence is rejected and logged as a KERNEL_ATTEMPT.",
-      inputSchema: {},
+      inputSchema: mcpInput(z.object({})),
     },
     async () => textJson(getKernel()),
   );
@@ -525,7 +527,7 @@ export function registerAgentMcpReadTools(server: McpServer): void {
       title: "List rule sections",
       description:
         "Section index for pin digests: per-file `## N.` ids, heading lines, and sha256. Default (LIVE) reads the ACTIVE row the same way propose_rule_change / apply_gap_fix pin — writePin=true. Call BEFORE those writes for sectionId + expectedSectionSha. branch=CANDIDATE is inspection-only (writePin=false). Never returns section body — use get_prompt. Optional file filter (e.g. `_shared`).",
-      inputSchema: listRuleSectionsInputSchema.shape,
+      inputSchema: mcpInput(listRuleSectionsInputSchema),
     },
     async (args) => {
       const parsed = parseTool(listRuleSectionsInputSchema, args);
@@ -545,7 +547,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Log trade",
       description:
         "Log a trade with idempotencyKey; reconciles Portfolio.shares, avg cost, and Config cash in one transaction. Hard caps → conflict (do not retry). Soft tier-band mismatches → warnings[]. Never writes prices.",
-      inputSchema: logTradeInputSchema.shape,
+      inputSchema: mcpInput(logTradeInputSchema),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -569,7 +571,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Upsert daily log",
       description:
         "Upsert DailyLog on (logDate, routineType). Default routineType=DAILY; Earnings must pass EARNINGS so the two do not overwrite each other. Narrative fields are ReportBlock[]. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt). A CANDIDATE DAILY log is rejected with pass_a_incomplete until LIVE PAPER decision reviews exist for that date.",
-      inputSchema: dailyLogInputSchema.shape,
+      inputSchema: mcpInput(dailyLogInputSchema),
     },
     async (args, extra) => {
       const parsed = parseTool(dailyLogInputSchema, args);
@@ -590,7 +592,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Upsert stock report",
       description:
         "Upsert StockReport on (reportType, reportDate). content is ReportBlock[]. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt).",
-      inputSchema: stockReportInputSchema.shape,
+      inputSchema: mcpInput(stockReportInputSchema),
     },
     async (args, extra) => {
       const parsed = parseTool(stockReportInputSchema, args);
@@ -607,10 +609,10 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Patch portfolio",
       description:
         "Patch portfolio metadata (action, stopLoss, sleeve, conviction, thesis/pageNotes, entryZone, addZone, nextAddTrigger, keyRisk, theme, riskLevel, marketCapBucket, analystRating, analystTarget, beatRate, impliedMove, earningsDate). Zones up to 2000 chars; beatRate up to 1000. Writing analystTarget recomputes upsidePct from stored currentPrice. Does NOT write currentPrice/shares/avg/upsidePct/socialScore. For append-only daily notes use append_page_notes.",
-      inputSchema: {
+      inputSchema: mcpInput(z.object({
         ticker: z.string().min(1).describe("Ticker symbol"),
         ...patchPortfolioInputSchema.shape,
-      },
+      })),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -632,7 +634,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Upsert watchlist",
       description:
         "Upsert a watchlist row by ticker. May set analystTarget/bullTarget/stopLoss/entryZone/earningsDate; entryZone up to 2000 chars. Writing analystTarget recomputes upsidePct. Does not write currentPrice or upsidePct directly.",
-      inputSchema: upsertWatchlistInputSchema.shape,
+      inputSchema: mcpInput(upsertWatchlistInputSchema),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -649,7 +651,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Append page notes",
       description:
         "Append ReportBlock[] to portfolio or watchlist pageNotes (append-only). Response returns only the newest ~3 dated entries plus totals — use get_page_notes for older history.",
-      inputSchema: appendPageNotesInputSchema.shape,
+      inputSchema: mcpInput(appendPageNotesInputSchema),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -668,7 +670,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Get page notes history",
       description:
         "Paginated pageNotes for one portfolio or watchlist ticker (newest first; legacy mega-paragraphs are split into dated entries). Use when pageNotesTruncated=true on context/list responses. Default limit 20.",
-      inputSchema: getPageNotesInputSchema.shape,
+      inputSchema: mcpInput(getPageNotesInputSchema),
     },
     async (args) => {
       const parsed = parseTool(getPageNotesInputSchema, args);
@@ -685,7 +687,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Upsert decision review",
       description:
         "Create/update a Decision Review Log row. Supply idempotencyKey to safely retry (bare key, no LIVE:/CANDIDATE:/LIVE:PAPER: prefix). book=PAPER means the paper book for that branch is the book under management; mcp:shadow is always PAPER and may address branch LIVE or CANDIDATE. New CANDIDATE paper rows are rejected with pass_a_incomplete until LIVE PAPER reviews exist for that date. evidence[].observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date (e.g. '2026-08-11 US close'). Defaults reviewStatus to PENDING. Write narrative in plain, concise English for a non-technical reader (see the Writing for Ivan note in get_prompt).",
-      inputSchema: upsertDecisionReviewInputSchema.shape,
+      inputSchema: mcpInput(upsertDecisionReviewInputSchema),
     },
     async (args, extra) => {
       const parsed = parseTool(upsertDecisionReviewInputSchema, args);
@@ -706,7 +708,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Add evidence",
       description:
         "Append EvidenceItem rows to an existing Decision Review (by decisionReviewId or idempotencyKey — bare key, no prefix — within branch + book; default LIVE / REAL, branch=CANDIDATE is always PAPER, pass book=PAPER for LIVE paper rows). observedAt accepts YYYY-MM-DD, ISO datetime, or a session label starting with a date. Additive — use upsert_decision_review's evidence[] to replace-on-replay instead. 404 when the DR is not found on that branch/book.",
-      inputSchema: addEvidenceFieldsSchema.shape,
+      inputSchema: mcpInput(addEvidenceFieldsSchema),
     },
     async (args, extra) => {
       const parsed = parseTool(addEvidenceInputSchema, args);
@@ -727,7 +729,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Upsert content document",
       description:
         "Replace Strategy Lessons Summary or Investment Style Profile body (ReportBlock[]).",
-      inputSchema: upsertContentPageInputSchema.shape,
+      inputSchema: mcpInput(upsertContentPageInputSchema),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -744,7 +746,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Demote or delete watchlist",
       description:
         "Soft-demote by default (sets action=DEMOTED, keeps the row — Cowork §6). Pass hard=true to permanently delete.",
-      inputSchema: {
+      inputSchema: mcpInput(z.object({
         ticker: z.string().min(1).describe("Ticker to demote/remove"),
         hard: z
           .boolean()
@@ -756,7 +758,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
           .describe("Soft-demote action (default DEMOTED)"),
         // Real-book write: LIVE only.
         branch: realBookBranchGuard,
-      },
+      })),
     },
     async ({ ticker, hard, action }, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -779,7 +781,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       description:
         "Rebuild Config TRACKED_TICKERS from Portfolio + active Watchlist. Includes rows with action=null; excludes only DEMOTED/DROPPED. Prefer this over patch_config for ticker list hygiene.",
       // Real-book write: LIVE only.
-      inputSchema: { branch: realBookBranchGuard },
+      inputSchema: mcpInput(z.object({ branch: realBookBranchGuard })),
     },
     async (_args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -793,7 +795,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
     {
       title: "Upsert trend",
       description: "Upsert a trend by trendName.",
-      inputSchema: upsertTrendInputSchema.shape,
+      inputSchema: mcpInput(upsertTrendInputSchema),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -810,7 +812,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Upsert idea",
       description:
         "Upsert an idea by stockSector or leadTicker. foundVia up to 1000 chars. Does not write prices.",
-      inputSchema: upsertIdeaFieldsSchema.shape,
+      inputSchema: mcpInput(upsertIdeaFieldsSchema),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -827,7 +829,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Propose rule change",
       description:
         "Propose a CANDIDATE ruleset (prose hunks and/or limits changes). Every prose hunk REQUIRES sectionId + expectedSectionSha from list_rule_sections; newText is the full section (heading included) — whole-file swaps are refused with 400. The SERVER assigns the lane — any `lane` you pass is ignored and recorded. Requires cited scored decision reviews (≥3, ≥2 tickers, ≥2 ISO weeks, ≥1 wrong outcome), a falsifiable counterCase (≥40 chars) and a measurable successMetric. The change must be able to alter paper DECISIONS: it must change a limit or a section of _shared, daily or earnings (edits confined to weekly/monthly are refused as no_decision_surface), and a candidate whose book takes exactly the same actions as LIVE's for 10 paired sessions is ended INCONCLUSIVE (no_divergence) — labelling-only rules cannot be tested this way. Kernel edits, drift-rail breaches and eligibility failures are rejected AND appended to the evolution log.",
-      inputSchema: proposeRuleChangeFieldsSchema.shape,
+      inputSchema: mcpInput(proposeRuleChangeFieldsSchema),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -846,7 +848,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Apply gap fix",
       description:
         "Immediately patch ONE section of the ACTIVE ruleset for a typo / contradiction / clarification (≤40 changed lines). sectionId + expectedSectionSha are REQUIRED (from list_rule_sections); mismatch is a 409. Not a rule change: use propose_rule_change for anything that alters behaviour. An in-flight candidate is rebased, or killed if it touched the same section.",
-      inputSchema: applyGapFixInputSchema.shape,
+      inputSchema: mcpInput(applyGapFixInputSchema),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);
@@ -865,7 +867,7 @@ export function registerAgentMcpWriteTools(server: McpServer): void {
       title: "Score rule version",
       description:
         "Compute the retrospective HELPED/NEUTRAL/HURT outcome of a RETIRED or KILLED rule version from the fitness ledger. `outcomeClaim` is recorded under outcomeDetail.agentClaim and logged, but NEVER used as the outcome — the server scores it. Below 10 paired sessions the call returns `preview: true, outcome: null` and writes NOTHING: the version stays unscored until its series is long enough.",
-      inputSchema: scoreRuleVersionInputSchema.shape,
+      inputSchema: mcpInput(scoreRuleVersionInputSchema),
     },
     async (args, extra) => {
       const blocked = denyRealBookWrite(extra);

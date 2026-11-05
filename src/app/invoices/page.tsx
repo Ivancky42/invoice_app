@@ -7,12 +7,11 @@ import { listRecurringInvoices } from "@/lib/invoicing/recurring";
 export const dynamic = "force-dynamic";
 
 export default async function InvoicesDashboard() {
-  const [docs, defaultProfile] = await Promise.all([
+  const [docs, defaultProfile, counts, overdue, recurring] = await Promise.all([
     prisma.document.findMany({ orderBy: { createdAt: "desc" }, take: 5, include: { company: true } }),
     prisma.companyProfile.findFirst({ where: { isDefault: true } }),
-  ]);
-  const [counts, overdue, recurring] = await Promise.all([
     prisma.document.groupBy({ by: ["type"], _count: { _all: true } }),
+    // Unpaid invoices only (a handful); overdue needs the derived due date, so it filters in memory.
     listDocuments({ overdueOnly: true, limit: 5 }),
     listRecurringInvoices({ status: ["ACTIVE"] }),
   ]);
@@ -33,7 +32,7 @@ export default async function InvoicesDashboard() {
         {(["QUOTATION", "INVOICE", "DELIVERY_ORDER"] as const).map((t) => {
           const c = counts.find((x) => x.type === t)?._count._all ?? 0;
           return (
-            <Link key={t} href={`/documents?type=${t}`} className="card p-5 hover:shadow-sm transition">
+            <Link key={t} href={`/documents?type=${t}`} className="card p-5 hover:shadow-xs transition">
               <div className="text-sm text-gray-500">{DOC_LABELS[t]}s</div>
               <div className="text-3xl font-semibold mt-2">{c}</div>
             </Link>

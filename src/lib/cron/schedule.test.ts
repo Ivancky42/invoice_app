@@ -96,6 +96,17 @@ describe("shouldRunJob", () => {
     });
   });
 
+  it("re-runs an everyTick job that already succeeded today", () => {
+    expect(
+      shouldRunJob({ ...daily("recurring_invoices"), everyTick: true }, ledgerOf({ recurring_invoices: "SUCCESS" }), DAY),
+    ).toEqual({ run: true });
+  });
+
+  it("keeps recurring_invoices first, dependency-free and everyTick", async () => {
+    const { CRON_JOBS, RECURRING_INVOICES_JOB } = await import("@/lib/cron/jobs");
+    expect(CRON_JOBS[0]).toMatchObject({ job: RECURRING_INVOICES_JOB, dependsOn: [], everyTick: true });
+  });
+
   it("re-runs a succeeded job when forced", () => {
     expect(
       shouldRunJob(daily("price_sync"), ledgerOf({ price_sync: "SUCCESS" }), DAY, { force: true }),

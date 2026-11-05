@@ -14,8 +14,15 @@ const STATUS_COLORS: Record<string, string> = {
   CANCELLED: "bg-red-100 text-red-700",
 };
 
-export default async function DocDetail({ params }: { params: Promise<{ id: string }> }) {
+export default async function DocDetail({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ recurring_error?: string }>;
+}) {
   const { id } = await params;
+  const { recurring_error: recurringError } = await searchParams;
   const doc = await prisma.document.findUnique({
     where: { id },
     include: {
@@ -90,6 +97,13 @@ export default async function DocDetail({ params }: { params: Promise<{ id: stri
           </form>
         </div>
       </div>
+
+      {recurringError && !doc.recurringInvoice && (
+        <div className="card p-3 text-sm text-red-700 bg-red-50">
+          The invoice was saved, but its recurring schedule could not be created: {recurringError}. Use{" "}
+          <Link href={`/recurring/new?from=${doc.id}`} className="underline">Make recurring</Link> to try again.
+        </div>
+      )}
 
       {doc.children.length > 0 && (
         <div className="card p-4 text-sm">

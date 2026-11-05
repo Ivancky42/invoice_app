@@ -59,7 +59,7 @@ type Props = {
   };
   companies: CompanyOption[];
   clients: ClientOption[];
-  saveAction: (data: any) => Promise<{ id: string }>;
+  saveAction: (data: any) => Promise<{ id: string; recurringError?: string }>;
 };
 
 export default function DocumentForm({ mode, initial, companies, clients, saveAction }: Props) {
@@ -150,7 +150,12 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
               }
             : null,
       });
-      router.push(`/documents/${res.id}`);
+      const recurringError = (res as { recurringError?: string }).recurringError;
+      router.push(
+        recurringError
+          ? `/documents/${res.id}?recurring_error=${encodeURIComponent(recurringError.slice(0, 300))}`
+          : `/documents/${res.id}`,
+      );
       router.refresh();
     });
   }
@@ -265,7 +270,7 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
               <input
                 type="number"
                 min={1}
-                className="input w-20"
+                className="input w-20!"
                 value={repeatInterval}
                 onChange={(e) => setRepeatInterval(parseInt(e.target.value) || 1)}
               />
@@ -284,7 +289,7 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
               <input
                 type="number"
                 min={2}
-                className="input w-20"
+                className="input w-20!"
                 placeholder="∞"
                 value={repeatTotal}
                 onChange={(e) => setRepeatTotal(e.target.value)}

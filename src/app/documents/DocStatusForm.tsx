@@ -26,7 +26,7 @@ export default function DocStatusForm({
         value={status}
         onValueChange={setStatus}
         options={STATUS_OPTIONS}
-        triggerClassName="!w-auto min-w-[8rem]"
+        triggerClassName="w-auto! min-w-32"
         aria-label="Document status"
       />
       <button className="btn" type="submit">

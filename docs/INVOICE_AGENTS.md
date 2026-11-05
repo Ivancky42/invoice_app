@@ -12,6 +12,7 @@ A shadow-only (`mcp:shadow`) connector is refused by every billing tool.
 | `get_invoice` | One document by id **or number** (`INV-2026-0007`): lines, totals, parent/children, schedule. |
 | `get_invoice_pdf` | The PDF as an embedded `application/pdf` resource **and** a signed download link (no PIN, 7 days by default, max 90). |
 | `get_billing_summary` | Per company: invoiced, collected, outstanding, overdue, drafts, open quotes; next recurring run. |
+| `get_billing_report` | Flat compact rows for dashboards: `view=documents` (with effective due date and days overdue) or `view=recurring` (with next run and amount per invoice); optional company-name and issue-date filters (max 5000 rows, `cut` flag). Feeds the billing dashboard artifact. |
 | `create_invoice` | New invoice (default) / quotation / DO. Client autofill from saved clients; tax and notes from the company profile; Net-N → due date. |
 | `update_invoice` | Patch any field; `items` replaces the lines; totals recomputed. |
 | `set_invoice_status` | DRAFT / ISSUED / PAID / CANCELLED. Issuing derives a due date from Net-N terms if none. |
@@ -43,10 +44,14 @@ A schedule is an invoice template + a cadence:
   `{{date}}`, `{{n}}`, `{{of}}` — e.g. `Retainer {{period}} ({{n}}/{{of}})`.
   Making an existing invoice recurring rewrites its own month (“October 2026”) to
   `{{period}}` automatically.
+- Making an existing invoice recurring continues its series: if the next period's date has
+  already passed (an invoice dated 3 Oct made recurring on 4 Nov), that invoice is generated
+  right away, dated 3 Nov. Pass `startDate` to start later instead.
 
 **When they run.** The `recurring_invoices` job is first in the daily `/api/cron/tick`
 (22:00 UTC = 06:00 MYT), so an invoice dated the 5th is created around 06:00 on the 5th.
-A schedule whose first date is today bills immediately on creation. If the cron misses
+A schedule whose first date is today bills immediately on creation. The job runs on every
+tick (it is idempotent), so a manual re-run of the tick can never make it skip a billing day. If the cron misses
 days, the next run catches up — each invoice dated its own slot (max 24 per run). A slot
 can never be billed twice (unique per schedule + date, row-locked generation). Pausing
 then resuming skips the dates missed while paused.

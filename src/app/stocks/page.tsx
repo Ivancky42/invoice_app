@@ -226,23 +226,23 @@ export default async function StocksOverview() {
       <StocksDailyBriefCard />
 
       <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Link href="/stocks/portfolio" className="card p-4 hover:shadow-sm transition">
+        <Link href="/stocks/portfolio" className="card p-4 hover:shadow-xs transition">
           <div className="text-xs text-gray-500">Holdings</div>
           <div className="text-2xl font-semibold mt-1">{portfolio.length}</div>
         </Link>
-        <Link href="/stocks/watchlist" className="card p-4 hover:shadow-sm transition">
+        <Link href="/stocks/watchlist" className="card p-4 hover:shadow-xs transition">
           <div className="text-xs text-gray-500">Watching</div>
           <div className="text-2xl font-semibold mt-1">{watchlist.length}</div>
         </Link>
-        <Link href="/stocks/trades" className="card p-4 hover:shadow-sm transition">
+        <Link href="/stocks/trades" className="card p-4 hover:shadow-xs transition">
           <div className="text-xs text-gray-500">Open trades</div>
           <div className="text-2xl font-semibold mt-1">{openTrades}</div>
         </Link>
-        <Link href="/stocks/decisions" className="card p-4 hover:shadow-sm transition">
+        <Link href="/stocks/decisions" className="card p-4 hover:shadow-xs transition">
           <div className="text-xs text-gray-500">Decisions</div>
           <div className="text-sm font-medium mt-2 text-gray-700">Review log →</div>
         </Link>
-        <Link href="/stocks/shadow" className="card p-4 hover:shadow-sm transition">
+        <Link href="/stocks/shadow" className="card p-4 hover:shadow-xs transition">
           <div className="text-xs text-gray-500">Shadow test — are the new rules better?</div>
           <div className="text-sm font-medium mt-2 text-gray-700">Evolution loop →</div>
         </Link>

@@ -22,10 +22,10 @@ export default async function RecurringDetail({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ edit?: string }>;
+  searchParams: Promise<{ edit?: string; error?: string }>;
 }) {
   const { id } = await params;
-  const { edit } = await searchParams;
+  const { edit, error } = await searchParams;
   let s;
   try {
     s = await getRecurringInvoice(id);
@@ -120,6 +120,8 @@ export default async function RecurringDetail({
           </form>
         </div>
       </div>
+
+      {error && <div className="card p-3 text-sm text-red-700 bg-red-50">{error}</div>}
 
       {s.lastError && (
         <div className="card p-3 text-sm text-red-700 bg-red-50">Last run failed: {s.lastError}</div>
