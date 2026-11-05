@@ -124,4 +124,15 @@ describe("renderDocPDF", () => {
     expect(out).not.toContain("2,000.00");
     expect(out).toContain("Received in good order and condition");
   });
+
+  test.runIf(hasPdftotext())("quotations show a validity date and an acceptance block", async () => {
+    const quote = { ...invoice, type: "QUOTATION", number: "QUO-2026-0009", dueDate: null };
+    const out = text(await renderDocPDF(quote, company));
+    expect(out).toContain("Valid until");
+    expect(out).toContain("1 December 2026"); // issue date + 30 days
+    expect(out).toContain("Accepted by Person Edge Sdn. Bhd.");
+    expect(out).not.toContain("payment reference");
+    const dated = text(await renderDocPDF({ ...quote, dueDate: day("2026-11-15") }, company));
+    expect(dated).toContain("15 November 2026");
+  });
 });

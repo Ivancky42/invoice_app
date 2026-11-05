@@ -1,6 +1,7 @@
 import { Document, Font, Page, Text, View, StyleSheet, Image, renderToBuffer } from "@react-pdf/renderer";
 import { resolveLogoSourceForPdf } from "./logo-storage";
 import { DOC_LABELS, LineItem, formatMoney } from "./types";
+import { quoteValidUntil } from "./invoicing/schedule";
 import React from "react";
 
 // Wrap at spaces only: the default hyphenator splits words ("Re-tainer"), which reads poorly on an invoice.
@@ -155,6 +156,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginTop: 36,
   },
+  acceptNote: { marginTop: 30, color: SOFT },
   sigCol: { width: "44%" },
   sigLine: {
     borderBottomWidth: 1,
@@ -281,6 +283,7 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
   const label = DOC_LABELS[doc.type] ?? "Document";
   const isInvoice = doc.type === "INVOICE";
   const isDeliveryOrder = doc.type === "DELIVERY_ORDER";
+  const isQuotation = doc.type === "QUOTATION";
   const badge = doc.status ? BADGES[doc.status] : undefined;
   const showTax = doc.taxRate > 0 || doc.taxAmount > 0;
   const bank = isInvoice ? lines(company?.bankDetails) : [];
@@ -336,9 +339,8 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
               <View style={styles.meta}>
                 <MetaRow label={`${label} no.`} value={doc.number} strong />
                 <MetaRow label="Date" value={pdfDate(doc.issueDate)} />
-                {doc.dueDate && !isDeliveryOrder ? (
-                  <MetaRow label="Due date" value={pdfDate(doc.dueDate)} strong={isInvoice} />
-                ) : null}
+                {isInvoice && doc.dueDate ? <MetaRow label="Due date" value={pdfDate(doc.dueDate)} strong /> : null}
+                {isQuotation ? <MetaRow label="Valid until" value={pdfDate(quoteValidUntil(doc))} strong /> : null}
                 {doc.paymentTerms && !isDeliveryOrder ? <MetaRow label="Terms" value={doc.paymentTerms} /> : null}
                 {doc.poNumber && (isInvoice || isDeliveryOrder) ? (
                   <MetaRow label="PO no." value={doc.poNumber} />
@@ -461,16 +463,27 @@ export function buildDocPDF(doc: DocLike, company: Profile) {
             </View>
           ) : null}
 
-          {isDeliveryOrder ? (
-            <View style={styles.signatures} wrap={false}>
-              <View style={styles.sigCol}>
-                <View style={styles.sigLine} />
-                <Text style={styles.sigCaption}>Issued by {companyName}</Text>
-              </View>
-              <View style={styles.sigCol}>
-                <View style={styles.sigLine} />
-                <Text style={styles.sigCaption}>Received in good order and condition</Text>
-                <Text style={styles.sigCaption}>Name, signature, company stamp and date</Text>
+          {isDeliveryOrder || isQuotation ? (
+            <View wrap={false}>
+              {isQuotation ? (
+                <Text style={styles.acceptNote}>
+                  To accept this quotation, please sign and return a copy by {pdfDate(quoteValidUntil(doc))}.
+                </Text>
+              ) : null}
+              <View style={isQuotation ? [styles.signatures, { marginTop: 6 }] : styles.signatures}>
+                <View style={styles.sigCol}>
+                  <View style={styles.sigLine} />
+                  <Text style={styles.sigCaption}>
+                    {isQuotation ? `Authorised signature, ${companyName}` : `Issued by ${companyName}`}
+                  </Text>
+                </View>
+                <View style={styles.sigCol}>
+                  <View style={styles.sigLine} />
+                  <Text style={styles.sigCaption}>
+                    {isQuotation ? `Accepted by ${doc.clientName}` : "Received in good order and condition"}
+                  </Text>
+                  <Text style={styles.sigCaption}>Name, signature, company stamp and date</Text>
+                </View>
               </View>
             </View>
           ) : null}
