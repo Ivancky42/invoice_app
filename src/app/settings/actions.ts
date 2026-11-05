@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { removeStoredLogo, saveLogoFile } from "@/lib/logo-storage";
-import { parseAddressList } from "@/lib/invoicing/email";
+import { parseAddressList } from "@/lib/invoicing/emailAddress";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 

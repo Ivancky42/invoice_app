@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import AppSelect from "@/components/AppSelect";
 import { calcTotals, formatMoney, PAYMENT_TERMS_PRESETS, type DiscountType, type LineItem } from "@/lib/types";
 import {
+  addDays,
   formatDateOnly,
   parseDateOnly,
   previewOccurrences,
@@ -49,6 +50,8 @@ export type RecurringFormInitial = {
   notes: string;
   terms: string;
   occurrencesGenerated?: number;
+  /** Edit mode: last date already billed; the preview starts after it. */
+  lastRunDate?: string | null;
 };
 
 const FREQ_OPTIONS = [
@@ -103,7 +106,15 @@ export default function RecurringForm({
       // A series continued from a linked invoice bills passed slots on save; otherwise
       // dates before today are skipped.
       const continuing = mode === "create" && Boolean(linkDocument) && linkAsFirst;
-      const from = continuing || shape.startDate >= today ? shape.startDate : today;
+      const afterLast = initial.lastRunDate ? addDays(parseDateOnly(initial.lastRunDate), 1) : null;
+      const from =
+        mode === "edit" && afterLast
+          ? afterLast > today
+            ? afterLast
+            : today
+          : continuing || shape.startDate >= today
+            ? shape.startDate
+            : today;
       const dates = previewOccurrences(shape, from, already, 4);
       return dates.map((d, i) => ({
         date: formatDateOnly(d),
@@ -120,7 +131,7 @@ export default function RecurringForm({
     } catch {
       return [];
     }
-  }, [f, endMode, already, mode, linkDocument, linkAsFirst]);
+  }, [f, endMode, already, mode, linkDocument, linkAsFirst, initial.lastRunDate]);
 
   function selectClient(id: string) {
     const c = clients.find((x) => x.id === id);
@@ -163,7 +174,7 @@ export default function RecurringForm({
         endDate: endMode === "date" ? f.endDate || null : null,
         maxOccurrences: endMode === "count" ? Number(f.maxOccurrences) || null : null,
         autoIssue: f.autoIssue,
-        autoEmail: f.autoEmail && f.autoIssue,
+        autoEmail: f.autoEmail && f.autoIssue && Boolean(companies.find((c) => c.id === f.companyId)?.canEmail),
         emailTo: f.emailTo.trim() || null,
         dueInDays: f.dueInDays == null || Number.isNaN(f.dueInDays) ? null : f.dueInDays,
         ...(f.companyId ? { companyId: f.companyId } : {}),
@@ -281,7 +292,7 @@ export default function RecurringForm({
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
-                checked={f.autoEmail && f.autoIssue}
+                checked={f.autoEmail && f.autoIssue && Boolean(companies.find((c) => c.id === f.companyId)?.canEmail)}
                 disabled={!f.autoIssue || !companies.find((c) => c.id === f.companyId)?.canEmail}
                 onChange={(e) => set("autoEmail", e.target.checked)}
               />

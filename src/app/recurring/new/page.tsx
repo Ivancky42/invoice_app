@@ -2,7 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly, nextOccurrenceAfter, templatizePeriod, todayInTimeZone } from "@/lib/invoicing/schedule";
 import type { DiscountType, LineItem } from "@/lib/types";
-import { resendConfigured } from "@/lib/invoicing/email";
+import { canEmailFrom } from "@/lib/invoicing/email";
 import RecurringForm, { type RecurringFormInitial } from "../RecurringForm";
 
 export const dynamic = "force-dynamic";
@@ -120,7 +120,7 @@ export default async function NewRecurringPage({ searchParams }: { searchParams:
         name: c.name,
         currency: c.currency,
         taxRate: c.taxRate,
-        canEmail: Boolean(c.emailFrom && resendConfigured()),
+        canEmail: canEmailFrom(c),
       }))}
       clients={clients.map((c) => ({ id: c.id, name: c.name, address: c.address, email: c.email, phone: c.phone }))}
       linkDocument={

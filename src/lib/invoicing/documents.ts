@@ -14,6 +14,7 @@ import type {
 import { getAppOrigin } from "@/lib/agent/mcp-oauth";
 import { nextDocumentNumber } from "@/lib/numbering";
 import { prisma } from "@/lib/prisma";
+import { InvalidAddressError, parseAddressList } from "@/lib/invoicing/emailAddress";
 import { calcTotals, NEXT_STAGE, type DiscountType, type LineItem } from "@/lib/types";
 import type {
   CreateDocumentInput,
@@ -29,6 +30,32 @@ import {
   parseDateOnly,
   todayInTimeZone,
 } from "@/lib/invoicing/schedule";
+
+/** parseAddressList, but a bad address is an InvoicingError ("invalid") for callers. */
+export function checkedAddresses(raw: string | string[] | null | undefined): string[] {
+  try {
+    return parseAddressList(raw);
+  } catch (e) {
+    if (e instanceof InvalidAddressError) throw new InvoicingError("invalid", e.message);
+    throw e;
+  }
+}
+
+/**
+ * The profile a document is issued (and emailed) from: its own, else the default, else any.
+ * The PDF, the sender and the invoice page all resolve it this way.
+ */
+export async function companyForDocument(doc: { company?: CompanyProfile | null; companyId?: string | null }) {
+  if (doc.company) return doc.company;
+  if (doc.companyId) {
+    const own = await prisma.companyProfile.findUnique({ where: { id: doc.companyId } });
+    if (own) return own;
+  }
+  return (
+    (await prisma.companyProfile.findFirst({ where: { isDefault: true } })) ??
+    (await prisma.companyProfile.findFirst())
+  );
+}
 
 export class InvoicingError extends Error {
   constructor(
@@ -689,12 +716,11 @@ export async function upsertCompany(input: {
   emailBcc?: string | null;
 }) {
   // Validate email settings up front so a typo surfaces here, not at 06:00.
-  const { parseAddressList } = await import("@/lib/invoicing/email");
   if (input.emailFrom) {
-    const from = parseAddressList(input.emailFrom);
+    const from = checkedAddresses(input.emailFrom);
     if (from.length !== 1) throw new InvoicingError("invalid", "emailFrom must be exactly one address");
   }
-  if (input.emailBcc) parseAddressList(input.emailBcc);
+  if (input.emailBcc) checkedAddresses(input.emailBcc);
   const { id, isDefault, ...rest } = input;
   const data: Prisma.CompanyProfileUpdateInput = {};
   for (const [k, v] of Object.entries(rest)) {

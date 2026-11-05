@@ -37,9 +37,18 @@ export default function EmailInvoiceForm({
 
   if (!open) {
     return (
-      <button className="btn" onClick={() => setOpen(true)}>
-        Email to client
-      </button>
+      <span className="inline-flex items-center gap-2">
+        <button
+          className="btn"
+          onClick={() => {
+            setResult(null);
+            setOpen(true);
+          }}
+        >
+          {result?.ok ? "Email again" : "Email to client"}
+        </button>
+        {result?.ok && <span className="text-sm text-green-700">{result.message}</span>}
+      </span>
     );
   }
 
@@ -70,6 +79,8 @@ export default function EmailInvoiceForm({
             start(async () => {
               const r = await action(documentId, { to, cc, message });
               setResult(r);
+              // Close on success: re-opening is a deliberate choice to send another copy.
+              if (r.ok) setOpen(false);
               router.refresh();
             })
           }

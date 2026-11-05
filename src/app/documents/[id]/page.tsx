@@ -5,7 +5,8 @@ import { DOC_LABELS, NEXT_STAGE, formatMoney, LineItem } from "@/lib/types";
 import DocStatusForm from "../DocStatusForm";
 import { convertDocument, deleteDocument, emailDocument, setStatus } from "../actions";
 import EmailInvoiceForm from "../EmailInvoiceForm";
-import { resendConfigured } from "@/lib/invoicing/email";
+import { canEmailFrom, resendConfigured } from "@/lib/invoicing/email";
+import { companyForDocument } from "@/lib/invoicing/documents";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,8 @@ export default async function DocDetail({
   const items = (doc.items as unknown as LineItem[]) ?? [];
   const next = NEXT_STAGE[doc.type];
   const company = doc.company;
+  // The profile the PDF and the email actually use (falls back to the default profile).
+  const sender = await companyForDocument(doc);
   const currency = company?.currency || "USD";
 
   async function doConvert() {
@@ -99,13 +102,15 @@ export default async function DocDetail({
             documentId={doc.id}
             number={doc.number}
             defaultTo={doc.clientEmail ?? ""}
-            canSend={Boolean(resendConfigured() && company?.emailFrom && doc.status !== "DRAFT")}
+            canSend={canEmailFrom(sender) && doc.status !== "DRAFT" && doc.status !== "CANCELLED"}
             disabledReason={
               !resendConfigured()
                 ? "Email isn't set up: add RESEND_API_KEY to the app's environment"
-                : !company?.emailFrom
-                  ? `Set "Email from" on the ${company?.name ?? "company"} profile in Settings`
-                  : "Issue it first: drafts can't be emailed"
+                : !sender?.emailFrom
+                  ? `Set "Email from" on the ${sender?.name ?? "company"} profile in Settings`
+                  : doc.status === "CANCELLED"
+                    ? "Cancelled documents can't be emailed"
+                    : "Issue it first: drafts can't be emailed"
             }
             action={emailDocument}
           />

@@ -3,24 +3,40 @@
  *
  * Config: RESEND_API_KEY (env) + a company profile's `emailFrom` on a Resend-verified
  * domain. Replies go to the profile's `email`; `emailBcc` gets a copy of every send.
- * Every attempt is recorded as an InvoiceEmail row.
+ * Every attempt — including ones refused before reaching Resend — is an InvoiceEmail row.
  *
  * Auto-email: a schedule with `autoEmail` marks each ISSUED invoice it generates
- * `emailPending`; `sendPendingInvoiceEmails` sends those (cron + right after generation),
- * retrying on the next run. Recurring sends use an idempotency key per invoice, so a retry
- * or an overlapping run can never email the same invoice twice.
+ * `emailPending`; it is sent right after generation and retried on later daily runs.
+ * Never twice: a retry only follows a failure Resend itself reported (so nothing was sent).
+ * When the outcome is unknown (timeout, dropped connection, idempotency conflict) the attempt
+ * is recorded "[unconfirmed]" and, once Resend's 24h idempotency window has passed, the
+ * invoice is flagged for a human to check instead of being re-sent blind. The PDF renders
+ * byte-identically, so a retry inside that window is deduplicated by Resend.
  */
+import type { CompanyProfile } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { DOC_LABELS, formatMoney, type LineItem } from "@/lib/types";
-import { InvoicingError, findDocumentRow } from "@/lib/invoicing/documents";
+import {
+  checkedAddresses,
+  companyForDocument,
+  findDocumentRow,
+  InvoicingError,
+} from "@/lib/invoicing/documents";
+import { parseAddressList } from "@/lib/invoicing/emailAddress";
 import { renderDocumentPdf } from "@/lib/invoicing/pdfRender";
 import { addDays, effectiveDueDate, formatDateOnly, todayInTimeZone } from "@/lib/invoicing/schedule";
 
+export { parseAddressList };
+
 const RESEND_URL = "https://api.resend.com/emails";
+const RESEND_TIMEOUT_MS = 20_000;
+/** Resend keeps idempotency keys 24h; an unconfirmed send is never retried after this. */
+const IDEMPOTENCY_WINDOW_MS = 23 * 60 * 60 * 1000;
 /** Auto-emails for invoices issued longer ago than this are dropped, not sent late. */
 export const AUTO_EMAIL_MAX_AGE_DAYS = 7;
 /** Give up on an auto-email after this many failed attempts. */
 export const AUTO_EMAIL_MAX_ATTEMPTS = 5;
+const UNCONFIRMED = "[unconfirmed] ";
 
 export type EmailTrigger = "app" | "agent" | "recurring";
 
@@ -28,17 +44,22 @@ export function resendConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY?.trim());
 }
 
-/** "a@x.com, b@y.com" → ["a@x.com", "b@y.com"]; drops blanks; validates shape. */
-export function parseAddressList(raw: string | string[] | null | undefined): string[] {
-  const parts = (Array.isArray(raw) ? raw : (raw ?? "").split(/[,;\n]/)).map((s) => s.trim()).filter(Boolean);
-  for (const p of parts) {
-    // Accept "Name <a@b.c>" or a bare address.
-    const addr = /<([^>]+)>\s*$/.exec(p)?.[1] ?? p;
-    if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(addr)) {
-      throw new InvoicingError("invalid", `Not an email address: "${p}"`);
-    }
+/** Can documents from this profile be emailed right now? (Used by pages and schedule saves.) */
+export function canEmailFrom(company: Pick<CompanyProfile, "emailFrom"> | null | undefined): boolean {
+  return Boolean(resendConfigured() && company?.emailFrom);
+}
+
+/**
+ * A Resend failure. `delivered: "no"` — Resend answered with an error, nothing was sent, a retry
+ * is safe. `"unknown"` — no usable answer (timeout, network, 409 idempotency conflict).
+ */
+export class ResendError extends Error {
+  constructor(
+    message: string,
+    public readonly delivered: "no" | "unknown",
+  ) {
+    super(message);
   }
-  return parts;
 }
 
 function escapeHtml(s: string): string {
@@ -50,6 +71,7 @@ const longDate = (d: Date) =>
 
 export type ComposeInput = {
   type: string;
+  status?: string;
   number: string;
   issueDate: Date;
   dueDate: Date | null;
@@ -69,7 +91,8 @@ export type ComposeInput = {
 export function composeInvoiceEmail(d: ComposeInput) {
   const label = DOC_LABELS[d.type] ?? "Document";
   const isInvoice = d.type === "INVOICE";
-  const due = isInvoice ? effectiveDueDate(d) : null;
+  const paid = isInvoice && d.status === "PAID";
+  const due = isInvoice && !paid ? effectiveDueDate(d) : null;
   const amount = formatMoney(d.total, d.currency);
   const subject = `${label} ${d.number} from ${d.companyName}${d.projectTitle ? ` – ${d.projectTitle}` : ""}`;
   const firstLine = d.items[0]?.description;
@@ -79,12 +102,16 @@ export function composeInvoiceEmail(d: ComposeInput) {
     ["Date", longDate(d.issueDate)],
     ...(due ? ([["Due", longDate(due)]] as [string, string][]) : []),
     ["Amount", amount],
+    ...(paid ? ([["Status", "Paid"]] as [string, string][]) : []),
     ...(firstLine ? ([["For", firstLine]] as [string, string][]) : []),
   ];
 
-  const intro = isInvoice
-    ? `Please find attached invoice ${d.number} for ${amount}${due ? `, due ${longDate(due)}` : ""}.`
-    : `Please find attached ${label.toLowerCase()} ${d.number} for ${amount}.`;
+  const intro = paid
+    ? `Here is a copy of invoice ${d.number} for ${amount}, which has been paid. Thank you!`
+    : isInvoice
+      ? `Please find attached invoice ${d.number} for ${amount}${due ? `, due ${longDate(due)}` : ""}.`
+      : `Please find attached ${label.toLowerCase()} ${d.number} for ${amount}.`;
+  const showPayment = isInvoice && !paid && Boolean(d.bankDetails);
 
   const text = [
     `Hi ${d.clientName},`,
@@ -93,7 +120,7 @@ export function composeInvoiceEmail(d: ComposeInput) {
     intro,
     "",
     ...rows.map(([k, v]) => `${k}: ${v}`),
-    ...(isInvoice && d.bankDetails ? ["", "Payment details:", d.bankDetails] : []),
+    ...(showPayment ? ["", "Payment details:", d.bankDetails!] : []),
     "",
     "Thank you,",
     d.companyName,
@@ -112,7 +139,7 @@ ${p(escapeHtml(intro))}
         `<tr><td style="padding:4px 12px 4px 0;color:#6b7280;white-space:nowrap;vertical-align:top">${escapeHtml(k)}</td><td style="padding:4px 0;font-weight:${k === "Amount" ? 600 : 400}">${escapeHtml(v)}</td></tr>`,
     )
     .join("")}</table>
-${isInvoice && d.bankDetails ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase">Payment details</p>${p(escapeHtml(d.bankDetails).replace(/\n/g, "<br>"))}` : ""}
+${showPayment ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase">Payment details</p>${p(escapeHtml(d.bankDetails!).replace(/\n/g, "<br>"))}` : ""}
 ${p(`Thank you,<br>${escapeHtml(d.companyName)}${d.companyEmail ? `<br><a href="mailto:${escapeHtml(d.companyEmail)}" style="color:#111827">${escapeHtml(d.companyEmail)}</a>` : ""}`)}
 </div></body></html>`;
 
@@ -131,34 +158,42 @@ type ResendPayload = {
   attachments: { filename: string; content: string }[];
 };
 
-/** POST to Resend. Returns the email id, or throws with Resend's own message. */
+/** POST to Resend. Returns the email id, or throws a ResendError saying whether it was delivered. */
 export async function postToResend(
   payload: ResendPayload,
   idempotencyKey: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
   const key = process.env.RESEND_API_KEY?.trim();
-  if (!key) throw new InvoicingError("invalid", "Email isn't configured: set RESEND_API_KEY in the app's environment");
-  const res = await fetchImpl(RESEND_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      "Idempotency-Key": idempotencyKey,
-    },
-    body: JSON.stringify(payload),
-  });
-  const body = (await res.json().catch(() => ({}))) as { id?: string; message?: string; name?: string };
-  if (!res.ok || !body.id) {
-    throw new Error(`Resend ${res.status}: ${body.message ?? body.name ?? "send failed"}`);
+  if (!key) throw new ResendError("Email isn't configured: set RESEND_API_KEY in the app's environment", "no");
+  let res: Response;
+  try {
+    res = await fetchImpl(RESEND_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(RESEND_TIMEOUT_MS),
+    });
+  } catch (e) {
+    // Timed out or the connection dropped: Resend may or may not have sent it.
+    throw new ResendError(`Resend didn't answer: ${e instanceof Error ? e.message : String(e)}`, "unknown");
   }
-  return body.id;
+  const body = (await res.json().catch(() => ({}))) as { id?: string; message?: string; name?: string };
+  if (res.ok && body.id) return body.id;
+  const message = `Resend ${res.status}: ${body.message ?? body.name ?? "send failed"}`;
+  // 409 = this idempotency key is in flight or was used with a different body: an earlier
+  // attempt may have been sent. A 2xx without an id is equally unreadable.
+  throw new ResendError(message, res.status === 409 || res.ok ? "unknown" : "no");
 }
 
 /**
- * Email one document to its client (or `to`), PDF attached. Records the attempt either way.
- * `idempotencyKey` defaults to a fresh one per call (a deliberate resend sends again);
- * recurring sends pass a fixed per-invoice key.
+ * Email one document to its client (or `to`), PDF attached. Every attempt is recorded,
+ * including ones refused before reaching Resend. Manual sends get a fresh idempotency key
+ * (a deliberate resend sends again); recurring sends pass a fixed per-invoice key.
  */
 export async function sendInvoiceEmail(
   idOrNumber: string,
@@ -173,57 +208,64 @@ export async function sendInvoiceEmail(
 ) {
   const row = await findDocumentRow(idOrNumber);
   const doc = await prisma.document.findUniqueOrThrow({ where: { id: row.id }, include: { company: true } });
-  const company =
-    doc.company ??
-    (await prisma.companyProfile.findFirst({ where: { isDefault: true } })) ??
-    (await prisma.companyProfile.findFirst());
-  if (!company?.emailFrom) {
-    throw new InvoicingError(
-      "invalid",
-      `${company?.name ?? "This company profile"} has no "Email from" address — set it in Settings (e.g. "${company?.name ?? "Company"} <billing@yourdomain>")`,
-    );
-  }
-  if (doc.status === "DRAFT") {
-    throw new InvoicingError("invalid", `${doc.number} is a DRAFT — issue it before emailing it`);
-  }
-  const to = parseAddressList(opts.to ?? doc.clientEmail);
-  if (to.length === 0) throw new InvoicingError("invalid", `${doc.number} has no client email — pass "to"`);
-  const cc = parseAddressList(opts.cc ?? null);
-  const bcc = parseAddressList(company.emailBcc);
-
-  const { subject, html, text } = composeInvoiceEmail({
-    type: doc.type,
-    number: doc.number,
-    issueDate: doc.issueDate,
-    dueDate: doc.dueDate,
-    paymentTerms: doc.paymentTerms,
-    clientName: doc.clientName,
-    projectTitle: doc.projectTitle,
-    items: (doc.items as unknown as LineItem[]) ?? [],
-    total: doc.total,
-    currency: company.currency,
-    companyName: company.name,
-    companyEmail: company.email,
-    bankDetails: company.bankDetails,
-    message: opts.message,
-  });
-
+  const attempt = {
+    to: typeof opts.to === "string" ? opts.to : (opts.to ?? []).join(", ") || (doc.clientEmail ?? ""),
+    cc: null as string | null,
+    bcc: null as string | null,
+    subject: `${DOC_LABELS[doc.type] ?? "Document"} ${doc.number}`,
+  };
   const record = (status: "SENT" | "FAILED", extra: { providerId?: string; error?: string }) =>
     prisma.invoiceEmail.create({
       data: {
         documentId: doc.id,
         status,
         trigger: opts.trigger,
-        to: to.join(", "),
-        cc: cc.length ? cc.join(", ") : null,
-        bcc: bcc.length ? bcc.join(", ") : null,
-        subject,
+        to: attempt.to || "(none)",
+        cc: attempt.cc,
+        bcc: attempt.bcc,
+        subject: attempt.subject,
         providerId: extra.providerId ?? null,
         error: extra.error?.slice(0, 1000) ?? null,
       },
     });
 
   try {
+    const company = await companyForDocument(doc);
+    if (!company?.emailFrom) {
+      throw new InvoicingError(
+        "invalid",
+        `${company?.name ?? "This company profile"} has no "Email from" address — set it in Settings (e.g. "${company?.name ?? "Company"} <billing@yourdomain>")`,
+      );
+    }
+    if (doc.status === "DRAFT") throw new InvoicingError("invalid", `${doc.number} is a DRAFT — issue it before emailing it`);
+    if (doc.status === "CANCELLED") throw new InvoicingError("invalid", `${doc.number} is CANCELLED — it can't be emailed`);
+    const to = checkedAddresses(opts.to ?? doc.clientEmail);
+    if (to.length === 0) throw new InvoicingError("invalid", `${doc.number} has no client email — pass "to"`);
+    const cc = checkedAddresses(opts.cc ?? null);
+    const bcc = checkedAddresses(company.emailBcc);
+    attempt.to = to.join(", ");
+    attempt.cc = cc.length ? cc.join(", ") : null;
+    attempt.bcc = bcc.length ? bcc.join(", ") : null;
+
+    const { subject, html, text } = composeInvoiceEmail({
+      type: doc.type,
+      status: doc.status,
+      number: doc.number,
+      issueDate: doc.issueDate,
+      dueDate: doc.dueDate,
+      paymentTerms: doc.paymentTerms,
+      clientName: doc.clientName,
+      projectTitle: doc.projectTitle,
+      items: (doc.items as unknown as LineItem[]) ?? [],
+      total: doc.total,
+      currency: company.currency,
+      companyName: company.name,
+      companyEmail: company.email,
+      bankDetails: company.bankDetails,
+      message: opts.message,
+    });
+    attempt.subject = subject;
+
     const rendered = await renderDocumentPdf(doc.id);
     if (!rendered) throw new InvoicingError("not_found", `No document "${idOrNumber}"`);
     const providerId = await postToResend(
@@ -245,88 +287,114 @@ export async function sendInvoiceEmail(
     if (doc.emailPending) await prisma.document.update({ where: { id: doc.id }, data: { emailPending: false } });
     return { sent: true as const, number: doc.number, to, cc, bcc, subject, providerId };
   } catch (e) {
+    const unknown = e instanceof ResendError && e.delivered === "unknown";
     const error = e instanceof Error ? e.message : String(e);
-    await record("FAILED", { error });
-    throw e instanceof InvoicingError ? e : new InvoicingError("invalid", `Email not sent: ${error}`);
+    await record("FAILED", { error: unknown ? UNCONFIRMED + error : error });
+    if (e instanceof InvoicingError) throw e;
+    throw new InvoicingError(
+      "invalid",
+      unknown
+        ? `Not sure the email went out (${error}). Check Resend before sending again.`
+        : `Email not sent: ${error}`,
+    );
   }
 }
 
+export type PendingEmailResult = {
+  sent: { number: string; to: string[] }[];
+  failed: { number: string; error: string }[];
+  dropped: { number: string; reason: string }[];
+};
+
 /**
- * Send every auto-email still pending (optionally only these documents). Invoices issued more
- * than AUTO_EMAIL_MAX_AGE_DAYS ago, or that failed AUTO_EMAIL_MAX_ATTEMPTS times, are given up
- * on (pending cleared, schedule.lastError set) so nothing is ever emailed long after the fact.
+ * Send pending auto-emails (all, one schedule's, or only `documentIds`), skipping
+ * `skipDocumentIds` (already tried this run). Gives up — clearing pending and flagging the
+ * schedule — on invoices issued more than AUTO_EMAIL_MAX_AGE_DAYS ago, after
+ * AUTO_EMAIL_MAX_ATTEMPTS failures, or when the last attempt's delivery is unconfirmed and
+ * outside Resend's idempotency window (a retry could email the client twice).
  */
 export async function sendPendingInvoiceEmails(
-  opts: { documentIds?: string[]; today?: Date; fetchImpl?: typeof fetch } = {},
-) {
+  opts: {
+    documentIds?: string[];
+    scheduleId?: string;
+    skipDocumentIds?: string[];
+    today?: Date;
+    now?: Date;
+    fetchImpl?: typeof fetch;
+  } = {},
+): Promise<PendingEmailResult> {
   const today = opts.today ?? todayInTimeZone();
+  const now = opts.now ?? new Date();
   const pending = await prisma.document.findMany({
-    where: { emailPending: true, ...(opts.documentIds ? { id: { in: opts.documentIds } } : {}) },
+    where: {
+      emailPending: true,
+      ...(opts.documentIds ? { id: { in: opts.documentIds } } : {}),
+      ...(opts.skipDocumentIds?.length ? { NOT: { id: { in: opts.skipDocumentIds } } } : {}),
+      ...(opts.scheduleId ? { recurringInvoiceId: opts.scheduleId } : {}),
+    },
     include: {
       recurringInvoice: { select: { id: true, emailTo: true, autoEmail: true } },
-      _count: { select: { emails: { where: { status: "FAILED", trigger: "recurring" } } } },
+      emails: { where: { trigger: "recurring", status: "FAILED" }, orderBy: { createdAt: "desc" } },
     },
     orderBy: { issueDate: "asc" },
   });
-  const sent: { number: string; to: string[] }[] = [];
-  const failed: { number: string; error: string }[] = [];
-  const dropped: { number: string; reason: string }[] = [];
+  const result: PendingEmailResult = { sent: [], failed: [], dropped: [] };
 
   for (const doc of pending) {
-    const tooOld = doc.issueDate < addDays(today, -AUTO_EMAIL_MAX_AGE_DAYS);
-    const tooManyTries = doc._count.emails >= AUTO_EMAIL_MAX_ATTEMPTS;
-    const switchedOff = !doc.recurringInvoice?.autoEmail;
-    if (tooOld || tooManyTries || switchedOff || doc.status !== "ISSUED") {
-      const reason = switchedOff
-        ? "auto-email was switched off"
-        : doc.status !== "ISSUED"
-          ? `status is ${doc.status}`
-          : tooOld
-            ? `issued ${formatDateOnly(doc.issueDate)}, more than ${AUTO_EMAIL_MAX_AGE_DAYS} days ago`
-            : `${AUTO_EMAIL_MAX_ATTEMPTS} failed attempts`;
+    const lastFailure = doc.emails[0];
+    const unconfirmedExpired =
+      lastFailure?.error?.startsWith(UNCONFIRMED) &&
+      now.getTime() - lastFailure.createdAt.getTime() > IDEMPOTENCY_WINDOW_MS;
+    const reason = !doc.recurringInvoice?.autoEmail
+      ? "auto-email was switched off"
+      : doc.status !== "ISSUED"
+        ? `status is ${doc.status}`
+        : doc.issueDate < addDays(today, -AUTO_EMAIL_MAX_AGE_DAYS)
+          ? `issued ${formatDateOnly(doc.issueDate)}, more than ${AUTO_EMAIL_MAX_AGE_DAYS} days ago`
+          : doc.emails.length >= AUTO_EMAIL_MAX_ATTEMPTS
+            ? `${AUTO_EMAIL_MAX_ATTEMPTS} failed attempts`
+            : unconfirmedExpired
+              ? "the last attempt's delivery couldn't be confirmed — check Resend's log before sending it again"
+              : null;
+    if (reason) {
       await prisma.document.update({ where: { id: doc.id }, data: { emailPending: false } });
-      if (doc.recurringInvoice && !switchedOff && doc.status === "ISSUED") {
+      if (doc.recurringInvoice?.autoEmail && doc.status === "ISSUED") {
         await prisma.recurringInvoice.update({
           where: { id: doc.recurringInvoice.id },
-          data: { lastError: `${doc.number} was not emailed: ${reason}. Send it from the invoice page.` },
+          data: { lastError: `${doc.number} was not emailed: ${reason}. Send it from the invoice page if needed.` },
         });
       }
-      dropped.push({ number: doc.number, reason });
+      result.dropped.push({ number: doc.number, reason });
       continue;
     }
     try {
       const r = await sendInvoiceEmail(doc.id, {
-        to: doc.recurringInvoice?.emailTo ?? null,
+        to: doc.recurringInvoice!.emailTo ?? null,
         trigger: "recurring",
-        // One key per invoice: a retry after a timeout can't send it twice.
+        // One key per invoice: inside Resend's 24h window a repeat is deduplicated.
         idempotencyKey: `recurring-invoice/${doc.id}`,
         fetchImpl: opts.fetchImpl,
       });
-      sent.push({ number: r.number, to: r.to });
+      result.sent.push({ number: r.number, to: r.to });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
-      failed.push({ number: doc.number, error });
-      if (doc.recurringInvoice) {
-        await prisma.recurringInvoice.update({
-          where: { id: doc.recurringInvoice.id },
-          data: { lastError: `Emailing ${doc.number} failed (will retry): ${error}`.slice(0, 1000) },
-        });
-      }
+      result.failed.push({ number: doc.number, error });
+      await prisma.recurringInvoice.update({
+        where: { id: doc.recurringInvoice!.id },
+        data: { lastError: `Emailing ${doc.number} failed: ${error}`.slice(0, 1000) },
+      });
     }
   }
-  return { sent, failed, dropped };
+  return result;
 }
 
-export async function listInvoiceEmails(documentId: string) {
-  const rows = await prisma.invoiceEmail.findMany({ where: { documentId }, orderBy: { createdAt: "desc" } });
-  return rows.map((r) => ({
-    status: r.status,
-    trigger: r.trigger,
-    to: r.to,
-    cc: r.cc,
-    bcc: r.bcc,
-    subject: r.subject,
-    error: r.error,
-    at: r.createdAt.toISOString(),
-  }));
+export function mergeEmailResults(...parts: (PendingEmailResult | undefined)[]): PendingEmailResult {
+  const out: PendingEmailResult = { sent: [], failed: [], dropped: [] };
+  for (const p of parts) {
+    if (!p) continue;
+    out.sent.push(...p.sent);
+    out.failed.push(...p.failed);
+    out.dropped.push(...p.dropped);
+  }
+  return out;
 }

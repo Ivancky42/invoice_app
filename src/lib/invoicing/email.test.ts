@@ -35,6 +35,13 @@ describe("composeInvoiceEmail", () => {
     expect(e.html).toContain("Hi &amp; &lt;b&gt;thanks&lt;/b&gt;");
   });
 
+  it("a paid invoice reads as a copy for their records, without due date or bank details", () => {
+    const e = composeInvoiceEmail({ ...base, status: "PAID" });
+    expect(e.text).toContain("which has been paid");
+    expect(e.text).not.toContain("Due:");
+    expect(e.text).not.toContain("Payment details");
+  });
+
   it("quotations have no due date or payment block", () => {
     const e = composeInvoiceEmail({ ...base, type: "QUOTATION", number: "QUO-2026-0002" });
     expect(e.subject.startsWith("Quotation QUO-2026-0002")).toBe(true);
@@ -72,6 +79,18 @@ describe("postToResend", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer re_test");
     expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("recurring-invoice/doc1");
     expect(JSON.parse(String(init.body))).toMatchObject({ to: ["b@y.com"], subject: "s" });
+  });
+
+  it("marks timeouts and 409s as unknown delivery, other errors as not delivered", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    const timeout = vi.fn(async () => {
+      throw new Error("aborted");
+    });
+    await expect(postToResend(payload, "k", timeout as unknown as typeof fetch)).rejects.toMatchObject({ delivered: "unknown" });
+    const conflict = vi.fn(async () => new Response(JSON.stringify({ message: "idempotency" }), { status: 409 }));
+    await expect(postToResend(payload, "k", conflict as unknown as typeof fetch)).rejects.toMatchObject({ delivered: "unknown" });
+    const refused = vi.fn(async () => new Response(JSON.stringify({ message: "bad" }), { status: 422 }));
+    await expect(postToResend(payload, "k", refused as unknown as typeof fetch)).rejects.toMatchObject({ delivered: "no" });
   });
 
   it("surfaces Resend's error message", async () => {
