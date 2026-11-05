@@ -8,6 +8,7 @@
  */
 import type { Prisma, RecurringInvoice } from "@/generated/prisma/client";
 import { nextDocumentNumber } from "@/lib/numbering";
+import { sendPendingInvoiceEmails } from "@/lib/invoicing/email";
 import { prisma } from "@/lib/prisma";
 import { calcTotals, type DiscountType, type LineItem } from "@/lib/types";
 import {
@@ -154,6 +155,8 @@ export async function createRecurringInvoice(
         nextRunDate: state.nextRunDate,
         status: "ACTIVE",
         autoIssue: input.autoIssue ?? true,
+        autoEmail: input.autoEmail ?? false,
+        emailTo: input.emailTo?.trim() || null,
         dueInDays: input.dueInDays ?? null,
         companyId: company?.id ?? null,
         clientId: client?.id ?? null,
@@ -245,6 +248,8 @@ export async function createRecurringFromDocument(input: RecurringFromDocumentIn
         nextRunDate: state.nextRunDate,
         status: "ACTIVE",
         autoIssue: input.autoIssue ?? true,
+        autoEmail: input.autoEmail ?? false,
+        emailTo: input.emailTo?.trim() || null,
         dueInDays: input.dueInDays ?? null,
         companyId: doc.companyId,
         clientId: doc.clientId,
@@ -289,6 +294,8 @@ export async function updateRecurringInvoice(input: UpdateRecurringInput) {
   const data: Prisma.RecurringInvoiceUncheckedUpdateInput = {};
   if (input.name !== undefined) data.name = input.name.trim();
   if (input.autoIssue !== undefined) data.autoIssue = input.autoIssue;
+  if (input.autoEmail !== undefined) data.autoEmail = input.autoEmail;
+  if (input.emailTo !== undefined) data.emailTo = input.emailTo?.trim() || null;
   if (input.dueInDays !== undefined) data.dueInDays = input.dueInDays;
   if (input.companyId || input.companyName) data.companyId = (await resolveCompany(input))!.id;
   if (input.clientId !== undefined) {
@@ -446,6 +453,8 @@ function summarizeSchedule(s: RecurringInvoice & { company?: { name: string; cur
     nextRunDate: s.nextRunDate ? formatDateOnly(s.nextRunDate) : null,
     lastRunDate: s.lastRunDate ? formatDateOnly(s.lastRunDate) : null,
     autoIssue: s.autoIssue,
+    autoEmail: s.autoEmail,
+    emailTo: s.emailTo,
     dueInDays: s.dueInDays,
     company: s.company?.name ?? null,
     companyId: s.companyId,
@@ -564,6 +573,8 @@ function buildInvoiceData(s: RecurringInvoice, runDate: Date, n: number) {
     terms: s.terms,
     recurringInvoiceId: s.id,
     recurringRunDate: runDate,
+    // Only issued invoices are emailed; a DRAFT waits for review.
+    emailPending: s.autoEmail && s.autoIssue,
   };
 }
 
@@ -571,7 +582,12 @@ function buildInvoiceData(s: RecurringInvoice, runDate: Date, n: number) {
 export async function generateForSchedule(
   scheduleId: string,
   today: Date = todayInTimeZone(),
-): Promise<{ generated: GeneratedInvoice[]; ended: boolean; error?: string }> {
+): Promise<{
+  generated: GeneratedInvoice[];
+  ended: boolean;
+  error?: string;
+  emails?: Awaited<ReturnType<typeof sendPendingInvoiceEmails>>;
+}> {
   const generated: GeneratedInvoice[] = [];
   let ended = false;
   try {
@@ -636,13 +652,24 @@ export async function generateForSchedule(
         break;
       }
     }
-    return { generated, ended };
+    return { generated, ended, emails: await emailGenerated(generated) };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await prisma.recurringInvoice
       .update({ where: { id: scheduleId }, data: { lastError: message.slice(0, 1000) } })
       .catch(() => undefined);
-    return { generated, ended, error: message };
+    return { generated, ended, error: message, emails: await emailGenerated(generated) };
+  }
+}
+
+/** Email what a run just generated (only invoices marked emailPending). Never throws. */
+async function emailGenerated(generated: GeneratedInvoice[]) {
+  if (generated.length === 0) return undefined;
+  try {
+    return await sendPendingInvoiceEmails({ documentIds: generated.map((g) => g.documentId) });
+  } catch (e) {
+    console.error("[recurring] emailing generated invoices failed", e);
+    return undefined;
   }
 }
 
@@ -667,5 +694,7 @@ export async function runDueRecurringInvoices(opts: { today?: Date; scheduleId?:
     if (r.ended) ended.push(s.id);
     if (r.error) errors.push({ scheduleId: s.id, name: s.name, error: r.error });
   }
-  return { today: formatDateOnly(today), schedulesDue: due.length, generated, ended, errors };
+  // Retry auto-emails that failed on an earlier run (generation above already sent its own).
+  const emails = await sendPendingInvoiceEmails({ today });
+  return { today: formatDateOnly(today), schedulesDue: due.length, generated, ended, errors, emails };
 }

@@ -5,7 +5,7 @@
  *
  *   TEST_DATABASE_URL=postgresql://postgres@localhost:5544/inv pnpm test
  */
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -28,7 +28,7 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
 
   beforeEach(async () => {
     await prisma.$executeRawUnsafe(
-      `TRUNCATE "Document", "RecurringInvoice", "ClientProfile", "CompanyProfile" CASCADE`,
+      `TRUNCATE "InvoiceEmail", "Document", "RecurringInvoice", "ClientProfile", "CompanyProfile" CASCADE`,
     );
     const c = await prisma.companyProfile.create({
       data: { name: "Grumpy Pixels", address: "KL", currency: "MYR", taxRate: 8, isDefault: true },
@@ -224,13 +224,123 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
     expect((await docs.billingSummary({})).recurring.activeSchedules).toBe(2);
   });
 
+  describe("auto-email (Resend mocked)", () => {
+    let sends: { key: string; body: any }[];
+    let failNext: number;
+
+    beforeEach(async () => {
+      sends = [];
+      failNext = 0;
+      process.env.RESEND_API_KEY = "re_test";
+      await prisma.companyProfile.update({
+        where: { id: companyId },
+        data: { emailFrom: "Grumpy Pixels <billing@grumpypixels.my>", email: "hello@grumpypixels.my", emailBcc: "copy@grumpypixels.my" },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, init: RequestInit) => {
+          if (failNext > 0) {
+            failNext--;
+            return new Response(JSON.stringify({ message: "rate limited" }), { status: 429 });
+          }
+          sends.push({ key: (init.headers as Record<string, string>)["Idempotency-Key"], body: JSON.parse(String(init.body)) });
+          return new Response(JSON.stringify({ id: `em_${sends.length}` }), { status: 200 });
+        }),
+      );
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      delete process.env.RESEND_API_KEY;
+    });
+
+    const schedule = (extra: Record<string, unknown> = {}) =>
+      rec.createRecurringInvoice({
+        name: "Emailed retainer",
+        startDate: iso(today),
+        maxOccurrences: 3,
+        clientName: "Acme Sdn. Bhd.",
+        paymentTerms: "Net 30",
+        autoEmail: true,
+        items: [{ description: "Retainer {{period}}", quantity: 1, unitPrice: 500 }],
+        ...extra,
+      });
+
+    it("emails the generated invoice with its PDF, once, from billing@ with replies to the company", async () => {
+      const { generatedNow } = await schedule();
+      expect(sends).toHaveLength(1);
+      const [{ key, body }] = sends;
+      expect(key).toBe(`recurring-invoice/${generatedNow[0].documentId}`);
+      expect(body).toMatchObject({
+        from: "Grumpy Pixels <billing@grumpypixels.my>",
+        to: ["ap@acme.test"],
+        bcc: ["copy@grumpypixels.my"],
+        reply_to: ["hello@grumpypixels.my"],
+      });
+      expect(body.attachments[0].filename).toBe(`${generatedNow[0].number}.pdf`);
+      expect(Buffer.from(body.attachments[0].content, "base64").subarray(0, 5).toString()).toBe("%PDF-");
+      const doc = await docs.getDocument(generatedNow[0].documentId);
+      expect(doc.emailPending).toBe(false);
+      expect(doc.emails).toEqual([expect.objectContaining({ status: "SENT", trigger: "recurring" })]);
+      // A later run doesn't send it again.
+      await rec.runDueRecurringInvoices({ today });
+      expect(sends).toHaveLength(1);
+    });
+
+    it("a failed send is recorded and retried on the next run", async () => {
+      failNext = 1;
+      const { generatedNow, schedule: s } = await schedule({ emailTo: "billing@acme.test, ops@acme.test" });
+      expect(sends).toHaveLength(0);
+      const after = await rec.getRecurringInvoice(s.id);
+      expect(after.lastError).toMatch(/will retry.*rate limited/);
+      expect((await docs.getDocument(generatedNow[0].documentId)).emailPending).toBe(true);
+
+      const run = await rec.runDueRecurringInvoices({ today });
+      expect(run.emails.sent.map((e) => e.number)).toEqual([generatedNow[0].number]);
+      expect(sends[0].body.to).toEqual(["billing@acme.test", "ops@acme.test"]);
+      const doc = await docs.getDocument(generatedNow[0].documentId);
+      expect(doc.emails.map((e) => e.status)).toEqual(["SENT", "FAILED"]);
+    });
+
+    it("never emails an invoice issued more than 7 days ago, and never emails ones made before auto-email", async () => {
+      failNext = 1;
+      const { generatedNow, schedule: s } = await schedule();
+      // Pretend the failed one is old.
+      await prisma.document.update({ where: { id: generatedNow[0].documentId }, data: { issueDate: sched.addDays(today, -8) } });
+      const run = await rec.runDueRecurringInvoices({ today });
+      expect(run.emails.sent).toHaveLength(0);
+      expect(run.emails.dropped).toHaveLength(1);
+      expect(sends).toHaveLength(0);
+      expect((await rec.getRecurringInvoice(s.id)).lastError).toMatch(/was not emailed/);
+
+      // An invoice that existed before (like one made recurring) is not pending → never auto-sent.
+      const old = await docs.createDocument({ status: "ISSUED", clientName: "Acme Sdn. Bhd.", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+      await rec.runDueRecurringInvoices({ today });
+      expect(sends).toHaveLength(0);
+      expect((await docs.getDocument(old.id)).emailPending).toBe(false);
+    });
+
+    it("draft schedules don't email; manual sends need emailFrom and a non-draft", async () => {
+      await schedule({ autoIssue: false });
+      expect(sends).toHaveLength(0);
+      const { sendInvoiceEmail } = await import("@/lib/invoicing/email");
+      const draft = await docs.createDocument({ clientName: "Acme Sdn. Bhd.", items: [{ description: "x", quantity: 1, unitPrice: 1 }] });
+      await expect(sendInvoiceEmail(draft.id, { trigger: "app" })).rejects.toThrow(/DRAFT/);
+      await docs.setDocumentStatus(draft.id, "ISSUED");
+      const r = await sendInvoiceEmail(draft.number, { trigger: "agent", cc: "boss@acme.test", message: "Thanks!" });
+      expect(r.to).toEqual(["ap@acme.test"]);
+      expect(sends.at(-1)!.body.cc).toEqual(["boss@acme.test"]);
+      await prisma.companyProfile.update({ where: { id: companyId }, data: { emailFrom: null } });
+      await expect(sendInvoiceEmail(draft.id, { trigger: "app" })).rejects.toThrow(/Email from/);
+    });
+  });
+
   it("concurrent creates never collide on a document number", async () => {
     const made = await Promise.all(
-      Array.from({ length: 6 }, (_, i) =>
+      Array.from({ length: 12 }, (_, i) =>
         docs.createDocument({ clientName: "Walk-in", items: [{ description: `Job ${i}`, quantity: 1, unitPrice: 1 }] }),
       ),
     );
-    expect(new Set(made.map((d) => d.number)).size).toBe(6);
+    expect(new Set(made.map((d) => d.number)).size).toBe(12);
   });
 
   it("pause stops generation; resume skips the paused dates", async () => {

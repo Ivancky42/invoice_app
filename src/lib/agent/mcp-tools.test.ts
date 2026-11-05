@@ -66,6 +66,7 @@ const EXPECTED_TOOL_NAMES = [
   "list_invoices",
   "list_recurring_invoices",
   "run_recurring_invoices",
+  "send_invoice_email",
   "set_invoice_status",
   "update_invoice",
   "update_recurring_invoice",

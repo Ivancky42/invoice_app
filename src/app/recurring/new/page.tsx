@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly, nextOccurrenceAfter, templatizePeriod, todayInTimeZone } from "@/lib/invoicing/schedule";
 import type { DiscountType, LineItem } from "@/lib/types";
+import { resendConfigured } from "@/lib/invoicing/email";
 import RecurringForm, { type RecurringFormInitial } from "../RecurringForm";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +52,8 @@ export default async function NewRecurringPage({ searchParams }: { searchParams:
       endDate: null,
       maxOccurrences: null,
       autoIssue: true,
+      autoEmail: false,
+      emailTo: "",
       dueInDays: null,
       companyId: source.companyId ?? defaultCo.id,
       clientId: source.clientId,
@@ -84,6 +87,8 @@ export default async function NewRecurringPage({ searchParams }: { searchParams:
       endDate: null,
       maxOccurrences: null,
       autoIssue: true,
+      autoEmail: false,
+      emailTo: "",
       dueInDays: null,
       companyId: defaultCo.id,
       clientId: null,
@@ -110,7 +115,13 @@ export default async function NewRecurringPage({ searchParams }: { searchParams:
     <RecurringForm
       mode="create"
       initial={initial}
-      companies={companies.map((c) => ({ id: c.id, name: c.name, currency: c.currency, taxRate: c.taxRate }))}
+      companies={companies.map((c) => ({
+        id: c.id,
+        name: c.name,
+        currency: c.currency,
+        taxRate: c.taxRate,
+        canEmail: Boolean(c.emailFrom && resendConfigured()),
+      }))}
       clients={clients.map((c) => ({ id: c.id, name: c.name, address: c.address, email: c.email, phone: c.phone }))}
       linkDocument={
         source && source.type === "INVOICE"

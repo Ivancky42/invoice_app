@@ -42,12 +42,14 @@ import {
   recurringFromDocumentSchema,
   recurringRefSchema,
   runRecurringSchema,
+  sendInvoiceEmailSchema,
   setStatusSchema,
   updateDocumentSchema,
   updateRecurringSchema,
   upsertClientSchema,
   upsertCompanySchema,
 } from "@/lib/invoicing/inputs";
+import { sendInvoiceEmail } from "@/lib/invoicing/email";
 import { signPdfPath } from "@/lib/invoicing/pdfLink";
 import { renderDocumentPdf } from "@/lib/invoicing/pdfRender";
 import {
@@ -313,9 +315,18 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Create or update company profile",
     kind: "write",
     description:
-      "Create a billing entity (name + address required) or update one by id. bankDetails print on invoices; setting isDefault=true clears the flag on the others. Logo upload stays in the app's Settings page.",
+      "Create a billing entity (name + address required) or update one by id. bankDetails print on invoices; setting isDefault=true clears the flag on the others. emailFrom (on a Resend-verified domain) enables emailing invoices; emailBcc copies every send. Logo upload stays in the app's Settings page.",
     schema: upsertCompanySchema,
     run: (input) => upsertCompany(input),
+  });
+
+  register(server, "send_invoice_email", {
+    title: "Email invoice to client",
+    kind: "write",
+    description:
+      "Email a document (invoice, quotation or DO) to the client through Resend with its PDF attached, from the company profile's emailFrom; replies go to the profile's email and emailBcc gets a copy. Default recipient: the document's client email. DRAFTs can't be emailed. This contacts the client immediately and can't be undone — only call it when the user has asked for this specific email to be sent (confirm=true). Every attempt is recorded and shown by get_invoice.",
+    schema: sendInvoiceEmailSchema,
+    run: ({ id, to, cc, message }) => sendInvoiceEmail(id, { to, cc, message, trigger: "agent" }),
   });
 
   // ---------------------------------------------------------------- recurring
@@ -341,7 +352,7 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Create recurring invoice",
     kind: "write",
     description:
-      `Schedule an invoice to be generated automatically every interval × frequency (default monthly) from startDate, for maxOccurrences invoices (e.g. 6 for a six-month project), until endDate, or indefinitely if neither is given. dayOfMonth fixes the billing day (29–31 clamp to month end). Invoices are generated around 06:00 Malaysia time on each date, ISSUED with a due date (autoIssue=false → DRAFT). If startDate is today, the first invoice is created immediately. Past startDates start from today unless backfill=true. ${TEMPLATE_HELP}`,
+      `Schedule an invoice to be generated automatically every interval × frequency (default monthly) from startDate, for maxOccurrences invoices (e.g. 6 for a six-month project), until endDate, or indefinitely if neither is given. dayOfMonth fixes the billing day (29–31 clamp to month end). Invoices are generated around 06:00 Malaysia time on each date, ISSUED with a due date (autoIssue=false → DRAFT); autoEmail=true also emails each one to the client with the PDF (Resend). If startDate is today, the first invoice is created immediately. Past startDates start from today unless backfill=true. ${TEMPLATE_HELP}`,
     schema: createRecurringSchema,
     run: (input) => createRecurringInvoice(input),
   });
@@ -401,6 +412,7 @@ export const INVOICE_TOOL_NAMES = [
   "list_invoices",
   "list_recurring_invoices",
   "run_recurring_invoices",
+  "send_invoice_email",
   "set_invoice_status",
   "update_invoice",
   "update_recurring_invoice",

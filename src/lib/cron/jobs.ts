@@ -85,6 +85,11 @@ export const CRON_JOBS: CronJob[] = [
         generated: result.generated.map((g) => ({ schedule: g.scheduleName, number: g.number, runDate: g.runDate })),
         ended: result.ended,
         errors: result.errors,
+        emails: {
+          sent: result.emails.sent.map((e) => e.number),
+          failed: result.emails.failed,
+          dropped: result.emails.dropped,
+        },
       };
       if (result.errors.length > 0) {
         // Other schedules already billed; FAILED surfaces the error in the ledger.

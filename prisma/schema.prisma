@@ -34,6 +34,11 @@ model CompanyProfile {
   taxRate      Float    @default(0)
   notes        String?
   isDefault    Boolean  @default(false)
+  /// Sender for emailed invoices, e.g. "Grumpy Pixels <billing@grumpypixels.my>". Must be on a
+  /// domain verified in Resend. Null = this profile can't email invoices.
+  emailFrom    String?
+  /// Comma-separated addresses copied (BCC) on every invoice email from this profile.
+  emailBcc     String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   documents    Document[]
@@ -93,10 +98,38 @@ model Document {
   recurringInvoice   RecurringInvoice? @relation(fields: [recurringInvoiceId], references: [id], onDelete: SetNull)
   /// The schedule date this invoice bills for (business-timezone calendar day). Unique per schedule so a re-run can't double-bill.
   recurringRunDate   DateTime?         @db.Date
+  /// Set when an auto-emailing schedule generates this invoice; cleared once the email is sent
+  /// (or given up on). The cron retries pending ones.
+  emailPending       Boolean           @default(false)
+  emails             InvoiceEmail[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
   @@unique([recurringInvoiceId, recurringRunDate])
+}
+
+enum InvoiceEmailStatus {
+  SENT
+  FAILED
+}
+
+/// One attempt to email a document (manual, agent or recurring). Kept as the send history.
+model InvoiceEmail {
+  id          String             @id @default(cuid())
+  documentId  String
+  document    Document           @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  status      InvoiceEmailStatus
+  /// "app" (Email button), "agent" (MCP) or "recurring" (auto-email after generation).
+  trigger     String
+  to          String
+  cc          String?
+  bcc         String?
+  subject     String
+  providerId  String?
+  error       String?
+  createdAt   DateTime           @default(now())
+
+  @@index([documentId, createdAt])
 }
 
 enum RecurrenceFrequency {
@@ -135,6 +168,10 @@ model RecurringInvoice {
   lastRunDate          DateTime?           @db.Date
   /// true → generated invoices are ISSUED (with a due date); false → DRAFT.
   autoIssue            Boolean             @default(true)
+  /// Email each generated (ISSUED) invoice to the client via Resend, PDF attached.
+  autoEmail            Boolean             @default(false)
+  /// Comma-separated recipients for auto-emails. Null → the invoice's client email.
+  emailTo              String?
   /// Days after the issue date the invoice is due. Null → parsed from paymentTerms ("Net 30"), else none.
   dueInDays            Int?
   lastError            String?

@@ -14,7 +14,7 @@ import {
 } from "@/lib/invoicing/schedule";
 import { saveRecurring } from "./actions";
 
-type CompanyOption = { id: string; name: string; currency: string; taxRate: number };
+type CompanyOption = { id: string; name: string; currency: string; taxRate: number; canEmail?: boolean };
 type ClientOption = { id: string; name: string; address?: string | null; email?: string | null; phone?: string | null };
 
 export type RecurringFormInitial = {
@@ -27,6 +27,8 @@ export type RecurringFormInitial = {
   endDate: string | null;
   maxOccurrences: number | null;
   autoIssue: boolean;
+  autoEmail: boolean;
+  emailTo: string;
   dueInDays: number | null;
   companyId: string | null;
   clientId: string | null;
@@ -161,6 +163,8 @@ export default function RecurringForm({
         endDate: endMode === "date" ? f.endDate || null : null,
         maxOccurrences: endMode === "count" ? Number(f.maxOccurrences) || null : null,
         autoIssue: f.autoIssue,
+        autoEmail: f.autoEmail && f.autoIssue,
+        emailTo: f.emailTo.trim() || null,
         dueInDays: f.dueInDays == null || Number.isNaN(f.dueInDays) ? null : f.dueInDays,
         ...(f.companyId ? { companyId: f.companyId } : {}),
         clientId: f.clientId || (mode === "edit" ? null : undefined),
@@ -272,6 +276,29 @@ export default function RecurringForm({
               <input type="checkbox" checked={f.autoIssue} onChange={(e) => set("autoIssue", e.target.checked)} />
               Issue automatically (unticked: create as Draft for review)
             </label>
+          </div>
+          <div className="md:col-span-4 border-t pt-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={f.autoEmail && f.autoIssue}
+                disabled={!f.autoIssue || !companies.find((c) => c.id === f.companyId)?.canEmail}
+                onChange={(e) => set("autoEmail", e.target.checked)}
+              />
+              Email each invoice to the client automatically (PDF attached, via Resend)
+            </label>
+            {!companies.find((c) => c.id === f.companyId)?.canEmail ? (
+              <p className="text-xs text-gray-500 mt-1">
+                Set “Email from” on this company profile in Settings (and RESEND_API_KEY on the server) to turn this on.
+              </p>
+            ) : !f.autoIssue ? (
+              <p className="text-xs text-gray-500 mt-1">Only issued invoices are emailed; drafts wait for you.</p>
+            ) : f.autoEmail ? (
+              <div className="mt-2 max-w-md">
+                <label className="label">Send to <span className="text-gray-400 font-normal">(comma-separated; blank = client email{f.clientEmail ? ` ${f.clientEmail}` : ""})</span></label>
+                <input className="input" value={f.emailTo} onChange={(e) => set("emailTo", e.target.value)} />
+              </div>
+            ) : null}
           </div>
           <div>
             <label className="label">Due after (days)</label>

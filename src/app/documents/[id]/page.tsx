@@ -3,7 +3,9 @@ import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { DOC_LABELS, NEXT_STAGE, formatMoney, LineItem } from "@/lib/types";
 import DocStatusForm from "../DocStatusForm";
-import { convertDocument, deleteDocument, setStatus } from "../actions";
+import { convertDocument, deleteDocument, emailDocument, setStatus } from "../actions";
+import EmailInvoiceForm from "../EmailInvoiceForm";
+import { resendConfigured } from "@/lib/invoicing/email";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +32,7 @@ export default async function DocDetail({
       children: true,
       company: true,
       recurringInvoice: { select: { id: true, name: true, status: true, nextRunDate: true } },
+      emails: { orderBy: { createdAt: "desc" }, take: 20 },
     },
   });
   if (!doc) return notFound();
@@ -92,6 +95,20 @@ export default async function DocDetail({
             </form>
           )}
           <DocStatusForm action={markStatus} defaultStatus={doc.status} />
+          <EmailInvoiceForm
+            documentId={doc.id}
+            number={doc.number}
+            defaultTo={doc.clientEmail ?? ""}
+            canSend={Boolean(resendConfigured() && company?.emailFrom && doc.status !== "DRAFT")}
+            disabledReason={
+              !resendConfigured()
+                ? "Email isn't set up: add RESEND_API_KEY to the app's environment"
+                : !company?.emailFrom
+                  ? `Set "Email from" on the ${company?.name ?? "company"} profile in Settings`
+                  : "Issue it first: drafts can't be emailed"
+            }
+            action={emailDocument}
+          />
           <form action={doDelete}>
             <button className="btn btn-danger">Delete</button>
           </form>
@@ -102,6 +119,23 @@ export default async function DocDetail({
         <div className="card p-3 text-sm text-red-700 bg-red-50">
           The invoice was saved, but its recurring schedule could not be created: {recurringError}. Use{" "}
           <Link href={`/recurring/new?from=${doc.id}`} className="underline">Make recurring</Link> to try again.
+        </div>
+      )}
+
+      {(doc.emails.length > 0 || doc.emailPending) && (
+        <div className="card p-4 text-sm">
+          <div className="text-gray-500 mb-2">Emails</div>
+          {doc.emailPending && <div className="text-amber-700 mb-1">Auto-email pending — it goes out with the next recurring run.</div>}
+          <ul className="space-y-1">
+            {doc.emails.map((e) => (
+              <li key={e.id} className={e.status === "SENT" ? "" : "text-red-700"}>
+                {e.status === "SENT" ? "✓ Sent" : "✗ Failed"} to {e.to}
+                {e.cc ? ` (cc ${e.cc})` : ""} · {e.createdAt.toISOString().slice(0, 16).replace("T", " ")} UTC ·{" "}
+                {e.trigger === "recurring" ? "automatic" : e.trigger === "agent" ? "by agent" : "from the app"}
+                {e.error ? ` — ${e.error}` : ""}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
