@@ -356,10 +356,12 @@ export async function sendPendingInvoiceEmails(
   const result: PendingEmailResult = { sent: [], failed: [], dropped: [] };
 
   for (const doc of pending) {
-    const lastFailure = doc.emails[0];
+    // Anchor on the FIRST attempt whose delivery is unknown: Resend's dedupe for this key runs
+    // 24h from that request, however many retries (or later clean refusals) followed it.
+    const firstUnconfirmed = doc.emails.filter((e) => e.error?.startsWith(UNCONFIRMED)).at(-1);
     const unconfirmedExpired =
-      lastFailure?.error?.startsWith(UNCONFIRMED) &&
-      now.getTime() - lastFailure.createdAt.getTime() > IDEMPOTENCY_WINDOW_MS;
+      firstUnconfirmed !== undefined &&
+      now.getTime() - firstUnconfirmed.createdAt.getTime() > IDEMPOTENCY_WINDOW_MS;
     const reason = !doc.recurringInvoice?.autoEmail
       ? "auto-email was switched off"
       : doc.status !== "ISSUED"

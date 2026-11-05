@@ -357,6 +357,28 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
       expect((await rec.getRecurringInvoice(s.id)).lastError).toMatch(/check Resend/);
     });
 
+    it("the 24h window runs from the FIRST unconfirmed attempt, not the latest retry or refusal", async () => {
+      hangNext = 1;
+      const { generatedNow } = await schedule();
+      const docId = generatedNow[0].documentId;
+      const first = await prisma.invoiceEmail.findFirstOrThrow({ where: { documentId: docId } });
+      // Backdate the first (unconfirmed) attempt 26h, then add later failures 14h and 2h ago:
+      // one unconfirmed retry and one clean refusal.
+      const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000);
+      await prisma.invoiceEmail.update({ where: { id: first.id }, data: { createdAt: hoursAgo(26) } });
+      await prisma.invoiceEmail.createMany({
+        data: [
+          { documentId: docId, status: "FAILED", trigger: "recurring", to: "ap@acme.test", subject: "s", error: "[unconfirmed] timeout", createdAt: hoursAgo(14) },
+          { documentId: docId, status: "FAILED", trigger: "recurring", to: "ap@acme.test", subject: "s", error: "Resend 422: bad", createdAt: hoursAgo(2) },
+        ],
+      });
+      const { sendPendingInvoiceEmails } = await import("@/lib/invoicing/email");
+      const before = attempts.length;
+      const r = await sendPendingInvoiceEmails();
+      expect(attempts.length).toBe(before); // not re-sent
+      expect(r.dropped[0].reason).toMatch(/couldn't be confirmed/);
+    });
+
     it("one attempt per invoice per run; run results include sends made during generation; Run now stays in its schedule", async () => {
       const other = await schedule({ name: "Other", startDate: iso(sched.addDays(today, 1)) });
       const mine = await rec.createRecurringInvoice({
