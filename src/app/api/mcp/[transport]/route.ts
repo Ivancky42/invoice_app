@@ -1,5 +1,5 @@
-import { createMcpHandler, withMcpAuth } from "mcp-handler";
-import { registerAgentMcpTools } from "@/lib/agent/mcp-tools";
+import { withMcpAuth } from "mcp-handler";
+import { createAgentMcpHandler } from "@/lib/agent/mcp-handler";
 import {
   getAppOrigin,
   mcpResourceUrl,
@@ -9,17 +9,7 @@ import {
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const mcpHandler = createMcpHandler(
-  (server) => {
-    registerAgentMcpTools(server);
-  },
-  {
-    serverInfo: {
-      name: "stock-hq",
-      version: "0.6.0",
-    },
-  },
-);
+const mcpHandler = createAgentMcpHandler();
 
 /**
  * mcp-handler 2 serves every request it is given (no basePath; the legacy SSE transport
