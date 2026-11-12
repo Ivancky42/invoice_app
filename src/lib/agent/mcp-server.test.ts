@@ -1,17 +1,15 @@
-import { createMcpHandler, withMcpAuth } from "mcp-handler";
+import { withMcpAuth } from "mcp-handler";
 import { describe, expect, it } from "vitest";
-import { registerAgentMcpTools } from "@/lib/agent/mcp-tools";
+import { createAgentMcpHandler, MCP_SERVER_INFO } from "@/lib/agent/mcp-handler";
 
 /**
- * The real SDK server behind the real HTTP handler — no database needed for listing
- * tools or for calls the SDK rejects before a handler runs. Catches what the stub-based
- * tests in mcp-tools.test.ts cannot: a schema the SDK refuses to register or cannot turn
- * into JSON Schema (which breaks tools/list for every client), and the validation text an
- * agent sees.
+ * The real SDK server behind the real HTTP handler, built with the production options —
+ * no database needed for listing tools or for calls the SDK rejects before a handler
+ * runs. Catches what the stub-based tests in mcp-tools.test.ts cannot: a schema the SDK
+ * refuses to register or cannot turn into JSON Schema (which breaks tools/list for every
+ * client), the validation text an agent sees, and server options such as capabilities.
  */
-const handler = createMcpHandler((server) => registerAgentMcpTools(server), {
-  serverInfo: { name: "test", version: "0.0.0" },
-});
+const handler = createAgentMcpHandler();
 
 const PROTOCOL = "2025-11-25";
 let nextId = 1;
@@ -48,7 +46,61 @@ describe("MCP server (SDK v2 via mcp-handler)", () => {
       clientInfo: { name: "vitest", version: "0" },
     });
     expect(status).toBe(200);
-    expect(message.result.serverInfo.name).toBe("test");
+    expect(message.result.serverInfo.name).toBe(MCP_SERVER_INFO.name);
+  });
+
+  // A per-request (stateless) server can never send tools/list_changed. Advertising it
+  // lets modern clients park a subscriptions/listen stream on the function until the 60s
+  // maxDuration kills it — the Fluid CPU / timeout regression from the SDK v2 upgrade.
+  it("does not advertise tools.listChanged", async () => {
+    const { message } = await rpc("initialize", {
+      protocolVersion: PROTOCOL,
+      capabilities: {},
+      clientInfo: { name: "vitest", version: "0" },
+    });
+    expect(message.result.capabilities.tools.listChanged).toBe(false);
+  });
+
+  it("acknowledges a modern subscriptions/listen with an empty filter and closes the stream", async () => {
+    const MODERN = "2026-07-28";
+    const res = await handler(
+      new Request("http://localhost/api/mcp/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": MODERN,
+          "mcp-method": "subscriptions/listen",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: nextId++,
+          method: "subscriptions/listen",
+          params: {
+            notifications: { toolsListChanged: true },
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": MODERN,
+              "io.modelcontextprotocol/clientCapabilities": {},
+            },
+          },
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    // A held stream never ends; fail fast instead of waiting for the test timeout.
+    const body = await Promise.race([
+      res.text(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("subscriptions/listen stream was held open")), 2000),
+      ),
+    ]);
+    const events = body
+      .split("\n")
+      .filter((l) => l.startsWith("data:"))
+      .map((l) => JSON.parse(l.slice(5).trim()));
+    const ack = events.find((e) => e.method === "notifications/subscriptions/acknowledged");
+    expect(ack?.params.notifications).toEqual({});
+    expect(events.some((e) => e.result?.resultType === "complete")).toBe(true);
   });
 
   it("lists every tool with an object JSON Schema", async () => {

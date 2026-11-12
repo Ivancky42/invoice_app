@@ -13,8 +13,8 @@ export async function proxy(req: NextRequest) {
   if (pathname.startsWith("/api/sync/")) return NextResponse.next();
   if (pathname.startsWith("/api/cron/")) return NextResponse.next();
   if (pathname.startsWith("/api/agent/")) return NextResponse.next();
-  if (pathname.startsWith("/api/mcp")) return NextResponse.next();
-  if (pathname.startsWith("/api/oauth")) return NextResponse.next();
+  if (pathname.startsWith("/api/mcp/")) return NextResponse.next();
+  if (pathname.startsWith("/api/oauth/")) return NextResponse.next();
   if (pathname.startsWith("/.well-known/")) return NextResponse.next();
   if (pathname.startsWith("/_next/") || pathname === "/favicon.ico") return NextResponse.next();
 
@@ -45,5 +45,13 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Paths the proxy would only pass through are excluded here so they don't cost a
+  // separate proxy invocation (the MCP endpoint is hit by every connected agent). The
+  // startsWith checks above stay as a backstop; proxy.test.ts keeps the two in step.
+  // Every prefix ends in "/" so a new route such as /api/mcp-admin is still PIN-gated.
+  // /api/pdf stays matched: signed links are verified here. Must stay a literal — Next
+  // reads it statically.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|api/mcp/|api/agent/|api/cron/|api/sync/|api/oauth/|\\.well-known/).*)",
+  ],
 };
