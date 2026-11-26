@@ -14,6 +14,8 @@ export const dynamic = "force-dynamic";
 const DOC_STATUS_COLORS: Record<string, string> = {
   DRAFT: "bg-gray-100 text-gray-700",
   ISSUED: "bg-blue-100 text-blue-700",
+  ACCEPTED: "bg-emerald-100 text-emerald-800",
+  DECLINED: "bg-amber-100 text-amber-800",
   PAID: "bg-green-100 text-green-700",
   CANCELLED: "bg-red-100 text-red-700",
 };

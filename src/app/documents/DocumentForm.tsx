@@ -3,20 +3,13 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import AppSelect from "@/components/AppSelect";
-import { LineItem, calcTotals, formatMoney, DOC_LABELS, DiscountType, PAYMENT_TERMS_PRESETS } from "@/lib/types";
+import { LineItem, calcTotals, formatMoney, DOC_LABELS, DiscountType, PAYMENT_TERMS_PRESETS, statusesForType } from "@/lib/types";
 import { QUOTE_VALID_DAYS } from "@/lib/invoicing/schedule";
 
 const TYPE_OPTIONS = [
   { value: "QUOTATION", label: "Quotation" },
   { value: "INVOICE", label: "Invoice" },
   { value: "DELIVERY_ORDER", label: "Delivery Order" },
-];
-
-const STATUS_OPTIONS = [
-  { value: "DRAFT", label: "DRAFT" },
-  { value: "ISSUED", label: "ISSUED" },
-  { value: "PAID", label: "PAID" },
-  { value: "CANCELLED", label: "CANCELLED" },
 ];
 
 type CompanyOption = { id: string; name: string; currency: string; taxRate: number };
@@ -197,14 +190,22 @@ export default function DocumentForm({ mode, initial, companies, clients, saveAc
           </div>
           <div>
             <label className="label">Type</label>
-            <AppSelect value={type} onValueChange={setType} options={TYPE_OPTIONS} />
+            <AppSelect
+              value={type}
+              onValueChange={(t) => {
+                setType(t);
+                // ACCEPTED / DECLINED are quotation outcomes; switching away drops back to DRAFT.
+                if (!statusesForType(t).includes(form.status as never)) setForm({ ...form, status: "DRAFT" });
+              }}
+              options={TYPE_OPTIONS}
+            />
           </div>
           <div>
             <label className="label">Status</label>
             <AppSelect
               value={form.status}
               onValueChange={(status) => setForm({ ...form, status })}
-              options={STATUS_OPTIONS}
+              options={statusesForType(type).map((s) => ({ value: s, label: s }))}
             />
           </div>
           <div>

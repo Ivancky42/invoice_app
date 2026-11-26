@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import type { DocumentStatus, DocumentType, Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { DOC_LABELS, formatMoney } from "@/lib/types";
+import { DOC_LABELS, DOCUMENT_STATUSES, formatMoney } from "@/lib/types";
 import DocumentFilters from "./DocumentFilters";
 
 export const dynamic = "force-dynamic";
@@ -10,11 +10,13 @@ export const dynamic = "force-dynamic";
 const STATUS_COLORS: Record<string, string> = {
   DRAFT: "bg-gray-100 text-gray-700",
   ISSUED: "bg-blue-100 text-blue-700",
+  ACCEPTED: "bg-emerald-100 text-emerald-800",
+  DECLINED: "bg-amber-100 text-amber-800",
   PAID: "bg-green-100 text-green-700",
   CANCELLED: "bg-red-100 text-red-700",
 };
 
-const VALID_STATUSES = new Set<string>(["DRAFT", "ISSUED", "PAID", "CANCELLED"]);
+const VALID_STATUSES = new Set<string>(DOCUMENT_STATUSES);
 
 function documentsHref(params: { type?: string; company?: string; client?: string; status?: string }) {
   const q = new URLSearchParams();

@@ -283,6 +283,8 @@ function MetaRow({ label, value, strong }: { label: string; value: string; stron
 
 const BADGES: Record<string, { text: string; color: string; bg: string }> = {
   PAID: { text: "PAID", color: "#166534", bg: "#dcfce7" },
+  ACCEPTED: { text: "ACCEPTED", color: "#065f46", bg: "#d1fae5" },
+  DECLINED: { text: "DECLINED", color: "#92400e", bg: "#fef3c7" },
   CANCELLED: { text: "CANCELLED", color: "#991b1b", bg: "#fee2e2" },
 };
 

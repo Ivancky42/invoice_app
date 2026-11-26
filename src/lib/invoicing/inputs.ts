@@ -3,9 +3,10 @@
  * caller. Dates are `YYYY-MM-DD` strings (business-timezone calendar days).
  */
 import { z } from "zod";
+import { DOCUMENT_STATUSES } from "@/lib/types";
 
+export { DOCUMENT_STATUSES };
 export const DOCUMENT_TYPES = ["QUOTATION", "INVOICE", "DELIVERY_ORDER"] as const;
-export const DOCUMENT_STATUSES = ["DRAFT", "ISSUED", "PAID", "CANCELLED"] as const;
 export const FREQUENCIES = ["WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"] as const;
 export const RECURRING_STATUSES = ["ACTIVE", "PAUSED", "ENDED"] as const;
 
@@ -24,7 +25,10 @@ export const lineItemSchema = z.object({
 
 export const documentFieldsSchema = z.object({
   type: z.enum(DOCUMENT_TYPES).optional().describe("Default INVOICE"),
-  status: z.enum(DOCUMENT_STATUSES).optional().describe("Default DRAFT"),
+  status: z
+    .enum(DOCUMENT_STATUSES)
+    .optional()
+    .describe("Default DRAFT. ACCEPTED / DECLINED are for quotations only"),
   issueDate: dateString.optional().describe("Default: today (Asia/Kuala_Lumpur)"),
   paidDate: dateString
     .optional()
@@ -97,7 +101,9 @@ export type ListDocumentsInput = z.infer<typeof listDocumentsSchema>;
 
 export const setStatusSchema = z.object({
   id: z.string().min(1).describe("Document id or number"),
-  status: z.enum(DOCUMENT_STATUSES),
+  status: z
+    .enum(DOCUMENT_STATUSES)
+    .describe("ACCEPTED (client said yes) and DECLINED (client said no) are for quotations only"),
   paidDate: dateString
     .optional()
     .describe("With status PAID: the day it was paid (default: kept if already paid, else today). Not in the future"),
