@@ -217,7 +217,7 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Get billing summary",
     kind: "read",
     description:
-      "Per company profile: invoiced (ISSUED+PAID), collected (PAID), outstanding (ISSUED), overdue amount and count, draft invoices, open quotations; plus active recurring schedules and the next one due. Optional company and issue-date range.",
+      "Per company profile: invoiced (ISSUED+PAID), collected (PAID), outstanding (ISSUED), overdue amount and count, draft invoices, open quotations (ISSUED quotations only — ACCEPTED, DECLINED and CANCELLED ones are closed); plus active recurring schedules and the next one due. Optional company and issue-date range.",
     schema: billingSummarySchema,
     run: (input) => billingSummary(input),
   });
@@ -254,7 +254,7 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Set invoice status",
     kind: "write",
     description:
-      "Set status DRAFT / ISSUED / PAID / CANCELLED (e.g. mark an invoice paid). Marking it PAID records the paid date: paidDate if given (not in the future), else the date it already has, else today; any other status clears it. Issuing an invoice that has no due date sets one from its Net-N terms.",
+      "Set status DRAFT / ISSUED / PAID / CANCELLED, or for a quotation ACCEPTED (client said yes) / DECLINED (client said no) — those two are refused on invoices and delivery orders. Converting a quotation already marks it ACCEPTED. Marking it PAID records the paid date: paidDate if given (not in the future), else the date it already has, else today; any other status clears it. Issuing an invoice that has no due date sets one from its Net-N terms.",
     schema: setStatusSchema,
     run: ({ id, status, paidDate }) => setDocumentStatus(id, status, { paidDate }),
   });
@@ -263,7 +263,7 @@ export function registerInvoiceMcpTools(server: McpServer): void {
     title: "Convert to next stage",
     kind: "write",
     description:
-      "Advance the lifecycle: quotation → invoice → delivery order. Creates a new DRAFT document dated today with the same lines, linked to its parent. Returns the new document.",
+      "Advance the lifecycle: quotation → invoice → delivery order. Creates a new DRAFT document dated today with the same lines, linked to its parent. Converting a quotation also marks the quotation ACCEPTED, so it no longer counts as an open quote. Returns the new document.",
     schema: documentRefSchema,
     run: ({ id }) => convertDocument(id),
   });

@@ -702,4 +702,44 @@ describe.skipIf(!url)("invoicing against Postgres", () => {
     expect((await docs.getDocument(old.id)).parent).toBeNull();
     expect((await docs.listDocuments({ search: "acme" })).total).toBe(2);
   });
+
+  it("quotation outcomes: converting accepts the quote, and only ISSUED quotes are open", async () => {
+    const make = (unitPrice: number) =>
+      docs.createDocument({
+        type: "QUOTATION",
+        status: "ISSUED",
+        clientName: "Acme Sdn. Bhd.",
+        taxRate: 0,
+        items: [{ description: "Work", quantity: 1, unitPrice }],
+      });
+    const won = await make(1000);
+    await make(200); // still open
+    const lost = await make(50);
+    await docs.createDocument({
+      type: "DELIVERY_ORDER",
+      status: "ISSUED",
+      clientName: "Acme Sdn. Bhd.",
+      items: [{ description: "Ship", quantity: 1, unitPrice: 7 }],
+    });
+
+    const inv = await docs.convertDocument(won.id);
+    expect((await docs.getDocument(won.id)).status).toBe("ACCEPTED");
+    await docs.setDocumentStatus(inv.id, "ISSUED");
+    expect((await docs.setDocumentStatus(lost.id, "DECLINED")).status).toBe("DECLINED");
+
+    // The converted quote isn't counted next to its invoice; accepted and declined quotes are closed.
+    const [b] = (await docs.billingSummary({})).byCompany;
+    expect(b).toMatchObject({ invoiced: 1000, outstanding: 1000, openQuotes: 200, openQuoteCount: 1 });
+    expect((await docs.listDocuments({ status: ["ACCEPTED"] })).documents.map((d) => d.id)).toEqual([won.id]);
+
+    // Quotation-only statuses are refused everywhere else.
+    await expect(docs.setDocumentStatus(inv.id, "ACCEPTED")).rejects.toThrow(/quotations only/);
+    await expect(docs.updateDocument({ id: inv.id, status: "DECLINED" })).rejects.toThrow(/quotations only/);
+    await expect(docs.updateDocument({ id: won.id, type: "INVOICE" })).rejects.toThrow(/quotations only/);
+    await expect(docs.createDocument({ clientName: "Acme", status: "ACCEPTED", items: [] })).rejects.toThrow(
+      /quotations only/,
+    );
+    await expect(docs.duplicateDocument(inv.id, { status: "ACCEPTED" })).rejects.toThrow(/quotations only/);
+    expect((await docs.duplicateDocument(won.id, { status: "ACCEPTED" })).status).toBe("ACCEPTED");
+  });
 });

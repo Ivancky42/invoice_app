@@ -22,6 +22,27 @@ export const NEXT_STAGE: Record<string, string | null> = {
   DELIVERY_ORDER: null,
 };
 
+/** Every document status, in the order pickers show them. */
+export const DOCUMENT_STATUSES = ["DRAFT", "ISSUED", "ACCEPTED", "DECLINED", "PAID", "CANCELLED"] as const;
+export type DocumentStatusValue = (typeof DOCUMENT_STATUSES)[number];
+
+/** A quotation's outcome: the client said yes (ACCEPTED) or no (DECLINED). Not for invoices or DOs. */
+export const QUOTATION_ONLY_STATUSES: readonly string[] = ["ACCEPTED", "DECLINED"];
+
+/** The statuses a document of this type can have. */
+export function statusesForType(type: string): DocumentStatusValue[] {
+  return DOCUMENT_STATUSES.filter((s) => type === "QUOTATION" || !QUOTATION_ONLY_STATUSES.includes(s));
+}
+
+/** Why this status can't go on this type of document, or null when it can. */
+export function statusTypeError(type: string, status: string): string | null {
+  if (type !== "QUOTATION" && QUOTATION_ONLY_STATUSES.includes(status)) {
+    const label = DOC_LABELS[type]?.toLowerCase() ?? type;
+    return `${status} is for quotations only (this is ${/^[aeiou]/i.test(label) ? "an" : "a"} ${label})`;
+  }
+  return null;
+}
+
 export type DiscountType = "PERCENT" | "AMOUNT";
 
 export function calcTotals(

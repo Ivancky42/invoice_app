@@ -15,7 +15,7 @@ import { getAppOrigin } from "@/lib/agent/mcp-oauth";
 import { nextDocumentNumber } from "@/lib/numbering";
 import { prisma } from "@/lib/prisma";
 import { InvalidAddressError, parseAddressList } from "@/lib/invoicing/emailAddress";
-import { calcTotals, NEXT_STAGE, type DiscountType, type LineItem } from "@/lib/types";
+import { calcTotals, NEXT_STAGE, statusTypeError, type DiscountType, type LineItem } from "@/lib/types";
 import type {
   CreateDocumentInput,
   ListDocumentsInput,
@@ -354,8 +354,15 @@ function totalsFor(items: LineItem[], taxRate: number, discountType: string, dis
 
 const nullIfBlank = (v: string | null | undefined) => (v == null || v.trim() === "" ? null : v);
 
+/** ACCEPTED / DECLINED belong to quotations only. */
+function assertStatusFitsType(type: string, status: string) {
+  const problem = statusTypeError(type, status);
+  if (problem) throw new InvoicingError("invalid", problem);
+}
+
 export async function createDocument(input: CreateDocumentInput) {
   const type: DocumentType = input.type ?? "INVOICE";
+  assertStatusFitsType(type, input.status ?? "DRAFT");
   const company = await resolveCompany(input);
   const client = await resolveClient(input);
   // An explicit clientId may carry a custom bill-to name; a name match uses the saved spelling.
@@ -414,6 +421,9 @@ export async function createDocument(input: CreateDocumentInput) {
 export async function updateDocument(input: UpdateDocumentInput) {
   const existing = await findDocumentRow(input.id);
   const data: Prisma.DocumentUncheckedUpdateInput = {};
+  if (input.type || input.status) {
+    assertStatusFitsType(input.type ?? existing.type, input.status ?? existing.status);
+  }
 
   if (input.type) data.type = input.type;
   if (input.status) data.status = input.status;
@@ -489,6 +499,7 @@ export async function setDocumentStatus(
   opts: { paidDate?: string | null } = {},
 ) {
   const doc = await findDocumentRow(idOrNumber);
+  assertStatusFitsType(doc.type, status);
   if (opts.paidDate && status !== "PAID") {
     throw new InvoicingError("invalid", "paidDate goes with status PAID");
   }
@@ -505,23 +516,33 @@ export async function setDocumentStatus(
   return getDocument(doc.id);
 }
 
-/** Quotation → Invoice → Delivery Order. Copies everything and links back to the parent. */
+/**
+ * Quotation → Invoice → Delivery Order. Copies everything and links back to the parent.
+ * Converting a quotation marks it ACCEPTED in the same transaction, so it stops counting
+ * as an open quote once its invoice exists.
+ */
 export async function convertDocument(idOrNumber: string) {
   const src = await findDocumentRow(idOrNumber);
   const next = NEXT_STAGE[src.type] as DocumentType | null;
   if (!next) throw new InvoicingError("invalid", `${src.type} has no next stage`);
   const created = await withFreshNumber(async () =>
-    prisma.$transaction(async (tx) => tx.document.create({
-    data: {
-      ...copyableFields(src),
-      type: next,
-      number: await nextDocumentNumber(next, { db: tx, date: todayInTimeZone() }),
-      status: "DRAFT",
-      issueDate: todayInTimeZone(),
-      dueDate: null,
-      parentId: src.id,
-    },
-    })),
+    prisma.$transaction(async (tx) => {
+      const doc = await tx.document.create({
+        data: {
+          ...copyableFields(src),
+          type: next,
+          number: await nextDocumentNumber(next, { db: tx, date: todayInTimeZone() }),
+          status: "DRAFT",
+          issueDate: todayInTimeZone(),
+          dueDate: null,
+          parentId: src.id,
+        },
+      });
+      if (src.type === "QUOTATION" && src.status !== "ACCEPTED") {
+        await tx.document.update({ where: { id: src.id }, data: { status: "ACCEPTED", paidAt: null } });
+      }
+      return doc;
+    }),
   );
   return getDocument(created.id);
 }
@@ -532,6 +553,7 @@ export async function duplicateDocument(
   opts: { issueDate?: string; status?: DocumentStatus } = {},
 ) {
   const src = await findDocumentRow(idOrNumber);
+  assertStatusFitsType(src.type, opts.status ?? "DRAFT");
   const issueDate = opts.issueDate ? parseDateOnly(opts.issueDate) : todayInTimeZone();
   const net = src.type === "INVOICE" ? netDaysFromTerms(src.paymentTerms) : null;
   const created = await withFreshNumber(async () =>
@@ -647,7 +669,9 @@ export async function billingSummary(input: { companyId?: string; issuedFrom?: s
           b.overdueCount++;
         }
       }
-    } else if (d.status === "ISSUED") {
+    } else if (d.type === "QUOTATION" && d.status === "ISSUED") {
+      // Open = sent and awaiting an answer. ACCEPTED (incl. converted), DECLINED and
+      // CANCELLED quotes are closed, so a converted quote isn't counted next to its invoice.
       b.openQuotes += d.total;
       b.openQuoteCount++;
     }

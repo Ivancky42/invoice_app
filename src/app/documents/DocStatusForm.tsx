@@ -3,25 +3,23 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import AppSelect from "@/components/AppSelect";
-
-const STATUS_OPTIONS = [
-  { value: "DRAFT", label: "DRAFT" },
-  { value: "ISSUED", label: "ISSUED" },
-  { value: "PAID", label: "PAID" },
-  { value: "CANCELLED", label: "CANCELLED" },
-];
+import { statusesForType } from "@/lib/types";
 
 /**
  * Status picker on a document page. Choosing PAID asks for the day it was paid
- * (today by default, or the recorded date when it is already paid).
+ * (today by default, or the recorded date when it is already paid). ACCEPTED / DECLINED
+ * are offered on quotations only.
  */
 export default function DocStatusForm({
   action,
+  type,
   defaultStatus,
   defaultPaidDate,
   today,
 }: {
   action: (status: string, paidDate: string | null) => Promise<{ ok: boolean; message?: string }>;
+  /** Document type: decides which statuses are offered. */
+  type: string;
   defaultStatus: string;
   /** YYYY-MM-DD the document was paid, when it is. */
   defaultPaidDate?: string | null;
@@ -53,7 +51,7 @@ export default function DocStatusForm({
       <AppSelect
         value={status}
         onValueChange={setStatus}
-        options={STATUS_OPTIONS}
+        options={statusesForType(type).map((s) => ({ value: s, label: s }))}
         triggerClassName="w-auto! min-w-32"
         aria-label="Document status"
       />

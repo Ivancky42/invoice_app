@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
-import { calcTotals, DiscountType } from "@/lib/types";
+import { calcTotals, DiscountType, DOCUMENT_STATUSES, statusTypeError, type DocumentStatusValue } from "@/lib/types";
 import { nextDocumentNumber } from "@/lib/numbering";
 import {
   convertDocument as convertDocumentService,
@@ -48,6 +48,8 @@ type SaveInput = {
 };
 
 export async function saveDocument(input: SaveInput): Promise<{ id: string; recurringError?: string }> {
+  const statusProblem = statusTypeError(input.type, input.status);
+  if (statusProblem) throw new Error(statusProblem);
   const discountType = input.discountType ?? "PERCENT";
   const discountValue = Number(input.discountValue) || 0;
   const totals = calcTotals(input.items, input.taxRate, discountType, discountValue);
@@ -135,11 +137,11 @@ export async function setStatus(
   status: string,
   paidDate?: string | null,
 ): Promise<{ ok: boolean; message?: string }> {
-  if (!["DRAFT", "ISSUED", "PAID", "CANCELLED"].includes(status)) return { ok: false, message: "Unknown status" };
+  if (!(DOCUMENT_STATUSES as readonly string[]).includes(status)) return { ok: false, message: "Unknown status" };
   try {
     // Shared with the MCP tool: issuing an invoice without a due date derives one from Net-N
     // terms; marking it paid records the paid date (today unless one is given).
-    await setDocumentStatus(id, status as "DRAFT" | "ISSUED" | "PAID" | "CANCELLED", {
+    await setDocumentStatus(id, status as DocumentStatusValue, {
       paidDate: status === "PAID" ? paidDate || null : null,
     });
   } catch (e) {

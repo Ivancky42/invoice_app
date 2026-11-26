@@ -19,6 +19,8 @@ export default function DocumentFilters({
     { value: "", label: "All statuses" },
     { value: "DRAFT", label: "Draft" },
     { value: "ISSUED", label: "Issued" },
+    { value: "ACCEPTED", label: "Accepted (quotes)" },
+    { value: "DECLINED", label: "Declined (quotes)" },
     { value: "PAID", label: "Paid" },
     { value: "CANCELLED", label: "Cancelled" },
   ] as const;

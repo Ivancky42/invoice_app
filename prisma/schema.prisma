@@ -18,6 +18,10 @@ enum DocumentStatus {
   ISSUED
   PAID
   CANCELLED
+  /// Quotations only: the client said yes. Converting a quotation to an invoice sets it.
+  ACCEPTED
+  /// Quotations only: the client said no.
+  DECLINED
 }
 
 model CompanyProfile {
